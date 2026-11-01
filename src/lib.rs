@@ -31,6 +31,9 @@ pub enum NodeKind {
     Color { rgb: [u8; 3] },
     Invert,
     Blend { factor: f32 },
+    Bricks { columns: u32, rows: u32, mortar: f32 },
+    Voronoi { cells: u32, seed: u32 },
+    Colorize { dark: [u8; 3], light: [u8; 3] },
     Output,
 }
 
@@ -42,15 +45,20 @@ impl NodeKind {
             Self::Color { .. } => "Color",
             Self::Invert => "Invert",
             Self::Blend { .. } => "Blend",
-            Self::Output => "Output",
+            Self::Bricks { .. } => "Bricks",
+            Self::Voronoi { .. } => "Voronoi",
+            Self::Colorize { .. } => "Colorize",
+            Self::Output => "Material Output",
         }
     }
 
     pub fn input_count(&self) -> usize {
         match self {
-            Self::Noise { .. } | Self::Checker { .. } | Self::Color { .. } => 0,
-            Self::Invert | Self::Output => 1,
+            Self::Noise { .. } | Self::Checker { .. } | Self::Color { .. }
+                | Self::Bricks { .. } | Self::Voronoi { .. } => 0,
+            Self::Invert | Self::Colorize { .. } => 1,
             Self::Blend { .. } => 2,
+            Self::Output => 4,
         }
     }
 
@@ -58,8 +66,11 @@ impl NodeKind {
         match (self, index) {
             (Self::Blend { .. }, 0) => "A",
             (Self::Blend { .. }, 1) => "B",
-            (Self::Output, 0) => "Image",
-            (Self::Invert, 0) => "Image",
+            (Self::Output, 0) => "Albedo",
+            (Self::Output, 1) => "Roughness",
+            (Self::Output, 2) => "Metallic",
+            (Self::Output, 3) => "Height",
+            (Self::Invert | Self::Colorize { .. }, 0) => "Image",
             _ => "",
         }
     }
@@ -78,6 +89,24 @@ impl Default for Graph {
 }
 
 impl Graph {
+    /// A ready-to-edit PBR bricks example, independent of old project saves.
+    pub fn demo_bricks() -> Self {
+        Self {
+            nodes: vec![
+                Node { id: 1, position: [50.0, 100.0], kind: NodeKind::Bricks { columns: 8, rows: 12, mortar: 0.13 } },
+                Node { id: 2, position: [290.0, 80.0], kind: NodeKind::Colorize { dark: [38, 34, 42], light: [190, 102, 59] } },
+                Node { id: 3, position: [275.0, 365.0], kind: NodeKind::Noise { scale: 9, octaves: 4, seed: 27 } },
+                Node { id: 4, position: [585.0, 105.0], kind: NodeKind::Output },
+            ],
+            links: vec![
+                Link { from: 1, to: 2, input: 0 },
+                Link { from: 2, to: 4, input: 0 },
+                Link { from: 3, to: 4, input: 1 },
+                Link { from: 1, to: 4, input: 3 },
+            ],
+        }
+    }
+
     pub fn add_node(&mut self, kind: NodeKind, position: [f32; 2]) -> u64 {
         let id = self.nodes.iter().map(|node| node.id).max().unwrap_or(0) + 1;
         self.nodes.push(Node { id, position, kind });
@@ -155,6 +184,12 @@ impl Graph {
                 NodeKind::Noise { scale, octaves, .. } if !(1..=64).contains(&scale) || !(1..=6).contains(&octaves) => return Err("Noise settings out of range".into()),
                 NodeKind::Checker { tiles } if !(2..=64).contains(&tiles) || tiles % 2 != 0 => return Err("Checker tiles must be even and between 2 and 64".into()),
                 NodeKind::Blend { factor } if !factor.is_finite() || !(0.0..=1.0).contains(&factor) => return Err("Blend factor out of range".into()),
+                NodeKind::Bricks { columns, rows, mortar }
+                    if !(2..=64).contains(&columns) || !(2..=64).contains(&rows) ||
+                        rows % 2 != 0 || !mortar.is_finite() || !(0.0..=0.4).contains(&mortar)
+                    => return Err("Brick settings out of range".into()),
+                NodeKind::Voronoi { cells, .. } if !(2..=32).contains(&cells)
+                    => return Err("Voronoi cells out of range".into()),
                 _ => {}
             }
         }
@@ -175,15 +210,68 @@ impl Graph {
     }
 
     pub fn render_rgba(&self, width: u32, height: u32) -> Result<Vec<u8>, String> {
+        self.render_output_channel_rgba(0, width, height)
+    }
+
+    /// Preview any node, including nodes not wired into Material Output.
+    pub fn render_node_rgba(&self, id: u64, width: u32, height: u32) -> Result<Vec<u8>, String> {
         self.validate()?;
+        if self.node(id).is_none() { return Err("Node not found".into()); }
+        self.render_pixels(width, height, |u, v| self.sample(id, u, v))
+    }
+
+    /// Output channel indices are 0=albedo, 1=roughness, 2=metallic, 3=height.
+    pub fn render_output_channel_rgba(&self, channel: usize, width: u32, height: u32) -> Result<Vec<u8>, String> {
+        self.validate()?;
+        if channel >= 4 { return Err("Unsupported material channel".into()); }
+        let output = self.nodes.iter().find(|n| matches!(n.kind, NodeKind::Output)).unwrap().id;
+        let default = match channel {
+            1 => [0.72; 3], // dielectric matte roughness
+            3 => [0.5; 3],  // neutral height
+            _ => [0.0; 3],
+        };
+        let source = self.links.iter().find(|l| l.to == output && l.input == channel).map(|l| l.from);
+        self.render_pixels(width, height, |u, v| match source {
+            Some(id) => self.sample(id, u, v),
+            None => default,
+        })
+    }
+
+    pub fn render_normal_rgba(&self, width: u32, height: u32) -> Result<Vec<u8>, String> {
+        let height_map = self.render_output_channel_rgba(3, width, height)?;
+        let mut normals = vec![0u8; height_map.len()];
+        for y in 0..height {
+            for x in 0..width {
+                let height_at = |xi: u32, yi: u32| -> f32 {
+                    height_map[((yi * width + xi) * 4) as usize] as f32 / 255.0
+                };
+                let left = height_at((x + width - 1) % width, y);
+                let right = height_at((x + 1) % width, y);
+                let above = height_at(x, (y + height - 1) % height);
+                let below = height_at(x, (y + 1) % height);
+                let nx = (left - right) * 4.0;
+                let ny = (above - below) * 4.0;
+                let length = (nx * nx + ny * ny + 1.0).sqrt();
+                let index = ((y * width + x) * 4) as usize;
+                normals[index] = ((nx / length * 0.5 + 0.5) * 255.0).round() as u8;
+                normals[index + 1] = ((ny / length * 0.5 + 0.5) * 255.0).round() as u8;
+                normals[index + 2] = ((1.0 / length * 0.5 + 0.5) * 255.0).round() as u8;
+                normals[index + 3] = 255;
+            }
+        }
+        Ok(normals)
+    }
+
+    fn render_pixels(&self, width: u32, height: u32, sample: impl Fn(f32, f32) -> [f32; 3])
+        -> Result<Vec<u8>, String>
+    {
         if width == 0 || height == 0 || width > 4096 || height > 4096 {
             return Err("Image dimensions must be 1–4096".into());
         }
-        let output = self.nodes.iter().find(|n| matches!(n.kind, NodeKind::Output)).unwrap().id;
         let mut rgba = Vec::with_capacity(width as usize * height as usize * 4);
         for y in 0..height {
             for x in 0..width {
-                let color = self.sample(output, x as f32 / width as f32, y as f32 / height as f32);
+                let color = sample(x as f32 / width as f32, y as f32 / height as f32);
                 for component in color {
                     rgba.push((component.clamp(0.0, 1.0) * 255.0).round() as u8);
                 }
@@ -227,6 +315,40 @@ impl Graph {
                 let a = self.sample_input(id, 0, u, v);
                 let b = self.sample_input(id, 1, u, v);
                 std::array::from_fn(|i| a[i] * (1.0 - factor) + b[i] * factor)
+            }
+            NodeKind::Bricks { columns, rows, mortar } => {
+                let row_position = v * rows as f32;
+                let row = row_position.floor() as i32;
+                let horizontal = (u * columns as f32 + if row % 2 == 0 { 0.0 } else { 0.5 }).fract();
+                let vertical = row_position.fract();
+                let edge = horizontal.min(1.0 - horizontal)
+                    .min(vertical.min(1.0 - vertical));
+                let brick = ((edge - mortar * 0.5) / 0.025).clamp(0.0, 1.0);
+                [brick; 3]
+            }
+            NodeKind::Voronoi { cells, seed } => {
+                let x = u * cells as f32;
+                let y = v * cells as f32;
+                let bx = x.floor() as i32;
+                let by = y.floor() as i32;
+                let mut best = f32::MAX;
+                for dy in -1..=1 {
+                    for dx in -1..=1 {
+                        let cx = bx + dx;
+                        let cy = by + dy;
+                        let rx = lattice(cx, cy, cells as i32, seed);
+                        let ry = lattice(cx, cy, cells as i32, seed ^ 0x97f4_a7c1);
+                        let px = cx as f32 + rx - x;
+                        let py = cy as f32 + ry - y;
+                        best = best.min((px * px + py * py).sqrt());
+                    }
+                }
+                [(best * 1.15).clamp(0.0, 1.0); 3]
+            }
+            NodeKind::Colorize { dark, light } => {
+                let input = self.sample_input(id, 0, u, v);
+                let t = (input[0] * 0.2126 + input[1] * 0.7152 + input[2] * 0.0722).clamp(0.0, 1.0);
+                std::array::from_fn(|i| (dark[i] as f32 * (1.0 - t) + light[i] as f32 * t) / 255.0)
             }
             NodeKind::Output => self.sample_input(id, 0, u, v),
         }
@@ -319,4 +441,34 @@ mod tests {
         graph.links.push(Link { from: b, to: a, input: 0 });
         assert!(graph.validate().is_err());
     }
+    #[test]
+    fn demo_material_exports_channels_and_flat_normal_when_disconnected() {
+        let demo = Graph::demo_bricks();
+        demo.validate().unwrap();
+        assert_eq!(demo.render_output_channel_rgba(0, 16, 16).unwrap().len(), 1024);
+        let mut empty = Graph::default();
+        empty.disconnect(2, 0);
+        let normals = empty.render_normal_rgba(8, 8).unwrap();
+        assert!(normals.chunks_exact(4).all(|px| px == [128, 128, 255, 255]));
+    }
+
+    #[test]
+    fn old_projects_remain_readable() {
+        let graph = Graph::default();
+        let text = serde_json::to_string(&graph).unwrap();
+        let restored: Graph = serde_json::from_str(&text).unwrap();
+        restored.validate().unwrap();
+        assert_eq!(restored.node(2).unwrap().kind.input_count(), 4);
+    }
+
+    #[test]
+    fn voronoi_is_tileable() {
+        let mut graph = Graph::default();
+        let id = graph.add_node(NodeKind::Voronoi { cells: 8, seed: 9 }, [0.0, 0.0]);
+        for t in [0.0, 0.13, 0.41, 0.91] {
+            assert!((graph.sample(id, t, 0.0)[0] - graph.sample(id, t, 1.0)[0]).abs() < 0.0001);
+            assert!((graph.sample(id, 0.0, t)[0] - graph.sample(id, 1.0, t)[0]).abs() < 0.0001);
+        }
+    }
+
 }
