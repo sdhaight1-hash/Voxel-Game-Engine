@@ -304,73 +304,124 @@ impl Studio {
     }
 
     fn canvas(&mut self, ui: &mut egui::Ui) {
-        let (rect, _) = ui.allocate_exact_size(ui.available_size(), Sense::hover());
+        let (rect, _) = ui.allocate_exact_size(ui.available_size(), Sense::drag());
         let painter = ui.painter_at(rect);
-        painter.rect_filled(rect, 0, Color32::from_rgb(24, 27, 34));
-        let grid_color = Color32::from_rgb(36, 40, 49);
-        let mut x = rect.min.x;
-        while x < rect.max.x {
-            painter.line_segment([Pos2::new(x, rect.min.y), Pos2::new(x, rect.max.y)], Stroke::new(1.0, grid_color));
-            x += 32.0;
+        painter.rect_filled(rect, 0, Color32::from_rgb(20, 22, 29));
+
+        if let Some(pointer) = ui.ctx().pointer_hover_pos() {
+            if rect.contains(pointer) {
+                let (scroll, middle_down, delta) = ui.input(|i|
+                    (i.raw_scroll_delta.y, i.pointer.middle_down(), i.pointer.delta()));
+                if middle_down { self.pan += delta; }
+                if scroll.abs() > 0.1 {
+                    let previous = self.zoom;
+                    self.zoom = (self.zoom * (scroll * 0.0015).exp()).clamp(0.55, 1.65);
+                    let anchor = pointer - rect.min;
+                    self.pan = anchor - (anchor - self.pan) * (self.zoom / previous);
+                }
+            }
         }
-        let mut y = rect.min.y;
+
+        let grid_step = 36.0 * self.zoom;
+        let grid_color = Color32::from_rgb(34, 37, 46);
+        let mut x = rect.min.x + self.pan.x.rem_euclid(grid_step);
+        while x < rect.max.x {
+            painter.line_segment([Pos2::new(x, rect.min.y), Pos2::new(x, rect.max.y)],
+                Stroke::new(1.0, grid_color));
+            x += grid_step;
+        }
+        let mut y = rect.min.y + self.pan.y.rem_euclid(grid_step);
         while y < rect.max.y {
-            painter.line_segment([Pos2::new(rect.min.x, y), Pos2::new(rect.max.x, y)], Stroke::new(1.0, grid_color));
-            y += 32.0;
+            painter.line_segment([Pos2::new(rect.min.x, y), Pos2::new(rect.max.x, y)],
+                Stroke::new(1.0, grid_color));
+            y += grid_step;
         }
 
         for link in &self.graph.links {
             let (Some(source), Some(target)) = (self.graph.node(link.from), self.graph.node(link.to)) else { continue; };
-            let start = socket_output(rect.min, source.position, source.kind.input_count());
-            let end = socket_input(rect.min, target.position, link.input);
-            draw_wire(&painter, start, end, Color32::from_rgb(103, 200, 232));
+            let from = socket_output(rect.min, self.pan, self.zoom, source.position, source.kind.input_count());
+            let to = socket_input(rect.min, self.pan, self.zoom, target.position, link.input);
+            let color = match (target.kind, link.input) {
+                (NodeKind::Output, 0) => Color32::from_rgb(239, 152, 95),
+                (NodeKind::Output, 1) => Color32::from_rgb(175, 179, 190),
+                (NodeKind::Output, 2) => Color32::from_rgb(177, 132, 207),
+                (NodeKind::Output, 3) => Color32::from_rgb(100, 207, 222),
+                _ => Color32::from_rgb(103, 170, 233),
+            };
+            draw_wire(&painter, from, to, color);
         }
 
-        // Snapshot IDs and geometry to avoid borrowing the graph across drag updates.
-        let nodes: Vec<_> = self.graph.nodes.iter().map(|n| (n.id, n.position, n.kind)).collect();
+        let nodes: Vec<_> = self.graph.nodes.iter()
+            .map(|n| (n.id, n.position, n.kind)).collect();
         for (id, position, kind) in nodes {
-            let origin = rect.min + Vec2::new(position[0], position[1]);
-            let height = node_height(kind);
-            let node_rect = Rect::from_min_size(origin, Vec2::new(NODE_W, height));
+            let z = self.zoom;
+            let origin = screen_point(rect.min, self.pan, z, position[0], position[1]);
+            let height = node_height(kind) * z;
+            let node_rect = Rect::from_min_size(origin, Vec2::new(NODE_W * z, height));
             let active = self.selected == Some(id);
-            painter.rect_filled(node_rect, 8, Color32::from_rgb(43, 48, 60));
-            painter.rect_stroke(node_rect, 8,
+            painter.rect_filled(node_rect, 6, Color32::from_rgb(42, 45, 57));
+            painter.rect_stroke(node_rect, 6,
                 Stroke::new(if active { 2.0 } else { 1.0 },
-                    if active { Color32::from_rgb(114, 198, 255) } else { Color32::from_rgb(76, 86, 100) }),
+                    if active { Color32::from_rgb(114, 198, 255) } else { Color32::from_rgb(74, 82, 100) }),
                 StrokeKind::Inside);
-            let title = Rect::from_min_size(origin, Vec2::new(NODE_W, 30.0));
-            painter.rect_filled(title.shrink(1.0), 6, node_accent(kind));
-            painter.text(origin + Vec2::new(12.0, 15.0), Align2::LEFT_CENTER,
-                format!("{}   #{id}", kind.name()), FontId::proportional(14.0), Color32::WHITE);
-            let response = ui.interact(title, ui.make_persistent_id(("node_header", id)), Sense::click_and_drag());
+
+            let body = Rect::from_min_max(origin + Vec2::new(0.0, 32.0 * z), node_rect.max);
+            if ui.interact(body, ui.make_persistent_id(("node_body", id)), Sense::click()).clicked() {
+                self.selected = Some(id);
+            }
+            let header = Rect::from_min_size(origin, Vec2::new(NODE_W * z, 31.0 * z));
+            painter.rect_filled(header.shrink(1.0), 5, node_accent(kind));
+            painter.text(origin + Vec2::new(9.0 * z, 15.0 * z), Align2::LEFT_CENTER,
+                format!("{}  ·  {}", kind.name(), id),
+                FontId::proportional(13.0 * z), Color32::WHITE);
+            let response = ui.interact(header, ui.make_persistent_id(("node_header", id)), Sense::click_and_drag());
             if response.clicked() { self.selected = Some(id); }
             if response.dragged() {
                 self.selected = Some(id);
-                let delta = response.drag_delta();
+                let delta = response.drag_delta() / z;
                 if let Some(node) = self.graph.node_mut(id) {
-                    node.position[0] = (node.position[0] + delta.x).max(0.0);
-                    node.position[1] = (node.position[1] + delta.y).max(0.0);
+                    node.position[0] += delta.x;
+                    node.position[1] += delta.y;
                 }
             }
-            painter.text(origin + Vec2::new(12.0, 48.0), Align2::LEFT_CENTER,
-                if kind.input_count() == 0 { "Generator" } else { "Texture inputs" },
-                FontId::proportional(11.0), Color32::LIGHT_GRAY);
+
+            if let Some(texture) = self.thumbs.get(&id) {
+                let image = Rect::from_min_size(origin + Vec2::new(12.0 * z, 57.0 * z),
+                    Vec2::splat(55.0 * z));
+                painter.image(texture.id(), image,
+                    Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
+            }
+            if matches!(kind, NodeKind::Output) {
+                painter.text(origin + Vec2::new(12.0 * z, 47.0 * z), Align2::LEFT_CENTER,
+                    "PBR CHANNELS", FontId::proportional(10.0 * z),
+                    Color32::from_rgb(190, 200, 215));
+            }
+
             if !matches!(kind, NodeKind::Output) {
-                let output = socket_output(rect.min, position, kind.input_count());
-                painter.circle_filled(output, 6.0, if self.connecting == Some(id) { Color32::LIGHT_GREEN } else { Color32::from_rgb(103, 200, 232) });
-                let hit = Rect::from_center_size(output, Vec2::splat(22.0));
+                let output = socket_output(rect.min, self.pan, z, position, kind.input_count());
+                painter.circle_filled(output, 6.0 * z,
+                    if self.connecting == Some(id) { Color32::LIGHT_GREEN } else { Color32::from_rgb(103, 200, 232) });
+                let hit = Rect::from_center_size(output, Vec2::splat(24.0 * z));
                 if ui.interact(hit, ui.make_persistent_id(("output", id)), Sense::click()).clicked() {
                     self.connecting = Some(id);
                     self.selected = Some(id);
-                    self.status = format!("Choose a left input socket to connect node #{id}");
+                    self.status = format!("Choose an input socket for node #{id}");
                 }
             }
             for input in 0..kind.input_count() {
-                let socket = socket_input(rect.min, position, input);
-                painter.circle_filled(socket, 6.0, Color32::from_rgb(234, 185, 96));
-                painter.text(socket + Vec2::new(13.0, 0.0), Align2::LEFT_CENTER, kind.input_name(input),
-                    FontId::proportional(12.0), Color32::WHITE);
-                let hit = Rect::from_center_size(socket, Vec2::splat(22.0));
+                let socket = socket_input(rect.min, self.pan, z, position, input);
+                let color = if matches!(kind, NodeKind::Output) {
+                    match input {
+                        0 => Color32::from_rgb(239, 152, 95),
+                        1 => Color32::from_rgb(175, 179, 190),
+                        2 => Color32::from_rgb(177, 132, 207),
+                        _ => Color32::from_rgb(100, 207, 222),
+                    }
+                } else { Color32::from_rgb(234, 185, 96) };
+                painter.circle_filled(socket, 6.0 * z, color);
+                painter.text(socket + Vec2::new(12.0 * z, 0.0), Align2::LEFT_CENTER,
+                    kind.input_name(input), FontId::proportional(11.0 * z), Color32::WHITE);
+                let hit = Rect::from_center_size(socket, Vec2::splat(24.0 * z));
                 let response = ui.interact(hit, ui.make_persistent_id(("input", id, input)), Sense::click());
                 if response.clicked() {
                     if let Some(source) = self.connecting {
@@ -384,7 +435,7 @@ impl Studio {
                         }
                     } else {
                         self.selected = Some(id);
-                        self.status = "Select an output socket first".into();
+                        self.status = "Click a source output socket first".into();
                     }
                 }
                 if response.secondary_clicked() {
@@ -395,14 +446,14 @@ impl Studio {
             }
         }
         if let Some(id) = self.connecting {
-            if let Some(node) = self.graph.node(id) {
-                if let Some(mouse) = ui.ctx().pointer_hover_pos() {
-                    draw_wire(&painter, socket_output(rect.min, node.position, node.kind.input_count()),
-                        mouse, Color32::LIGHT_GREEN);
-                }
+            if let (Some(node), Some(mouse)) = (self.graph.node(id), ui.ctx().pointer_hover_pos()) {
+                draw_wire(&painter,
+                    socket_output(rect.min, self.pan, self.zoom, node.position, node.kind.input_count()),
+                    mouse, Color32::LIGHT_GREEN);
             }
         }
     }
+
 }
 
 impl eframe::App for Studio {
@@ -411,51 +462,88 @@ impl eframe::App for Studio {
         self.refresh_preview(&ctx);
         egui::Panel::top("toolbar").show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
-                ui.heading("Texture Studio");
+                ui.heading("TEXTURE STUDIO");
                 ui.separator();
                 if ui.button("New").clicked() { self.new_project(); }
-                if ui.button("Open project").clicked() { self.open_project(); }
+                if ui.button("Open").clicked() { self.open_project(); }
                 if ui.button("Save").clicked() { self.save_project(false); }
-                if ui.button("Save as...").clicked() { self.save_project(true); }
+                if ui.button("Save As").clicked() { self.save_project(true); }
                 ui.separator();
                 egui::ComboBox::from_id_salt("export_size")
                     .selected_text(format!("{}px", self.export_size))
                     .show_ui(ui, |ui| {
                         for size in [256, 512, 1024, 2048] {
-                            ui.selectable_value(&mut self.export_size, size, format!("{size} x {size}"));
+                            ui.selectable_value(&mut self.export_size, size, format!("{size} × {size}"));
                         }
                     });
-                if ui.button("Export PNG").clicked() { self.export_png(); }
+                if ui.button("Export image").clicked() { self.export_png(); }
+                if ui.button("Export PBR maps").clicked() { self.export_material(); }
+                ui.separator();
+                if ui.button("Example").clicked() { self.demo_material(); }
             });
         });
         egui::Panel::bottom("status").show(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.label(&self.status);
+                ui.small(&self.status);
                 if let Some(path) = &self.project_path {
                     ui.separator();
                     ui.small(path.display().to_string());
                 }
             });
         });
-        egui::Panel::left("palette").resizable(false).default_size(170.0).show(ui, |ui| {
+        egui::Panel::left("library").resizable(true).default_size(195.0).min_size(160.0).show(ui, |ui| {
             ui.add_space(8.0);
             self.palette(ui);
         });
-        egui::Panel::right("inspector").resizable(true).default_size(290.0).min_size(235.0).show(ui, |ui| {
-            ui.add_space(8.0);
-            ui.heading("Live preview");
-            ui.label("256 x 256 · tileable");
-            if let Some(texture) = &self.preview {
-                let side = ui.available_width().min(256.0);
+        egui::Panel::right("previews").resizable(true).default_size(300.0).min_size(240.0).show(ui, |ui| {
+            ui.add_space(6.0);
+            ui.heading("PREVIEW");
+            ui.horizontal(|ui| {
+                ui.selectable_value(&mut self.view, 0, "3D");
+                ui.selectable_value(&mut self.view, 1, "2D");
+                ui.selectable_value(&mut self.view, 2, "Node");
+            });
+            if self.view == 1 {
+                egui::ComboBox::from_id_salt("output_channel")
+                    .selected_text(["Albedo", "Roughness", "Metallic", "Height", "Normal"][self.preview_channel])
+                    .show_ui(ui, |ui| {
+                        for (channel, name) in ["Albedo", "Roughness", "Metallic", "Height", "Normal"].iter().enumerate() {
+                            if ui.selectable_value(&mut self.preview_channel, channel, *name).changed() {
+                                self.dirty = true;
+                            }
+                        }
+                    });
+            }
+            let preview = match self.view {
+                0 => self.sphere.as_ref(),
+                1 => self.preview.as_ref(),
+                _ => self.selected.and_then(|id| self.thumbs.get(&id)).or(self.preview.as_ref()),
+            };
+            if let Some(texture) = preview {
+                let side = ui.available_width().min(272.0);
                 ui.add(egui::Image::new(texture).fit_to_exact_size(Vec2::splat(side)));
             } else {
-                ui.label("No preview available");
+                ui.label("Select a node to preview.");
             }
+            ui.small(if self.view == 0 {
+                "Lit sphere simulation · not a full physically based renderer"
+            } else {
+                "Tileable 2D output"
+            });
             ui.separator();
             self.inspector(ui);
         });
         egui::CentralPanel::default().show(ui, |ui| {
-            ui.label("NODE CANVAS  ·  Click sockets to wire  ·  Drag headers to move");
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("NODE GRAPH").strong().color(Color32::LIGHT_GRAY));
+                ui.separator();
+                ui.small("Wheel: zoom · Middle drag: pan · Click sockets: connect");
+                if ui.button("Reset view").clicked() {
+                    self.pan = Vec2::ZERO;
+                    self.zoom = 1.0;
+                }
+                ui.small(format!("{:.0}%", self.zoom * 100.0));
+            });
             self.canvas(ui);
         });
         if self.dirty { ctx.request_repaint(); }
@@ -463,26 +551,31 @@ impl eframe::App for Studio {
 }
 
 fn node_height(kind: NodeKind) -> f32 {
-    78.0 + (kind.input_count().max(1) as f32) * 25.0
-}
-
-fn socket_output(canvas: Pos2, position: [f32; 2], inputs: usize) -> Pos2 {
-    canvas + Vec2::new(position[0] + NODE_W, position[1] + node_height_for_inputs(inputs) - 20.0)
+    node_height_for_inputs(kind.input_count())
 }
 
 fn node_height_for_inputs(inputs: usize) -> f32 {
-    78.0 + (inputs.max(1) as f32) * 25.0
+    135.0 + inputs.saturating_sub(1) as f32 * 25.0
 }
 
-fn socket_input(canvas: Pos2, position: [f32; 2], input: usize) -> Pos2 {
-    canvas + Vec2::new(position[0], position[1] + 75.0 + input as f32 * 25.0)
+fn screen_point(canvas: Pos2, pan: Vec2, zoom: f32, x: f32, y: f32) -> Pos2 {
+    canvas + pan + Vec2::new(x * zoom, y * zoom)
+}
+
+fn socket_output(canvas: Pos2, pan: Vec2, zoom: f32, position: [f32; 2], inputs: usize) -> Pos2 {
+    screen_point(canvas, pan, zoom, position[0] + NODE_W, position[1] + node_height_for_inputs(inputs) - 20.0)
+}
+
+fn socket_input(canvas: Pos2, pan: Vec2, zoom: f32, position: [f32; 2], input: usize) -> Pos2 {
+    screen_point(canvas, pan, zoom, position[0], position[1] + 84.0 + input as f32 * 25.0)
 }
 
 fn node_accent(kind: NodeKind) -> Color32 {
     match kind {
-        NodeKind::Noise { .. } | NodeKind::Checker { .. } | NodeKind::Color { .. } => Color32::from_rgb(52, 91, 137),
-        NodeKind::Invert | NodeKind::Blend { .. } => Color32::from_rgb(103, 70, 142),
-        NodeKind::Output => Color32::from_rgb(45, 114, 94),
+        NodeKind::Noise { .. } | NodeKind::Checker { .. } | NodeKind::Color { .. }
+            | NodeKind::Bricks { .. } | NodeKind::Voronoi { .. } => Color32::from_rgb(43, 95, 131),
+        NodeKind::Invert | NodeKind::Blend { .. } | NodeKind::Colorize { .. } => Color32::from_rgb(115, 64, 127),
+        NodeKind::Output => Color32::from_rgb(43, 105, 77),
     }
 }
 
@@ -502,6 +595,67 @@ fn draw_wire(painter: &egui::Painter, a: Pos2, b: Pos2, color: Color32) {
         painter.line_segment([previous, point], Stroke::new(2.5, color));
         previous = point;
     }
+}
+
+
+fn put_texture(ctx: &egui::Context, slot: &mut Option<TextureHandle>, name: &str,
+    rgba: Vec<u8>, size: u32)
+{
+    let image = egui::ColorImage::from_rgba_unmultiplied([size as usize, size as usize], &rgba);
+    if let Some(existing) = slot {
+        existing.set(image, egui::TextureOptions::LINEAR);
+    } else {
+        *slot = Some(ctx.load_texture(name, image, egui::TextureOptions::LINEAR));
+    }
+}
+
+fn save_png(path: &Path, size: u32, pixels: &[u8]) -> Result<(), String> {
+    let file = std::fs::File::create(path).map_err(|e| e.to_string())?;
+    let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), size, size);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    let mut writer = encoder.write_header().map_err(|e| e.to_string())?;
+    writer.write_image_data(pixels).map_err(|e| e.to_string())
+}
+
+/// Approximate lit sphere: actual generated albedo, roughness and metallic textures are
+/// sampled on spherical UVs. This is a preview, not a physically accurate PBR shader.
+fn make_sphere_preview(graph: &Graph, size: u32) -> Result<Vec<u8>, String> {
+    let albedo = graph.render_output_channel_rgba(0, size, size)?;
+    let roughness = graph.render_output_channel_rgba(1, size, size)?;
+    let metallic = graph.render_output_channel_rgba(2, size, size)?;
+    let mut pixels = vec![0u8; (size * size * 4) as usize];
+    for y in 0..size {
+        for x in 0..size {
+            let p = ((y * size + x) * 4) as usize;
+            pixels[p..p + 4].copy_from_slice(&[21, 25, 33, 255]);
+            let sx = (x as f32 + 0.5) * 2.0 / size as f32 - 1.0;
+            let sy = 1.0 - (y as f32 + 0.5) * 2.0 / size as f32;
+            let r2 = sx * sx + sy * sy;
+            if r2 >= 0.88 { continue; }
+            let nz = (1.0 - r2 / 0.88).sqrt();
+            let nx = sx / 0.88_f32.sqrt();
+            let ny = sy / 0.88_f32.sqrt();
+            let u = (nz.atan2(nx) / (2.0 * PI) + 0.5).rem_euclid(1.0);
+            let v = (ny.asin() / PI + 0.5).clamp(0.0, 0.9999);
+            let tx = (u * size as f32) as u32;
+            let ty = (v * size as f32) as u32;
+            let tex = ((ty * size + tx) * 4) as usize;
+            let rough = roughness[tex] as f32 / 255.0;
+            let metal = metallic[tex] as f32 / 255.0;
+            let diffuse = (nx * 0.41 + ny * 0.6 + nz * 0.68).max(0.0);
+            let half = (nx * 0.22 + ny * 0.34 + nz * 0.91).max(0.0);
+            let spec = half.powf(5.0 + (1.0 - rough) * 100.0);
+            for channel in 0..3 {
+                let base = albedo[tex + channel] as f32 / 255.0;
+                let reflectance = 0.04 * (1.0 - metal) + base * metal;
+                let lit = base * (0.18 + 0.82 * diffuse) * (1.0 - 0.65 * metal)
+                    + reflectance * spec * (1.0 - rough * 0.65);
+                pixels[p + channel] = (lit.clamp(0.0, 1.0) * 255.0).round() as u8;
+            }
+        }
+    }
+    Ok(pixels)
 }
 
 fn main() -> eframe::Result {
