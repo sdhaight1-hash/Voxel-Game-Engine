@@ -239,7 +239,7 @@ impl Studio {
             painter.rect_filled(title.shrink(1.0), 6, node_accent(kind));
             painter.text(origin + Vec2::new(12.0, 15.0), Align2::LEFT_CENTER,
                 format!("{}   #{id}", kind.name()), FontId::proportional(14.0), Color32::WHITE);
-            let response = ui.interact(title, egui::Id::new(("node_header", id)), Sense::click_and_drag());
+            let response = ui.interact(title, ui.make_persistent_id(("node_header", id)), Sense::click_and_drag());
             if response.clicked() { self.selected = Some(id); }
             if response.dragged() {
                 self.selected = Some(id);
@@ -256,7 +256,7 @@ impl Studio {
                 let output = socket_output(rect.min, position, kind.input_count());
                 painter.circle_filled(output, 6.0, if self.connecting == Some(id) { Color32::LIGHT_GREEN } else { Color32::from_rgb(103, 200, 232) });
                 let hit = Rect::from_center_size(output, Vec2::splat(22.0));
-                if ui.interact(hit, egui::Id::new(("output", id)), Sense::click()).clicked() {
+                if ui.interact(hit, ui.make_persistent_id(("output", id)), Sense::click()).clicked() {
                     self.connecting = Some(id);
                     self.selected = Some(id);
                     self.status = format!("Choose a left input socket to connect node #{id}");
@@ -268,7 +268,7 @@ impl Studio {
                 painter.text(socket + Vec2::new(13.0, 0.0), Align2::LEFT_CENTER, kind.input_name(input),
                     FontId::proportional(12.0), Color32::WHITE);
                 let hit = Rect::from_center_size(socket, Vec2::splat(22.0));
-                let response = ui.interact(hit, egui::Id::new(("input", id, input)), Sense::click());
+                let response = ui.interact(hit, ui.make_persistent_id(("input", id, input)), Sense::click());
                 if response.clicked() {
                     if let Some(source) = self.connecting {
                         match self.graph.connect(source, id, input) {
@@ -306,7 +306,7 @@ impl eframe::App for Studio {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.refresh_preview(&ctx);
-        egui::TopBottomPanel::top("toolbar").show(&ctx, |ui| {
+        egui::Panel::top("toolbar").show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
                 ui.heading("Texture Studio");
                 ui.separator();
@@ -325,7 +325,7 @@ impl eframe::App for Studio {
                 if ui.button("Export PNG").clicked() { self.export_png(); }
             });
         });
-        egui::TopBottomPanel::bottom("status").show(&ctx, |ui| {
+        egui::Panel::bottom("status").show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.label(&self.status);
                 if let Some(path) = &self.project_path {
@@ -334,11 +334,11 @@ impl eframe::App for Studio {
                 }
             });
         });
-        egui::SidePanel::left("palette").resizable(false).default_width(170.0).show(&ctx, |ui| {
+        egui::Panel::left("palette").resizable(false).default_size(170.0).show(ui, |ui| {
             ui.add_space(8.0);
             self.palette(ui);
         });
-        egui::SidePanel::right("inspector").resizable(true).default_width(290.0).min_width(235.0).show(&ctx, |ui| {
+        egui::Panel::right("inspector").resizable(true).default_size(290.0).min_size(235.0).show(ui, |ui| {
             ui.add_space(8.0);
             ui.heading("Live preview");
             ui.label("256 x 256 · tileable");
@@ -351,7 +351,7 @@ impl eframe::App for Studio {
             ui.separator();
             self.inspector(ui);
         });
-        egui::CentralPanel::default().show(&ctx, |ui| {
+        egui::CentralPanel::default().show(ui, |ui| {
             ui.label("NODE CANVAS  ·  Click sockets to wire  ·  Drag headers to move");
             self.canvas(ui);
         });
