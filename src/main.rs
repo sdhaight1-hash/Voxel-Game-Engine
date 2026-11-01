@@ -1,5 +1,6 @@
 use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, TextureHandle, Vec2};
-use std::path::PathBuf;
+use std::{collections::HashMap, path::{Path, PathBuf}};
+use std::f32::consts::PI;
 use texture_studio::{Graph, NodeKind};
 
 const NODE_W: f32 = 170.0;
@@ -10,6 +11,13 @@ struct Studio {
     selected: Option<u64>,
     connecting: Option<u64>,
     preview: Option<TextureHandle>,
+    sphere: Option<TextureHandle>,
+    thumbs: HashMap<u64, TextureHandle>,
+    preview_channel: usize,
+    view: u8,
+    pan: Vec2,
+    zoom: f32,
+    library_search: String,
     dirty: bool,
     export_size: u32,
     project_path: Option<PathBuf>,
@@ -19,10 +27,17 @@ struct Studio {
 impl Default for Studio {
     fn default() -> Self {
         Self {
-            graph: Graph::default(),
-            selected: Some(1),
+            graph: Graph::demo_bricks(),
+            selected: Some(2),
             connecting: None,
             preview: None,
+            sphere: None,
+            thumbs: HashMap::new(),
+            preview_channel: 0,
+            view: 0,
+            pan: Vec2::ZERO,
+            zoom: 1.0,
+            library_search: String::new(),
             dirty: true,
             export_size: 1024,
             project_path: None,
@@ -35,18 +50,32 @@ impl Studio {
     fn refresh_preview(&mut self, ctx: &egui::Context) {
         if !self.dirty { return; }
         self.dirty = false;
-        match self.graph.render_rgba(PREVIEW_SIZE, PREVIEW_SIZE) {
-            Ok(pixels) => {
-                let image = egui::ColorImage::from_rgba_unmultiplied(
-                    [PREVIEW_SIZE as usize, PREVIEW_SIZE as usize], &pixels,
-                );
-                if let Some(texture) = &mut self.preview {
+        let rendered = if self.preview_channel == 4 {
+            self.graph.render_normal_rgba(PREVIEW_SIZE, PREVIEW_SIZE)
+        } else {
+            self.graph.render_output_channel_rgba(self.preview_channel, PREVIEW_SIZE, PREVIEW_SIZE)
+        };
+        match rendered {
+            Ok(pixels) => put_texture(ctx, &mut self.preview, "output-preview", pixels, PREVIEW_SIZE),
+            Err(err) => self.status = format!("Preview error: {err}"),
+        }
+        match make_sphere_preview(&self.graph, PREVIEW_SIZE) {
+            Ok(pixels) => put_texture(ctx, &mut self.sphere, "sphere-preview", pixels, PREVIEW_SIZE),
+            Err(err) => self.status = format!("Sphere preview error: {err}"),
+        }
+        self.thumbs.retain(|id, _| self.graph.node(*id).is_some());
+        for node in &self.graph.nodes {
+            if matches!(node.kind, NodeKind::Output) { continue; }
+            if let Ok(pixels) = self.graph.render_node_rgba(node.id, 64, 64) {
+                let image = egui::ColorImage::from_rgba_unmultiplied([64, 64], &pixels);
+                if let Some(texture) = self.thumbs.get_mut(&node.id) {
                     texture.set(image, egui::TextureOptions::LINEAR);
                 } else {
-                    self.preview = Some(ctx.load_texture("preview", image, egui::TextureOptions::LINEAR));
+                    self.thumbs.insert(node.id, ctx.load_texture(
+                        format!("node-thumb-{}", node.id), image, egui::TextureOptions::LINEAR
+                    ));
                 }
             }
-            Err(err) => self.status = format!("Preview error: {err}"),
         }
     }
 
@@ -54,6 +83,8 @@ impl Studio {
         self.graph = Graph::default();
         self.selected = Some(1);
         self.connecting = None;
+        self.pan = Vec2::ZERO;
+        self.zoom = 1.0;
         self.project_path = None;
         self.dirty = true;
         self.status = "New project created".into();
@@ -72,6 +103,8 @@ impl Studio {
                 self.graph = graph;
                 self.selected = None;
                 self.connecting = None;
+                self.pan = Vec2::ZERO;
+                self.zoom = 1.0;
                 self.dirty = true;
                 self.project_path = Some(path);
                 self.status = "Project opened".into();
@@ -104,19 +137,45 @@ impl Studio {
             .add_filter("PNG image", &["png"])
             .set_file_name("texture.png")
             .save_file() else { return; };
-        let result = self.graph.render_rgba(self.export_size, self.export_size)
-            .and_then(|pixels| {
-                let file = std::fs::File::create(&path).map_err(|e| e.to_string())?;
-                let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), self.export_size, self.export_size);
-                encoder.set_color(png::ColorType::Rgba);
-                encoder.set_depth(png::BitDepth::Eight);
-                let mut writer = encoder.write_header().map_err(|e| e.to_string())?;
-                writer.write_image_data(&pixels).map_err(|e| e.to_string())
-            });
+        let size = self.export_size;
+        let result = (if self.preview_channel == 4 {
+            self.graph.render_normal_rgba(size, size)
+        } else {
+            self.graph.render_output_channel_rgba(self.preview_channel, size, size)
+        }).and_then(|pixels| save_png(&path, size, &pixels));
         self.status = match result {
             Ok(()) => format!("PNG exported: {}", path.display()),
             Err(err) => format!("Export failed: {err}"),
         };
+    }
+
+    fn export_material(&mut self) {
+        let Some(folder) = rfd::FileDialog::new().pick_folder() else { return; };
+        let size = self.export_size;
+        let result: Result<(), String> = (|| {
+            for (channel, name) in ["albedo", "roughness", "metallic", "height"].iter().enumerate() {
+                let pixels = self.graph.render_output_channel_rgba(channel, size, size)?;
+                save_png(&folder.join(format!("{name}.png")), size, &pixels)?;
+            }
+            let normals = self.graph.render_normal_rgba(size, size)?;
+            save_png(&folder.join("normal.png"), size, &normals)?;
+            Ok(())
+        })();
+        self.status = match result {
+            Ok(()) => format!("Five PBR maps exported to {}", folder.display()),
+            Err(err) => format!("Material export failed: {err}"),
+        };
+    }
+
+    fn demo_material(&mut self) {
+        self.graph = Graph::demo_bricks();
+        self.selected = Some(2);
+        self.connecting = None;
+        self.pan = Vec2::ZERO;
+        self.zoom = 1.0;
+        self.project_path = None;
+        self.dirty = true;
+        self.status = "Loaded editable bricks material example".into();
     }
 
     fn spawn(&mut self, kind: NodeKind) {
@@ -128,29 +187,50 @@ impl Studio {
     }
 
     fn palette(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Add nodes");
-        ui.label("Generators");
-        if ui.button("+ Noise").clicked() { self.spawn(NodeKind::Noise { scale: 6, octaves: 4, seed: 42 }); }
-        if ui.button("+ Checker").clicked() { self.spawn(NodeKind::Checker { tiles: 8 }); }
-        if ui.button("+ Color").clicked() { self.spawn(NodeKind::Color { rgb: [91, 159, 226] }); }
+        ui.heading("LIBRARY");
+        ui.add(egui::TextEdit::singleline(&mut self.library_search).hint_text("Search nodes..."));
         ui.separator();
-        ui.label("Filters / mixers");
-        if ui.button("+ Invert").clicked() { self.spawn(NodeKind::Invert); }
-        if ui.button("+ Blend").clicked() { self.spawn(NodeKind::Blend { factor: 0.5 }); }
-        ui.separator();
-        ui.label("How to use");
-        ui.small("1. Add a node");
-        ui.small("2. Click its right socket");
-        ui.small("3. Click a left input socket");
-        ui.small("4. Select a node to edit it");
-        ui.small("5. Drag the node's header to move it");
-        ui.add_space(12.0);
-        if let Some(id) = self.connecting {
-            ui.colored_label(Color32::LIGHT_GREEN, format!("Wiring from node #{id}"));
-            if ui.button("Cancel connection").clicked() { self.connecting = None; }
+        let query = self.library_search.trim().to_lowercase();
+        for (section, entries) in [
+            ("GENERATORS", vec![
+                ("Noise", NodeKind::Noise { scale: 6, octaves: 4, seed: 42 }),
+                ("Checker", NodeKind::Checker { tiles: 8 }),
+                ("Bricks", NodeKind::Bricks { columns: 8, rows: 12, mortar: 0.12 }),
+                ("Voronoi", NodeKind::Voronoi { cells: 7, seed: 17 }),
+                ("Color", NodeKind::Color { rgb: [98, 152, 203] }),
+            ]),
+            ("FILTERS", vec![
+                ("Invert", NodeKind::Invert),
+                ("Colorize", NodeKind::Colorize { dark: [24, 37, 54], light: [204, 175, 130] }),
+            ]),
+            ("MIX", vec![
+                ("Blend", NodeKind::Blend { factor: 0.5 }),
+            ]),
+        ] {
+            if entries.iter().any(|(name, _)| name.to_lowercase().contains(&query)) {
+                ui.label(egui::RichText::new(section).strong().color(Color32::from_rgb(165, 174, 193)));
+                for (name, kind) in entries {
+                    if name.to_lowercase().contains(&query) && ui.button(format!("＋ {name}")).clicked() {
+                        self.spawn(kind);
+                    }
+                }
+                ui.add_space(8.0);
+            }
         }
+        ui.separator();
+        if ui.button("Load bricks example").clicked() { self.demo_material(); }
         ui.add_space(12.0);
-        ui.label("Tip: right-click an input socket to disconnect its cable.");
+        ui.heading("CONTROLS");
+        ui.small("Drag headers: move nodes");
+        ui.small("Middle mouse drag: pan graph");
+        ui.small("Mouse wheel: zoom graph");
+        ui.small("Click output → input: connect");
+        ui.small("Right-click input: disconnect");
+        ui.small("Delete node in Inspector");
+        if let Some(id) = self.connecting {
+            ui.colored_label(Color32::LIGHT_GREEN, format!("Wiring from #{id}"));
+            if ui.button("Cancel wire").clicked() { self.connecting = None; }
+        }
     }
 
     fn inspector(&mut self, ui: &mut egui::Ui) {
@@ -181,11 +261,34 @@ impl Studio {
             NodeKind::Color { rgb } => {
                 changed |= ui.color_edit_button_srgb(rgb).changed();
             }
+            NodeKind::Bricks { columns, rows, mortar } => {
+                changed |= ui.add(egui::Slider::new(columns, 2..=64).text("Columns")).changed();
+                let mut half_rows = *rows / 2;
+                if ui.add(egui::Slider::new(&mut half_rows, 1..=32).text("Row pairs")).changed() {
+                    *rows = half_rows * 2;
+                    changed = true;
+                }
+                changed |= ui.add(egui::Slider::new(mortar, 0.0..=0.4).text("Mortar")).changed();
+            }
+            NodeKind::Voronoi { cells, seed } => {
+                changed |= ui.add(egui::Slider::new(cells, 2..=32).text("Cells")).changed();
+                changed |= ui.add(egui::DragValue::new(seed).speed(1).prefix("Seed: ")).changed();
+            }
+            NodeKind::Colorize { dark, light } => {
+                ui.label("Dark color");
+                changed |= ui.color_edit_button_srgb(dark).changed();
+                ui.label("Light color");
+                changed |= ui.color_edit_button_srgb(light).changed();
+            }
             NodeKind::Invert => { ui.label("Inverts the RGB channels of its input."); }
             NodeKind::Blend { factor } => {
                 changed |= ui.add(egui::Slider::new(factor, 0.0..=1.0).text("Mix")).changed();
             }
-            NodeKind::Output => { ui.label("Connect the final image here."); }
+            NodeKind::Output => {
+                ui.label("Connect the final PBR channels here.");
+                ui.small("Albedo · Roughness · Metallic · Height");
+                ui.small("Normal map is derived from Height during export.");
+            }
         }
         self.dirty |= changed;
         if !matches!(node.kind, NodeKind::Output) && ui.button("Delete selected node").clicked() {
