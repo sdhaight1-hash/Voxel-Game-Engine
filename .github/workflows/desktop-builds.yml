@@ -1,0 +1,36 @@
+name: Desktop builds
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            artifact: texture-studio-windows
+            executable: target/release/texture-studio.exe
+          - os: macos-latest
+            artifact: texture-studio-macos
+            executable: target/release/texture-studio
+          - os: ubuntu-latest
+            artifact: texture-studio-linux
+            executable: target/release/texture-studio
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Linux dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libwayland-dev pkg-config
+      - name: Build standalone executable
+        run: cargo build --release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.executable }}
+          if-no-files-found: error
