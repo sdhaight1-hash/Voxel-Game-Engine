@@ -11,6 +11,8 @@ struct Studio {
     selected: Option<u64>,
     connecting: Option<u64>,
     preview: Option<TextureHandle>,
+    selected_preview: Option<TextureHandle>,
+    previewed_id: Option<u64>,
     sphere: Option<TextureHandle>,
     thumbs: HashMap<u64, TextureHandle>,
     preview_channel: usize,
@@ -31,6 +33,8 @@ impl Default for Studio {
             selected: Some(2),
             connecting: None,
             preview: None,
+            selected_preview: None,
+            previewed_id: None,
             sphere: None,
             thumbs: HashMap::new(),
             preview_channel: 0,
@@ -48,8 +52,9 @@ impl Default for Studio {
 
 impl Studio {
     fn refresh_preview(&mut self, ctx: &egui::Context) {
-        if !self.dirty { return; }
+        if !self.dirty && self.previewed_id == self.selected { return; }
         self.dirty = false;
+        self.previewed_id = self.selected;
         let rendered = if self.preview_channel == 4 {
             self.graph.render_normal_rgba(PREVIEW_SIZE, PREVIEW_SIZE)
         } else {
@@ -62,6 +67,13 @@ impl Studio {
         match make_sphere_preview(&self.graph, PREVIEW_SIZE) {
             Ok(pixels) => put_texture(ctx, &mut self.sphere, "sphere-preview", pixels, PREVIEW_SIZE),
             Err(err) => self.status = format!("Sphere preview error: {err}"),
+        }
+        if let Some(id) = self.selected {
+            if let Ok(pixels) = self.graph.render_node_rgba(id, PREVIEW_SIZE, PREVIEW_SIZE) {
+                put_texture(ctx, &mut self.selected_preview, "selected-preview", pixels, PREVIEW_SIZE);
+            }
+        } else {
+            self.selected_preview = None;
         }
         self.thumbs.retain(|id, _| self.graph.node(*id).is_some());
         for node in &self.graph.nodes {
@@ -153,6 +165,11 @@ impl Studio {
         let Some(folder) = rfd::FileDialog::new().pick_folder() else { return; };
         let size = self.export_size;
         let result: Result<(), String> = (|| {
+            for name in ["albedo.png", "roughness.png", "metallic.png", "height.png", "normal.png"] {
+                if folder.join(name).exists() {
+                    return Err(format!("{name} already exists in that folder — choose an empty folder"));
+                }
+            }
             for (channel, name) in ["albedo", "roughness", "metallic", "height"].iter().enumerate() {
                 let pixels = self.graph.render_output_channel_rgba(channel, size, size)?;
                 save_png(&folder.join(format!("{name}.png")), size, &pixels)?;
@@ -304,7 +321,7 @@ impl Studio {
     }
 
     fn canvas(&mut self, ui: &mut egui::Ui) {
-        let (rect, _) = ui.allocate_exact_size(ui.available_size(), Sense::drag());
+        let (rect, _) = ui.allocate_exact_size(ui.available_size(), Sense::hover());
         let painter = ui.painter_at(rect);
         painter.rect_filled(rect, 0, Color32::from_rgb(20, 22, 29));
 
@@ -517,7 +534,7 @@ impl eframe::App for Studio {
             let preview = match self.view {
                 0 => self.sphere.as_ref(),
                 1 => self.preview.as_ref(),
-                _ => self.selected.and_then(|id| self.thumbs.get(&id)).or(self.preview.as_ref()),
+                _ => self.selected_preview.as_ref(),
             };
             if let Some(texture) = preview {
                 let side = ui.available_width().min(272.0);
