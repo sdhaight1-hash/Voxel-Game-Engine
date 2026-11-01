@@ -328,7 +328,7 @@ impl Studio {
         if let Some(pointer) = ui.ctx().pointer_hover_pos() {
             if rect.contains(pointer) {
                 let (scroll, middle_down, delta) = ui.input(|i|
-                    (i.raw_scroll_delta.y, i.pointer.middle_down(), i.pointer.delta()));
+                    (i.smooth_scroll_delta.y, i.pointer.middle_down(), i.pointer.delta()));
                 if middle_down { self.pan += delta; }
                 if scroll.abs() > 0.1 {
                     let previous = self.zoom;
