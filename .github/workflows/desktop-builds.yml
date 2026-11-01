@@ -3,7 +3,12 @@ name: Desktop builds
 on:
   workflow_dispatch:
   push:
+    branches: [main]
     tags: ["v*"]
+
+concurrency:
+  group: desktop-builds-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
