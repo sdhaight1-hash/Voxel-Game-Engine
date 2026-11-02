@@ -284,16 +284,22 @@ impl GpuViewport {
             bind_group_layouts:&[Some(&group_layout)],
             immediate_size:0,
         });
+        let vertex_buffers=[Some(wgpu::VertexBufferLayout{
+            array_stride:std::mem::size_of::<Vertex>() as u64,
+            step_mode:wgpu::VertexStepMode::Vertex,
+            attributes:&ATTRIBUTES,
+        })];
+        let fragment_targets=[Some(wgpu::ColorTargetState{
+            format:wgpu::TextureFormat::Rgba8Unorm,
+            blend:None,
+            write_mask:wgpu::ColorWrites::ALL,
+        })];
         let pipeline_descriptor=wgpu::RenderPipelineDescriptor{
             label:Some("voxel-depth-texture-cutout-pipeline"),
             layout:Some(&pipeline_layout),
             vertex:wgpu::VertexState{
                 module:&shader,entry_point:Some("vs_main"),
-                buffers:&[Some(wgpu::VertexBufferLayout{
-                    array_stride:std::mem::size_of::<Vertex>() as u64,
-                    step_mode:wgpu::VertexStepMode::Vertex,
-                    attributes:&ATTRIBUTES,
-                })],
+                buffers:&vertex_buffers,
                 compilation_options:wgpu::PipelineCompilationOptions::default(),
             },
             primitive:wgpu::PrimitiveState{
@@ -311,11 +317,7 @@ impl GpuViewport {
             multisample:wgpu::MultisampleState::default(),
             fragment:Some(wgpu::FragmentState{
                 module:&shader,entry_point:Some("fs_main"),
-                targets:&[Some(wgpu::ColorTargetState {
-                    format:wgpu::TextureFormat::Rgba8Unorm,
-                    blend:None,
-                    write_mask:wgpu::ColorWrites::ALL,
-                })],
+                targets:&fragment_targets,
                 compilation_options:wgpu::PipelineCompilationOptions::default(),
             }),
             multiview_mask:None,cache:None,
