@@ -629,6 +629,28 @@ mod tests {
     }
 
     #[test]
+    fn ordered_leaf_preview_flag_changes_uniform_only_not_scene_uploads() {
+        let mesh=FoliageMesh::from_voxels(VoxelShape::Cube,0.5,vec![
+            VoxelCell{x:0,y:0,z:0,material:Material::Bark},
+            VoxelCell{x:0,y:0,z:1,material:Material::Leaf},
+        ]).unwrap();
+        let bark=vec![100;TEX_SIZE as usize*TEX_SIZE as usize*4];
+        let leaves=vec![128;TEX_SIZE as usize*TEX_SIZE as usize*4];
+        let palette=texture_studio::foliage_materials::SeasonalPalettes::default()
+            .gpu_stops();
+        let scene=Scene::from_mesh(&mesh,&bark,&leaves,[40,140,50],palette,0.0);
+        // RenderScene.ordered_leaf_coverage is not part of Scene or the
+        // upload key. It only goes into globals.season.z each frame.
+        for ordered_leaf_coverage in [false,true] {
+            let mode=if ordered_leaf_coverage {1.0f32} else {0.0};
+            assert_eq!(mode,if ordered_leaf_coverage {1.0} else {0.0});
+            assert_eq!(scene_uploads(Some(&scene),&scene),SceneUploads {
+                geometry:false,bark:false,leaf:false,palette:false,
+            });
+        }
+    }
+
+    #[test]
     fn vector_leaf_silhouette_edits_upload_only_leaf_texture_not_geometry_or_palette() {
         use texture_studio::foliage::PlantPreset;
         use texture_studio::foliage_materials::FoliageMaterials;
