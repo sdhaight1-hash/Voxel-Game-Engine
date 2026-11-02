@@ -135,28 +135,7 @@ impl VoxelAsset {
     }
 
     pub fn from_json(text: &str) -> Result<Self, String> {
-        let value: serde_json::Value =
-            serde_json::from_str(text).map_err(|e| e.to_string())?;
-        let asset = if value["format"].as_str() == Some("texture-studio-voxel-tree-v1") {
-            // Upgrade the voxel trees saved by the previous standalone workflow.
-            let project: FoliageProject = serde_json::from_value(value["settings"].clone())
-                .map_err(|e| format!("Voxel tree settings: {e}"))?;
-            let cells: Vec<VoxelCell> = serde_json::from_value(value["voxels"].clone())
-                .map_err(|e| format!("Voxel tree cells: {e}"))?;
-            Self {
-                name: format!("{} voxel tree",project.preset.name()),
-                shape: project.shape,
-                voxel_size: project.voxel_size,
-                voxels: cells,
-                bark_color: project.bark_color,
-                leaf_color: project.leaf_color,
-                leaf_render: project.leaf_render,
-                materials: project.materials,
-                ..Self::default()
-            }
-        } else {
-            serde_json::from_value(value).map_err(|e|e.to_string())?
-        };
+        let asset: Self = serde_json::from_str(text).map_err(|e| e.to_string())?;
         asset.validate()?;
         Ok(asset)
     }
@@ -198,31 +177,27 @@ mod tests {
     }
 
     #[test]
-    fn generated_trees_are_editable_voxel_assets_in_both_grids() {
-        for shape in [VoxelShape::Cube, VoxelShape::HexPrism] {
-            let mut project = FoliageProject::from_preset(PlantPreset::Willow);
-            project.shape = shape;
-            let tree = project.generate().unwrap();
-            let mut asset = VoxelAsset::from_tree(&project, &tree, &Graph::default());
-            assert_eq!(asset.shape, shape);
-            assert_eq!(asset.voxels.len(), tree.voxels.len());
-            assert!(asset.material_graph.is_some());
-            let first = asset.voxels[0];
-            asset.erase([first.x, first.y, first.z]);
-            assert_eq!(asset.voxels.len() + 1, tree.voxels.len());
-            let decoded = VoxelAsset::from_json(&asset.to_json().unwrap()).unwrap();
-            assert_eq!(decoded.voxels.len(), asset.voxels.len());
-            assert!(decoded.mesh().unwrap().triangle_count() > 0);
-            let obj = decoded.obj().unwrap();
-            assert!(obj.contains("mtllib asset.mtl"));
-            assert!(obj.contains("usemtl"));
-        }
+    fn generated_tree_is_editable_1m_hexel_asset() {
+        let project = FoliageProject::from_preset(PlantPreset::Willow);
+        let tree = project.generate().unwrap();
+        let mut asset = VoxelAsset::from_tree(&project, &tree, &Graph::default());
+        assert_eq!(asset.shape, VoxelShape::HexPrism);
+        assert_eq!(asset.voxel_size, 1.0);
+        assert_eq!(asset.voxels.len(), tree.voxels.len());
+        assert!(asset.material_graph.is_some());
+        let first = asset.voxels[0];
+        asset.erase([first.x, first.y, first.z]);
+        assert_eq!(asset.voxels.len() + 1, tree.voxels.len());
+        let decoded = VoxelAsset::from_json(&asset.to_json().unwrap()).unwrap();
+        assert_eq!(decoded.voxels.len(), asset.voxels.len());
+        assert!(decoded.mesh().unwrap().triangle_count() > 0);
+        assert!(decoded.obj().unwrap().contains("mtllib asset.mtl"));
     }
 
     #[test]
     fn world_hexel_tree_has_removable_wood_and_foliage_cells() {
         let project = FoliageProject::from_preset(PlantPreset::Oak);
-        let mesh = project.generate_world_hexels().unwrap();
+        let mesh = project.generate().unwrap();
         let mut asset = VoxelAsset::from_tree(&project, &mesh, &Graph::default());
         assert_eq!(asset.shape, VoxelShape::HexPrism);
         assert_eq!(asset.voxel_size, 1.0);
@@ -250,19 +225,6 @@ mod tests {
         asset.voxel_size = 0.5;
         asset.name = " ".into();
         assert!(asset.to_json().is_err());
-    }
-
-    #[test]
-    fn older_voxel_tree_json_imports_as_editable_asset() {
-        let project = FoliageProject::from_preset(PlantPreset::Birch);
-        let mesh = project.generate().unwrap();
-        let legacy = mesh.voxel_json(&project).unwrap();
-        let mut asset = VoxelAsset::from_json(&legacy).unwrap();
-        assert_eq!(asset.voxels.len(),mesh.voxels.len());
-        assert_eq!(asset.shape,project.shape);
-        assert_eq!(asset.bark_color,project.bark_color);
-        let first=asset.voxels[0];
-        assert!(asset.erase([first.x,first.y,first.z]));
     }
 
     #[test]
