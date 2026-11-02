@@ -1,4 +1,4 @@
-//! Bounded architectural growth rules for the 30 authored tree/bamboo types.
+//! Bounded architectural growth rules for the 33 authored tree/bamboo types.
 //! These are stylized visual rules at the editor's 1m hexel resolution, not
 //! measured botanical growth simulations. Author-edited slider values still
 //! apply, but the seed cannot turn one species into a different silhouette.
@@ -11,6 +11,7 @@ pub enum Phyllotaxy {
     Opposite,     // paired branches rotated between pairs
     Whorled,      // concentric tiers (conifers)
     CulmNodes,    // bamboo branches at discrete culm nodes
+    CrownFronds,  // palm leaves grow only at trunk apex; no woody lateral forks
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -22,6 +23,8 @@ pub enum LeafPlacement {
     SpurNeedles,     // larch clusters on short shoots
     FeatherSprays,   // bald cypress feathery branchlets
     CulmLeaves,      // bamboo leaves concentrated at nodes / twigs
+    PinnateFronds,   // coconut/date palm feathered leaflets
+    FanFronds,       // fan-shaped segmented blades
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -99,6 +102,7 @@ impl PlantPreset {
         // Stylized bases do not imply a physical root/buttress model.
         let (taper,base_flare) = match self {
             Self::GreenBamboo|Self::BrownBamboo => (0.08,0.0),
+            Self::CoconutPalm|Self::DatePalm|Self::FanPalm => (0.08,0.08),
             Self::Kapok => (0.67,0.95),
             Self::Redwood => (0.58,0.40),
             Self::BaldCypress => (0.65,0.52),
@@ -158,6 +162,9 @@ impl PlantPreset {
                 Self::Pomegranate => (Opposite, AlongTwigs, [-0.04,0.55],[-0.10,0.62],1.12,0.90,0.044,0.78),
                 Self::GreenBamboo|Self::BrownBamboo =>
                     (CulmNodes, CulmLeaves, [0.12,0.82],[0.04,0.64],0.62,0.15,0.007,0.55),
+                Self::CoconutPalm => (CrownFronds, PinnateFronds, [-0.56,0.37],[-0.25,0.22],1.12,0.0,0.045,0.89),
+                Self::DatePalm => (CrownFronds, PinnateFronds, [-0.30,0.48],[-0.22,0.22],0.98,0.0,0.028,0.93),
+                Self::FanPalm => (CrownFronds, FanFronds, [-0.15,0.55],[-0.20,0.25],0.97,0.0,0.024,1.06),
                 Self::Shrub => (Spiral, OuterCrown, [-0.15,0.45],[-0.20,0.55],1.10,0.75,0.030,0.78),
             };
         TreeGrowthRules { phyllotaxy, foliage, primary_pitch, secondary_pitch,
@@ -235,5 +242,11 @@ mod tests {
             Phyllotaxy::CulmNodes);
         assert_eq!(PlantPreset::Maple.growth_rules().phyllotaxy,
             Phyllotaxy::Opposite);
+        assert_eq!(PlantPreset::CoconutPalm.growth_rules().phyllotaxy,
+            Phyllotaxy::CrownFronds);
+        assert_eq!(PlantPreset::FanPalm.growth_rules().foliage,
+            LeafPlacement::FanFronds);
+        assert_eq!(PlantPreset::DatePalm.growth_rules().foliage,
+            LeafPlacement::PinnateFronds);
     }
 }
