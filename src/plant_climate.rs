@@ -210,6 +210,10 @@ mod tests {
         let restored:ClimateCatalog=serde_json::from_str(&json).unwrap();
         assert_eq!(restored,catalog);
         assert_eq!(restored.schema,"hexel-vegetation-climate-v1");
+        // The portable snapshot must match the actual hardcoded Rust catalog.
+        let bundled:ClimateCatalog=serde_json::from_str(
+            include_str!("../docs/vegetation-climate-catalog.json")).unwrap();
+        assert_eq!(bundled,catalog);
     }
 
     #[test]
