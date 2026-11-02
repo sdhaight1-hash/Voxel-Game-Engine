@@ -11,6 +11,94 @@ pub const MATERIAL_SIZE: u32 = 128;
 fn default_threshold() -> f32 { 0.5 }
 fn default_leaf_species() -> PlantPreset { PlantPreset::Oak }
 
+/// Four seasons × four gradient stops (shadow, base, midtone, highlight).
+/// Stored as RGB8 for compact JSON and native egui color editing; expanded
+/// to 16 aligned vec4 values once when a wgpu scene is uploaded.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SeasonalPalettes {
+    pub seasons: [[[u8;3];4];4],
+}
+impl SeasonalPalettes {
+    pub const NAMES: [&'static str;4] = ["Spring","Summer","Autumn","Winter"];
+    pub const STOPS: [&'static str;4] = ["Shadow","Base","Midtone","Highlight"];
+
+    fn blend(a:[u8;3],b:[u8;3],t:f32)->[u8;3] {
+        std::array::from_fn(|i|
+            ((a[i] as f32)*(1.0-t)+(b[i] as f32)*t).round() as u8)
+    }
+    fn gradient(color:[u8;3])->[[u8;3];4] {
+        // Brightness progression, not four duplicate colors.
+        let shade=|scale:f32|color.map(|c|(c as f32*scale).round().min(255.0) as u8);
+        [shade(0.55),shade(0.83),color,shade(1.23)]
+    }
+    pub fn for_species(species:PlantPreset,summer:[u8;3])->Self {
+        let evergreen=species.is_conifer() || species.is_bamboo()
+            || matches!(species,PlantPreset::Olive|PlantPreset::Orange|
+                PlantPreset::Mango|PlantPreset::Lychee|
+                PlantPreset::Breadfruit|PlantPreset::Kapok|
+                PlantPreset::Ebony|PlantPreset::Purpleheart);
+        let autumn=match species {
+            PlantPreset::Maple=>[208,79,31],
+            PlantPreset::CrimsonKingMaple=>[144,38,54],
+            PlantPreset::Oak|PlantPreset::Walnut=>[176,104,40],
+            PlantPreset::Birch=>[224,181,53],
+            PlantPreset::Willow=>[198,169,65],
+            PlantPreset::Larch|PlantPreset::BaldCypress=>[187,128,43],
+            PlantPreset::Cherry|PlantPreset::RedApple|PlantPreset::PinkApple|
+            PlantPreset::YellowApple=>[197,104,54],
+            PlantPreset::Pear|PlantPreset::Peach=>[197,151,56],
+            _=>[173,139,56],
+        };
+        let spring=if evergreen { Self::blend(summer,[115,177,93],0.13) }
+            else {Self::blend(summer,[164,202,81],0.32)};
+        let autumn=if evergreen && !matches!(species,
+            PlantPreset::Larch|PlantPreset::BaldCypress) {
+                Self::blend(summer,autumn,0.13)
+            } else {autumn};
+        // Color-only winter. Deciduous leaf shedding belongs to ecology,
+        // not the foliage palette shader.
+        let winter=if evergreen {
+            Self::blend(summer,[68,93,84],0.28)
+        } else {
+            Self::blend(autumn,[105,91,72],0.54)
+        };
+        Self {seasons:[Self::gradient(spring),Self::gradient(summer),
+            Self::gradient(autumn),Self::gradient(winter)]}
+    }
+    /// WGSL uniform array order: Spring's 4 stops, Summer's 4, etc.
+    pub fn gpu_stops(&self)->[[f32;4];16] {
+        std::array::from_fn(|i|{
+            let c=self.seasons[i/4][i%4];
+            [c[0] as f32/255.0,c[1] as f32/255.0,c[2] as f32/255.0,1.0]
+        })
+    }
+    /// CPU reference for tests and preview color swatches; the actual
+    /// season blend is performed in the WGSL fragment shader.
+    pub fn sample(&self,progress:f32,factor:f32)->[f32;3] {
+        let p=progress.rem_euclid(4.0);
+        let season=p.floor() as usize;
+        let t=p.fract();
+        let evaluate=|season:usize|{
+            let x=factor.clamp(0.0,1.0)*3.0;
+            let k=(x.floor() as usize).min(2);
+            let f=x-k as f32;
+            std::array::from_fn(|ch| {
+                let a=self.seasons[season][k][ch] as f32/255.0;
+                let b=self.seasons[season][k+1][ch] as f32/255.0;
+                a+(b-a)*f
+            })
+        };
+        let a:[f32;3]=evaluate(season);
+        let b:[f32;3]=evaluate((season+1)%4);
+        std::array::from_fn(|ch|a[ch]+(b[ch]-a[ch])*t)
+    }
+}
+impl Default for SeasonalPalettes {
+    fn default()->Self {
+        Self::for_species(PlantPreset::Oak,[67,135,52])
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MaterialRole { Bark, Leaf, Opacity }
 impl MaterialRole {
@@ -37,6 +125,9 @@ pub struct FoliageMaterials {
     /// Ripe fruit colour for a small visual indication on foliage cards.
     /// Real fruit items, harvesting and seasonal ripening are world systems.
     pub fruit_color: Option<[u8;3]>,
+    /// Optional so existing saved assets can compute the correct fallback
+    /// from their original leaf species and base tint.
+    pub seasonal_palettes: Option<SeasonalPalettes>,
     #[serde(default = "default_threshold")]
     pub cutout_threshold: f32,
 }
@@ -46,11 +137,16 @@ impl Default for FoliageMaterials {
         Self { bark: None, leaf: None, leaf_opacity: None,
             bark_preset: None, leaf_preset: None,
             leaf_species: PlantPreset::Oak, fruit_color: None,
-            cutout_threshold: 0.5 }
+            seasonal_palettes: None, cutout_threshold: 0.5 }
     }
 }
 
 impl FoliageMaterials {
+    pub fn effective_palettes(&self,leaf_tint:[u8;3])->SeasonalPalettes {
+        self.seasonal_palettes.clone().unwrap_or_else(||
+            SeasonalPalettes::for_species(self.leaf_species,leaf_tint))
+    }
+
     pub fn validate(&self) -> Result<(), String> {
         if !self.cutout_threshold.is_finite()
             || !(0.0..=1.0).contains(&self.cutout_threshold) {
@@ -99,6 +195,10 @@ impl FoliageMaterials {
         let mut out=Self::default();
         out.leaf_species=species;
         out.fruit_color=species.fruit_color();
+        // Palette defaults are derived from the exact generated leaf tint
+        // and selected species in the FoliageProject; a standalone material
+        // without explicit palettes keeps the per-species fallback.
+        out.seasonal_palettes=None;
         // Reuse exact names and variant types from the existing natural
         // material catalog. No extra external texture library is required.
         let name=species.material_name();
@@ -295,6 +395,38 @@ mod tests {
             .bake_leaf(64,[120,155,90]).unwrap(),
             FoliageMaterials::for_species(PlantPreset::YellowApple)
             .bake_leaf(64,[120,155,90]).unwrap());
+    }
+
+    #[test]
+    fn seasonal_palettes_are_editable_serializable_and_wrap_smoothly() {
+        for species in PlantPreset::ALL {
+            let palettes=SeasonalPalettes::for_species(species,[75,135,56]);
+            assert_eq!(palettes.gpu_stops().len(),16);
+            assert_eq!(palettes.sample(0.0,0.5),palettes.sample(4.0,0.5));
+            assert_eq!(palettes.sample(1.0,0.5),palettes.sample(5.0,0.5));
+            for a in 0..4 {
+                let middle=palettes.sample(a as f32+0.5,0.4);
+                let before=palettes.sample(a as f32,0.4);
+                let after=palettes.sample(((a+1)%4) as f32,0.4);
+                for i in 0..3 {
+                    assert!((middle[i]-(before[i]+after[i])*0.5).abs()<0.00001);
+                }
+            }
+            let decoded:SeasonalPalettes=serde_json::from_str(
+                &serde_json::to_string(&palettes).unwrap()).unwrap();
+            assert_eq!(palettes,decoded);
+        }
+        let mut mat=FoliageMaterials::for_species(PlantPreset::Maple);
+        let mut palette=mat.effective_palettes([112,163,52]);
+        palette.seasons[2][3]=[232,39,26];
+        mat.seasonal_palettes=Some(palette.clone());
+        let loaded:FoliageMaterials=serde_json::from_str(
+            &serde_json::to_string(&mat).unwrap()).unwrap();
+        assert_eq!(loaded.effective_palettes([112,163,52]),palette);
+        let old:FoliageMaterials=serde_json::from_str(
+            r#"{"leaf_species":"Willow"}"#).unwrap();
+        assert_eq!(old.effective_palettes([91,156,65]),
+            SeasonalPalettes::for_species(PlantPreset::Willow,[91,156,65]));
     }
 
     #[test]
