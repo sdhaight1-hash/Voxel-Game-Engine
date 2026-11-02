@@ -609,6 +609,111 @@ impl Studio {
         ui.small("Click a cell to select; use the right inspector to move or paint it.");
     }
 
+    fn material_controls(&mut self, ui:&mut egui::Ui, for_asset:bool) {
+        ui.separator();
+        ui.heading("PROCEDURAL MATERIAL SLOTS");
+        ui.horizontal_wrapped(|ui| {
+            for role in [MaterialRole::Bark,MaterialRole::Leaf,MaterialRole::Opacity] {
+                ui.selectable_value(&mut self.material_role,role,role.name());
+            }
+        });
+        let slot=self.material_role;
+        let mat=if for_asset {&self.asset.materials} else {&self.foliage.materials};
+        let assigned=match slot {
+            MaterialRole::Bark=>mat.bark_preset.as_deref().unwrap_or("Custom / flat"),
+            MaterialRole::Leaf=>mat.leaf_preset.as_deref().unwrap_or("Custom / flat"),
+            MaterialRole::Opacity=>if mat.leaf_opacity.is_some() {"Custom mask graph"}
+                else {"Original silhouette"},
+        };
+        ui.small(format!("Assigned: {assigned}"));
+        ui.add(egui::TextEdit::singleline(&mut self.material_search)
+            .hint_text("Find bark or leaf preset..."));
+        let query=self.material_search.to_lowercase();
+        let candidates:Vec<(usize,String)>=self.presets.iter().enumerate()
+            .filter(|(_,p)| {
+                if !query.is_empty() {p.matches(&query)}
+                else {
+                    let v=p.variant.to_lowercase();
+                    (match slot {
+                        MaterialRole::Bark=>v.contains("bark")||v.contains("trunk"),
+                        MaterialRole::Leaf|MaterialRole::Opacity=>
+                            v.contains("leaves")||v.contains("foliage")
+                            ||v.contains("needle"),
+                    }) && matches!(p.profile.as_str(),
+                        "wood"|"foliage"|"fruit"|"grass"|"crop"|"flower")
+                }
+            }).take(40).map(|(i,p)|(i,p.title())).collect();
+        let mut chosen=None;
+        egui::ScrollArea::vertical().id_salt("slot_preset_choices")
+            .max_height(112.0).show(ui,|ui| {
+                for (index,label) in candidates {
+                    if ui.selectable_label(false,label).clicked() {
+                        chosen=Some(index);
+                    }
+                }
+            });
+        if let Some(i)=chosen {
+            let preset=self.presets[i].clone();
+            if for_asset {
+                self.asset.materials.assign_preset(slot,&preset);
+                self.asset_mats_dirty=true;
+            } else {
+                self.foliage.materials.assign_preset(slot,&preset);
+                self.foliage_mats_dirty=true;
+            }
+            self.status=format!("Assigned {} to {}",preset.title(),slot.name());
+        }
+        let mat=if for_asset {&mut self.asset.materials}
+            else {&mut self.foliage.materials};
+        if ui.add(egui::Slider::new(&mut mat.cutout_threshold,0.0..=1.0)
+            .text("Cutout threshold")).changed() {
+            if for_asset {self.asset_mats_dirty=true;}
+            else {self.foliage_mats_dirty=true;}
+        }
+        ui.small("Transparency keeps the leaf silhouette; an opacity graph can add holes.");
+        ui.horizontal(|ui| {
+            if ui.button("Edit slot in Nodes").clicked() {
+                let mats=if for_asset {&self.asset.materials}
+                    else {&self.foliage.materials};
+                self.graph=mats.graph(slot).cloned().unwrap_or_default();
+                self.editing_material=Some((for_asset,slot));
+                self.library_tab=0;
+                self.selected=self.graph.nodes.first().map(|n|n.id);
+                self.dirty=true;
+                self.status=format!("Edit {} then click Apply in the top toolbar",slot.name());
+            }
+            if slot==MaterialRole::Opacity && ui.button("Clear opacity graph").clicked() {
+                if for_asset {
+                    self.asset.materials.leaf_opacity=None;
+                    self.asset_mats_dirty=true;
+                } else {
+                    self.foliage.materials.leaf_opacity=None;
+                    self.foliage_mats_dirty=true;
+                }
+            }
+        });
+        if !for_asset && ui.button("Restore species bark + leaf presets").clicked() {
+            self.foliage.materials=FoliageMaterials::for_species(self.foliage.preset);
+            self.foliage_mats_dirty=true;
+        }
+    }
+
+    fn apply_edited_material(&mut self) {
+        let Some((for_asset,role))=self.editing_material else {return;};
+        if let Err(e)=self.graph.validate() {
+            self.status=format!("Invalid material graph: {e}");return;
+        }
+        if for_asset {
+            self.asset.materials.set_graph(role,self.graph.clone());
+            self.asset_mats_dirty=true;
+        } else {
+            self.foliage.materials.set_graph(role,self.graph.clone());
+            self.foliage_mats_dirty=true;
+        }
+        self.status=format!("Applied {} to {}",role.name(),
+            if for_asset {"asset"} else {"tree"});
+    }
+
     fn asset_inspector(&mut self, ui: &mut egui::Ui) {
         egui::ScrollArea::vertical().id_salt("asset_inspector").show(ui, |ui| {
         ui.heading("VOXEL ASSET");
@@ -750,6 +855,7 @@ impl Studio {
         ui.small("Cutout foliage is rendered with original alpha-masked cards.");
         ui.small("Wind sway is preview-only; OBJ is static, JSON retains wind settings.");
         ui.small("Procedural material nodes remain available in the Nodes tab.");
+        self.material_controls(ui,true);
         });
     }
 
@@ -1096,7 +1202,8 @@ impl Studio {
             ui.colored_label(Color32::from_rgb(232,133,104),err);
         }
         ui.separator();
-        ui.small("This voxel tree is separate from the procedural 2D material graph.");
+        ui.small("Tree geometry and material graphs remain independently editable.");
+        self.material_controls(ui,false);
     }
 
     fn foliage_canvas(&mut self, ui: &mut egui::Ui) {
@@ -1831,7 +1938,7 @@ impl eframe::App for Studio {
         }
         egui::Panel::top("toolbar").show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
-                ui.heading("TEXTURE STUDIO");
+                ui.heading("VOXEL GAME ENGINE");
                 ui.separator();
                 if self.library_tab == 3 {
                     if ui.button("New Asset").clicked() { self.new_asset(); }
@@ -1856,6 +1963,14 @@ impl eframe::App for Studio {
                     if ui.button("Edit Tree as Asset").clicked() { self.import_tree_as_asset(); }
                     ui.separator();
                 } else {
+                if self.library_tab==0 {
+                    if let Some((asset,role))=self.editing_material {
+                        if ui.button(format!("Apply {} to {}",role.name(),
+                            if asset {"Asset"} else {"Tree"})).clicked() {
+                            self.apply_edited_material();
+                        }
+                    }
+                }
                 if ui.button("New").clicked() { self.new_project(); }
                 if ui.button("Open").clicked() { self.open_project(); }
                 if ui.button("Save").clicked() { self.save_project(false); }
