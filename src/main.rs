@@ -6,6 +6,7 @@ use std::{collections::HashMap, path::{Path, PathBuf}, time::Instant};
 use texture_studio::{Graph, NodeKind, LibraryNode, VoxelShape, SideMapping};
 use texture_studio::node_definitions::{SocketType, ParameterControl};
 use texture_studio::render_cache::GraphRenderCache;
+use texture_studio::foliage_bake_cache::FoliageBakeCache;
 use texture_studio::presets::{builtin_presets, Preset};
 use texture_studio::foliage::{FoliageProject, FoliageMesh, FoliageStage, PlantPreset, Material,
     BranchGrowth, LeafGeometry, sway_leaf_vertex};
@@ -255,6 +256,8 @@ struct Studio {
     graph: Graph,
     /// Bounded CPU RGBA cache for Nodes output, selected-node and thumbnail previews.
     preview_render_cache: GraphRenderCache,
+    /// Shared across Foliage and Asset editors, keyed by authored bake inputs.
+    foliage_bake_cache: FoliageBakeCache,
     foliage: FoliageProject,
     foliage_mesh: Option<FoliageMesh>,
     foliage_dirty: bool,
@@ -322,6 +325,7 @@ impl Default for Studio {
             asset_gpu_scene: None,
             graph: Graph::demo_bricks(),
             preview_render_cache: GraphRenderCache::new(64*1024*1024),
+            foliage_bake_cache: FoliageBakeCache::new(32*1024*1024),
             foliage: FoliageProject::default(),
             foliage_mesh: None,
             foliage_dirty: true,
@@ -2361,20 +2365,30 @@ impl eframe::App for Studio {
             self.foliage_gpu_scene=None;
             let size=64;
             let started=Instant::now();
-            let baked=(self.foliage.materials.bake_leaf(size,self.foliage.leaf_color),
-                       self.foliage.materials.bake_bark(size,self.foliage.bark_color));
-            self.metrics.leaf_bake_attempts+=1;
-            self.metrics.bark_bake_attempts+=1;
+            let before=self.foliage_bake_cache.stats().misses;
+            let leaves=self.foliage_bake_cache.bake_leaf(
+                &self.foliage.materials,size,self.foliage.leaf_color);
+            self.metrics.leaf_bake_attempts+=self.foliage_bake_cache.stats().misses-before;
+            let before=self.foliage_bake_cache.stats().misses;
+            let bark=self.foliage_bake_cache.bake_bark(
+                &self.foliage.materials,size,self.foliage.bark_color);
+            self.metrics.bark_bake_attempts+=self.foliage_bake_cache.stats().misses-before;
             self.metrics.report("foliage_material_bake",started.elapsed(),
-                baked.0.is_ok() && baked.1.is_ok());
-            match baked {
+                leaves.is_ok() && bark.is_ok());
+            if std::env::var_os("VOXEL_PROFILE_MATERIALS").is_some() {
+                let stats=self.foliage_bake_cache.stats();
+                eprintln!("[material-profile] event=foliage_bake_cache hits={} misses={} evictions={} resident_bytes={} peak_bytes={}",
+                    stats.hits,stats.misses,stats.evictions,
+                    stats.resident_bytes,stats.peak_resident_bytes);
+            }
+            match (leaves,bark) {
                 (Ok(leaves),Ok(bark))=>{
-                    self.foliage_leaf_pixels=leaves.clone();
-                    self.foliage_bark_pixels=bark.clone();
+                    self.foliage_leaf_pixels=leaves.as_ref().to_vec();
+                    self.foliage_bark_pixels=bark.as_ref().to_vec();
                     put_texture_rect(&ctx,&mut self.leaf_texture,"foliage-leaf-material",
-                        leaves,[size as usize,size as usize]);
+                        leaves.as_ref().to_vec(),[size as usize,size as usize]);
                     put_texture_rect(&ctx,&mut self.bark_texture,"foliage-bark-material",
-                        bark,[size as usize,size as usize]);
+                        bark.as_ref().to_vec(),[size as usize,size as usize]);
                 }
                 (Err(e),_)|(_,Err(e))=>self.status=format!("Foliage material: {e}"),
             }
@@ -2383,20 +2397,30 @@ impl eframe::App for Studio {
             self.asset_gpu_scene=None;
             let size=64;
             let started=Instant::now();
-            let baked=(self.asset.materials.bake_leaf(size,self.asset.leaf_color),
-                       self.asset.materials.bake_bark(size,self.asset.bark_color));
-            self.metrics.leaf_bake_attempts+=1;
-            self.metrics.bark_bake_attempts+=1;
+            let before=self.foliage_bake_cache.stats().misses;
+            let leaves=self.foliage_bake_cache.bake_leaf(
+                &self.asset.materials,size,self.asset.leaf_color);
+            self.metrics.leaf_bake_attempts+=self.foliage_bake_cache.stats().misses-before;
+            let before=self.foliage_bake_cache.stats().misses;
+            let bark=self.foliage_bake_cache.bake_bark(
+                &self.asset.materials,size,self.asset.bark_color);
+            self.metrics.bark_bake_attempts+=self.foliage_bake_cache.stats().misses-before;
             self.metrics.report("asset_material_bake",started.elapsed(),
-                baked.0.is_ok() && baked.1.is_ok());
-            match baked {
+                leaves.is_ok() && bark.is_ok());
+            if std::env::var_os("VOXEL_PROFILE_MATERIALS").is_some() {
+                let stats=self.foliage_bake_cache.stats();
+                eprintln!("[material-profile] event=foliage_bake_cache hits={} misses={} evictions={} resident_bytes={} peak_bytes={}",
+                    stats.hits,stats.misses,stats.evictions,
+                    stats.resident_bytes,stats.peak_resident_bytes);
+            }
+            match (leaves,bark) {
                 (Ok(leaves),Ok(bark))=>{
-                    self.asset_leaf_pixels=leaves.clone();
-                    self.asset_bark_pixels=bark.clone();
+                    self.asset_leaf_pixels=leaves.as_ref().to_vec();
+                    self.asset_bark_pixels=bark.as_ref().to_vec();
                     put_texture_rect(&ctx,&mut self.asset_leaf_texture,"asset-leaf-material",
-                        leaves,[size as usize,size as usize]);
+                        leaves.as_ref().to_vec(),[size as usize,size as usize]);
                     put_texture_rect(&ctx,&mut self.asset_bark_texture,"asset-bark-material",
-                        bark,[size as usize,size as usize]);
+                        bark.as_ref().to_vec(),[size as usize,size as usize]);
                 }
                 (Err(e),_)|(_,Err(e))=>self.status=format!("Asset material: {e}"),
             }
