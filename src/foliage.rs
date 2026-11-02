@@ -714,12 +714,26 @@ impl FoliageProject {
             (1.0-self.carve_bottom-self.carve_top)).clamp(0.0,1.0);
         let center = 2.0*crown_t-1.0;
         match self.preset {
-            PlantPreset::Oak => 0.82+0.35*(1.0-center*center),
-            PlantPreset::Pine => 0.20+1.15*(1.0-crown_t),
-            PlantPreset::Birch => 0.66+0.24*(1.0-crown_t),
+            PlantPreset::Acacia => 0.50+0.80*crown_t,
+            PlantPreset::Kapok => 0.54+0.72*crown_t,
+            PlantPreset::Oak|PlantPreset::Walnut|PlantPreset::Ebony =>
+                0.82+0.35*(1.0-center*center),
+            PlantPreset::Maple|PlantPreset::CrimsonKingMaple =>
+                0.96+0.35*(1.0-center*center),
+            PlantPreset::Pine|PlantPreset::BaldCypress|PlantPreset::Larch|
+            PlantPreset::Redwood => 0.20+1.15*(1.0-crown_t),
+            PlantPreset::MediterraneanCypress => 0.20+0.24*(1.0-crown_t),
+            PlantPreset::Birch|PlantPreset::Pear => 0.66+0.24*(1.0-crown_t),
             PlantPreset::Willow => 1.22-0.16*crown_t,
-            PlantPreset::Maple => 0.96+0.35*(1.0-center*center),
-            PlantPreset::Shrub => 1.14-0.18*crown_t,
+            PlantPreset::Purpleheart|PlantPreset::Mango|PlantPreset::Breadfruit =>
+                0.80+0.46*(1.0-center*center),
+            PlantPreset::RedApple|PlantPreset::PinkApple|PlantPreset::YellowApple|
+            PlantPreset::Peach|PlantPreset::Cherry|PlantPreset::Orange|
+            PlantPreset::Lychee => 0.88+0.31*(1.0-center*center),
+            PlantPreset::Olive|PlantPreset::Pomegranate|PlantPreset::Shrub =>
+                1.14-0.18*crown_t,
+            PlantPreset::GreenBamboo|PlantPreset::BrownBamboo =>
+                0.30+0.12*crown_t,
         }
     }
 
@@ -765,7 +779,7 @@ impl FoliageProject {
         for i in 0..self.branch_count {
             let rand = |c| hash01(self.seed, i, c);
             if rand(0) < self.prune { continue; }
-            let (height_fraction,angle) = if self.preset==PlantPreset::Pine {
+            let (height_fraction,angle) = if self.preset.is_conifer() {
                 // Six-way whorls staggered between layers instead of a
                 // broadleaf spiral. The conifer envelope tapers upward.
                 let layer=i/6;
@@ -786,11 +800,14 @@ impl FoliageProject {
             let reach=self.branch_length*h*(0.38+0.55*rand(3))
                 *self.crown_reach(t);
             let base_rise=match self.preset {
-                PlantPreset::Pine=>0.12,
+                PlantPreset::Pine|PlantPreset::Larch|PlantPreset::BaldCypress|
+                PlantPreset::Redwood|PlantPreset::MediterraneanCypress=>0.12,
                 PlantPreset::Willow=>-0.12,
-                PlantPreset::Birch=>0.43,
-                PlantPreset::Shrub=>0.18,
-                PlantPreset::Maple=>0.15,
+                PlantPreset::Birch|PlantPreset::Pear=>0.43,
+                PlantPreset::GreenBamboo|PlantPreset::BrownBamboo=>0.44,
+                PlantPreset::Acacia=>0.08,
+                PlantPreset::Shrub|PlantPreset::Pomegranate=>0.18,
+                PlantPreset::Maple|PlantPreset::CrimsonKingMaple=>0.15,
                 _=>0.23,
             };
             let rise = reach * (base_rise + 0.65 * self.phototropism - 0.85 * self.gravity);
@@ -839,9 +856,11 @@ impl FoliageProject {
             let fork_reach=reach*(0.28+0.2*rand(5));
             let fork_rise=match self.preset {
                 PlantPreset::Willow=>-0.82,
-                PlantPreset::Birch=>0.45,
-                PlantPreset::Pine=>0.10,
-                PlantPreset::Shrub=>0.12,
+                PlantPreset::Birch|PlantPreset::Pear=>0.45,
+                PlantPreset::GreenBamboo|PlantPreset::BrownBamboo=>0.34,
+                PlantPreset::Pine|PlantPreset::Redwood|PlantPreset::Larch|
+                PlantPreset::BaldCypress|PlantPreset::MediterraneanCypress=>0.10,
+                PlantPreset::Shrub|PlantPreset::Pomegranate=>0.12,
                 _=>0.32+self.phototropism*0.26-self.gravity*0.65,
             };
             let fork=[
@@ -868,15 +887,19 @@ impl FoliageProject {
                 let r = ((self.leaf_scale * self.overall_scale * 2.3)
                     * (0.75 + 0.5 * rand(6 + cluster as u32))).max(s * 0.82);
                 let rz=match self.preset {
-                    PlantPreset::Pine=>r*1.75,
+                    PlantPreset::Pine|PlantPreset::Larch|PlantPreset::Redwood|
+                    PlantPreset::BaldCypress|PlantPreset::MediterraneanCypress=>r*1.75,
                     PlantPreset::Willow=>r*1.65,
-                    PlantPreset::Birch=>r*1.12,
-                    PlantPreset::Shrub=>r*0.65,
+                    PlantPreset::Birch|PlantPreset::Pear=>r*1.12,
+                    PlantPreset::GreenBamboo|PlantPreset::BrownBamboo=>r*1.25,
+                    PlantPreset::Shrub|PlantPreset::Pomegranate=>r*0.65,
                     _=>r*0.85,
                 };
                 let offset_z = match self.preset {
                     PlantPreset::Willow => -0.58 * rz,
-                    PlantPreset::Pine => 0.18 * rz,
+                    PlantPreset::Pine|PlantPreset::Larch|PlantPreset::Redwood|
+                    PlantPreset::BaldCypress|PlantPreset::MediterraneanCypress =>
+                        0.18 * rz,
                     _ => 0.16 * rz,
                 };
                 let center = [location[0], location[1],
