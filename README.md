@@ -17,30 +17,25 @@ An offline, standalone **Rust desktop application** for building procedural text
 - **Voxel export:** generate five per-face RGBA texture atlases, a UV-unwrapped `voxel.obj`, `voxel.mtl` and machine-readable `voxel_layout.json`. The OBJ material connects albedo; other PBR maps can be assigned in the target renderer.
 - **Projects:** save/load JSON node graphs *including voxel shape and side UV mode*; older projects without voxel settings load as cubes.
 
-## Native Procedural Foliage Designer
+## Native Voxel Tree Designer
 
-The app now includes a separate **Library → Foliage** workspace for modeling actual 3D vegetation, inspired by the **Unreal Engine 5.7 Procedural Vegetation Editor** tutorial: https://www.youtube.com/watch?v=o-kMXZX_oK8. This is an independently implemented Rust tree-mesh generator, not a copy of Epic's plugin, presets or proprietary Megaplants assets.
+Use **Library → Foliage** to generate **actual voxel trees**—a saved set of occupied bark and leaf cells, not the earlier smooth tube/leaf-card polygon generator. This implements the block-world interpretation of the workflow shown in the supplied Unreal Engine 5.7 tutorial, while remaining native Rust.
 
-**Included plant starters:** Oak, Pine, Birch, Willow, Maple and Shrub. Every preset is a starting point with a reproducible random seed and editable controls.
+**Plant starters:** Oak, Pine, Birch, Willow, Maple, Shrub. They use seeded procedural trunks, branching and volumetric foliage clusters. Settings are editable and reproducible.
 
-Select one of ten **growth stages** in the Foliage panel, then edit its settings in the inspector:
+**Cube or hexagonal-prism voxels:** In the **Voxel Builder** stage, select the block shape and **Voxel cell size**. Cube trees use integer Cartesian x/y/z coordinates. Hex-prism trees use an integer axial q/r hex grid plus vertical z levels. Bark occupies the trunk and voxelized branch paths; leaf voxels fill jittered ellipsoid clusters around branch tips. Wood always takes priority over leaves.
 
-| Stage | Native behavior |
-|---|---|
-| Preset Loader | Species, seed, tree height, branching density and length |
-| Carve | Remove lower/upper branch-growing zones |
-| Gravity / Phototropism | Bend branches downward or steer them upward toward light |
-| Slope | Lean the trunk for hillsides / windswept forms |
-| Scale | Scale the complete tree without changing the underlying growth seed |
-| Remove Branches | Seeded random pruning |
-| Mesh Builder | Tapered polygon trunk, limbs and twig geometry; adjustable 3–12 radial segments |
-| Foliage Palette | Bark color and three leaf-tone material slots |
-| Foliage Distributor | Leaf density, scale, variation and orientation; actual triangulated leaf geometry |
-| Output | Save foliage settings or export a standalone polygon mesh |
+The ten editable stages are Tree Preset (species/seed/branches), Carve (top/bottom), Gravity / Phototropism (branch growth direction), Slope (trunk lean), Scale, Remove Branches, Voxel Builder (cube/hex and cell size), Block Palette (bark/leaf color), Leaf Voxel Distributor (volumetric foliage, density and variation), and Voxel Export.
 
-The central viewport shows a rotatable, shaded **3D triangle-mesh preview**, rather than a 2D foliage noise texture. The foliage editor works alongside the previous material graph. **Save Tree** writes a standalone editable `tree.foliage.json`; **Open Tree** reloads it; **Export Tree OBJ** writes `foliage.obj`, `foliage.mtl` and `foliage.json`. The MTL colors are bark, leaf, darker leaf, and lighter leaf. These are solid polygon leaves and branches; the exporter does not depend on missing image assets.
+**Preview:** The central viewport orbits the discrete tree, displaying cube or hex-prism exterior surfaces. Only exposed faces are triangulated for display and interoperability; adjacent internal faces are culled. Very dense trees use reduced preview detail while **exports always include every occupied cell**.
 
-**Important differences from Unreal:** The stages are a fixed procedural editing sequence, not a freely rewritable Unreal point-cloud graph. Output is a static triangulated OBJ with MTL; no skeletal bones, live physics wind, Nanite, PCG forest population, terrain-aware plant placement, foliage instancing, photoreal leaf textures, or Fab/Megaplant asset ingestion. Those require a bigger geometry/scene architecture.
+**Exports:** **Export Voxel Tree** writes four files into an empty folder:
+- `foliage.voxels.json`: authoritative voxel asset: grid type, cell size, plant settings and an explicit list of occupied (x, y, z, bark/leaf-material) cells. Hex (x,y) represent axial (q,r).
+- `foliage.obj`: exterior voxel-face mesh, with invisible shared faces removed, for standard 3D applications.
+- `foliage.mtl`: four block material colors (bark, light/normal/dark foliage).
+- `foliage.json`: editable generation parameters. **Save Tree** and **Open Tree** use this same settings format.
+
+**Limitations:** This is a voxel-tree asset generator, not a full voxel terrain, forest scatterer, plant growth simulator, or wind/physics solver. It does not import Unreal Megaplants, support Nanite/PCG/skeletal animation, or yet paint individual tree cells. Smaller voxel sizes cost more CPU/memory and settings have bounds to protect the native editor. The foliage editor remains separate from the 2D surface-material node graph.
 
 ## Expanded Material Maker-inspired Node Library
 
@@ -172,7 +167,7 @@ The OBJ/MTL format directly links the albedo map. Roughness, metallic, height, a
 - `src/lib.rs`: deterministic tileable procedural graph renderer, input validation, PBR channels, and unit tests.
 - `src/presets.rs` and `src/presets/catalog.json`: embedded 1,039-preset natural material catalog and procedural node-graph builder.
 - `src/node_library.rs`: 76 executable original Rust generators, filters, math/mix operations and transforms with tests.
-- `src/foliage.rs`: deterministic 3D plant skeleton, branch and leaf generation, OBJ/MTL export, and tests.
+- `src/foliage.rs`: deterministic cube/hex-prism voxel tree generation, occupied-cell JSON and culled OBJ/MTL export, and tests.
 - `src/main.rs`: native egui interface, graph controls, sphere and node previews, project dialogs, and PNG output.
 - `.github/workflows/ci.yml`: build/test validation on push.
 - `.github/workflows/desktop-builds.yml`: manual downloadable desktop executables.
