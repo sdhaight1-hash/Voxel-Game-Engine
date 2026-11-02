@@ -4,6 +4,7 @@
 use crate::foliage::{leaf_cutout_for_species, PlantPreset};
 use crate::presets::{builtin_presets, Preset};
 use crate::{Graph, VoxelSettings};
+use crate::material_functions::{MaterialFunctionInstance,MaterialFunctionLibrary};
 use serde::{Deserialize, Serialize};
 
 pub const MATERIAL_SIZE: u32 = 128;
@@ -127,6 +128,13 @@ pub struct FoliageMaterials {
     /// Optional height/greyscale-style graph applied as an additional opacity mask.
     /// The original leaf-card silhouette is always preserved.
     pub leaf_opacity: Option<Graph>,
+    /// Authoring provenance only: baked graph snapshots above remain authoritative.
+    #[serde(default)]
+    pub bark_function: Option<MaterialFunctionInstance>,
+    #[serde(default)]
+    pub leaf_function: Option<MaterialFunctionInstance>,
+    #[serde(default)]
+    pub opacity_function: Option<MaterialFunctionInstance>,
     /// 0 = unchanged authored graph; 1 = graph luminance colored by bark_color.
     /// Defaults to 0 so existing tree materials remain pixel-identical.
     #[serde(default = "default_bark_tint_strength")]
@@ -150,6 +158,7 @@ pub struct FoliageMaterials {
 impl Default for FoliageMaterials {
     fn default() -> Self {
         Self { bark: None, leaf: None, leaf_opacity: None,
+            bark_function:None,leaf_function:None,opacity_function:None,
             bark_tint_strength: 0.0,
             bark_preset: None, leaf_preset: None,
             leaf_species: PlantPreset::Oak, fruit_color: None,
@@ -172,8 +181,17 @@ impl FoliageMaterials {
             || !(0.0..=1.0).contains(&self.cutout_threshold) {
             return Err("Foliage cutout threshold must be 0..1".into());
         }
-        for graph in [&self.bark, &self.leaf, &self.leaf_opacity].into_iter().flatten() {
-            graph.validate()?;
+        for (graph,instance) in [
+            (&self.bark,&self.bark_function),
+            (&self.leaf,&self.leaf_function),
+            (&self.leaf_opacity,&self.opacity_function)] {
+            if let Some(graph)=graph {graph.validate()?;}
+            if let Some(instance)=instance {
+                instance.validate()?;
+                if graph.is_none() {
+                    return Err("Material function reference is missing its graph snapshot".into());
+                }
+            }
         }
         Ok(())
     }
@@ -185,11 +203,13 @@ impl FoliageMaterials {
         match slot {
             MaterialRole::Bark => {
                 self.bark=Some(graph);self.bark_preset=Some(preset.title());
+                self.bark_function=None;
             }
             MaterialRole::Leaf => {
                 self.leaf=Some(graph);self.leaf_preset=Some(preset.title());
+                self.leaf_function=None;
             }
-            MaterialRole::Opacity => self.leaf_opacity=Some(graph),
+            MaterialRole::Opacity => {self.leaf_opacity=Some(graph);self.opacity_function=None;}
         }
     }
 
@@ -203,10 +223,30 @@ impl FoliageMaterials {
 
     pub fn set_graph(&mut self,slot:MaterialRole,graph:Graph) {
         match slot {
-            MaterialRole::Bark=>{self.bark=Some(graph);self.bark_preset=None;}
-            MaterialRole::Leaf=>{self.leaf=Some(graph);self.leaf_preset=None;}
-            MaterialRole::Opacity=>self.leaf_opacity=Some(graph),
+            MaterialRole::Bark=>{self.bark=Some(graph);self.bark_preset=None;
+                self.bark_function=None;}
+            MaterialRole::Leaf=>{self.leaf=Some(graph);self.leaf_preset=None;
+                self.leaf_function=None;}
+            MaterialRole::Opacity=>{self.leaf_opacity=Some(graph);
+                self.opacity_function=None;}
         }
+    }
+
+    /// Resolve a versioned authoring template into this material's existing
+    /// role graph. The provenance is stored for editable authoring, but all
+    /// bake/render paths keep reading the graph snapshot, even after the
+    /// external function library is removed.
+    pub fn apply_function(&mut self,role:MaterialRole,
+        library:&MaterialFunctionLibrary,reference:MaterialFunctionInstance)
+        ->Result<(),String> {
+        let graph=library.resolve(&reference)?;
+        self.set_graph(role,graph);
+        match role {
+            MaterialRole::Bark=>self.bark_function=Some(reference),
+            MaterialRole::Leaf=>self.leaf_function=Some(reference),
+            MaterialRole::Opacity=>self.opacity_function=Some(reference),
+        }
+        Ok(())
     }
 
     /// Map each plant family to *existing* built-in bark/leaf appearance variants.
