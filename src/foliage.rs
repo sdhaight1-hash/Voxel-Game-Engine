@@ -514,35 +514,72 @@ impl FoliageProject {
         // These proportions are tuned for the game's fixed 1 m hexels, not
         // the former sub-metre foliage grid. A thinner trunk still occupies
         // at least one real wood cell.
-        let (height, radius, branches, branch_length, gravity, density, leaf_scale, bark, leaves) =
+        // Species-specific playable silhouettes on the fixed 1 m hexel grid.
+        // These are authored parameters; seed controls individual variation.
+        let (height,radius,branches,branch_length,gravity,density,leaf_scale,bark,leaves)=
             match preset {
-                PlantPreset::Oak => (13.0, 0.72, 38, 0.55, 0.08, 0.82, 0.82,
-                    [91, 67, 45], [67, 135, 52]),
-                PlantPreset::Pine => (18.0, 0.53, 48, 0.46, 0.06, 0.78, 0.44,
-                    [89, 71, 52], [40, 94, 58]),
-                PlantPreset::Birch => (15.0, 0.46, 30, 0.35, 0.02, 0.67, 0.59,
-                    [198, 193, 172], [96, 158, 54]),
-                PlantPreset::Willow => (12.0, 0.72, 38, 0.61, 0.80, 0.93, 0.70,
-                    [91, 86, 61], [91, 156, 65]),
-                PlantPreset::Maple => (13.0, 0.69, 40, 0.58, 0.10, 0.90, 0.85,
-                    [97, 70, 51], [112, 163, 52]),
-                PlantPreset::Shrub => (3.5, 0.34, 20, 0.65, 0.13, 0.86, 0.46,
-                    [91, 70, 48], [67, 142, 51]),
+                PlantPreset::Acacia => (12.0,0.63,32,0.62,0.02,0.66,0.65,[118,89,58],[105,142,61]),
+                PlantPreset::Birch => (15.0,0.46,30,0.35,0.02,0.67,0.59,[198,193,172],[96,158,54]),
+                PlantPreset::Ebony => (16.0,0.72,40,0.49,0.04,0.88,0.72,[51,47,44],[54,113,66]),
+                PlantPreset::Kapok => (24.0,1.16,46,0.55,0.04,0.85,0.88,[133,106,77],[67,143,72]),
+                PlantPreset::Maple => (13.0,0.69,40,0.58,0.10,0.90,0.85,[97,70,51],[112,163,52]),
+                PlantPreset::CrimsonKingMaple => (13.5,0.70,40,0.57,0.08,0.90,0.84,[94,69,62],[105,38,73]),
+                PlantPreset::Oak => (13.0,0.72,38,0.55,0.08,0.82,0.82,[91,67,45],[67,135,52]),
+                PlantPreset::Purpleheart => (19.0,0.88,42,0.54,0.05,0.82,0.82,[112,61,96],[57,124,65]),
+                PlantPreset::Walnut => (15.0,0.77,42,0.57,0.11,0.80,0.77,[94,76,58],[79,125,61]),
+                PlantPreset::Willow => (12.0,0.72,38,0.61,0.80,0.93,0.70,[91,86,61],[91,156,65]),
+                PlantPreset::BaldCypress => (19.0,0.75,42,0.39,0.05,0.74,0.47,[119,88,64],[90,128,70]),
+                PlantPreset::MediterraneanCypress => (17.0,0.53,42,0.19,0.02,0.91,0.37,[88,71,52],[39,86,58]),
+                PlantPreset::Larch => (17.0,0.55,42,0.44,0.03,0.69,0.42,[112,90,61],[126,157,70]),
+                PlantPreset::Pine => (18.0,0.53,48,0.46,0.06,0.78,0.44,[89,71,52],[40,94,58]),
+                PlantPreset::Redwood => (27.0,1.28,66,0.36,0.04,0.76,0.52,[121,69,54],[47,91,67]),
+                PlantPreset::RedApple => (8.0,0.40,26,0.58,0.10,0.89,0.67,[102,76,57],[78,144,63]),
+                PlantPreset::PinkApple => (8.3,0.42,27,0.57,0.10,0.88,0.66,[104,78,58],[88,150,66]),
+                PlantPreset::YellowApple => (8.1,0.41,26,0.60,0.12,0.89,0.66,[105,77,57],[107,156,68]),
+                PlantPreset::Pear => (9.5,0.44,27,0.44,0.05,0.82,0.63,[114,84,62],[95,154,65]),
+                PlantPreset::Olive => (7.5,0.51,34,0.60,0.14,0.80,0.57,[112,106,84],[106,131,104]),
+                PlantPreset::Peach => (8.0,0.37,27,0.56,0.06,0.78,0.63,[107,73,65],[91,149,77]),
+                PlantPreset::Cherry => (10.0,0.47,32,0.54,0.06,0.88,0.70,[116,69,61],[81,146,71]),
+                PlantPreset::Mango => (13.0,0.76,40,0.59,0.07,0.92,0.80,[108,77,54],[57,122,60]),
+                PlantPreset::Orange => (9.0,0.51,34,0.57,0.06,0.90,0.70,[112,81,57],[49,112,55]),
+                PlantPreset::Lychee => (11.0,0.62,36,0.58,0.04,0.86,0.72,[103,75,58],[65,131,65]),
+                PlantPreset::Breadfruit => (16.0,0.79,40,0.56,0.08,0.85,0.85,[113,80,59],[79,149,71]),
+                PlantPreset::Pomegranate => (6.5,0.36,30,0.62,0.11,0.78,0.57,[100,83,57],[67,139,65]),
+                PlantPreset::GreenBamboo => (11.0,0.23,15,0.20,0.03,0.72,0.43,[74,151,64],[86,159,63]),
+                PlantPreset::BrownBamboo => (10.0,0.26,15,0.22,0.05,0.66,0.40,[152,121,69],[113,133,65]),
+                PlantPreset::Shrub => (3.5,0.34,20,0.65,0.13,0.86,0.46,[91,70,48],[67,142,51]),
             };
-        let (carve_bottom, carve_top, phototropism, leaf_angle, leaf_variation, branch_growth) =
+        let (carve_bottom,carve_top,phototropism,leaf_angle,leaf_variation,branch_growth)=
             match preset {
-                // Crown above a substantial harvestable trunk.
-                PlantPreset::Oak => (0.36, 0.06, 0.20, 0.12, 0.28, BranchGrowth::CanopyGuided),
-                // Lower whorls are widest; preserve the conifer taper.
-                PlantPreset::Pine => (0.10, 0.03, 0.09, 0.05, 0.20, BranchGrowth::Classic),
-                // Light, high, narrow crown with an exposed trunk.
-                PlantPreset::Birch => (0.44, 0.08, 0.28, 0.09, 0.34, BranchGrowth::CanopyGuided),
-                // Long, gravity-drooping branches under a high starting crown.
-                PlantPreset::Willow => (0.36, 0.05, 0.02, -0.25, 0.24, BranchGrowth::Classic),
-                // Broad, relatively full upper canopy.
-                PlantPreset::Maple => (0.33, 0.06, 0.19, 0.15, 0.26, BranchGrowth::CanopyGuided),
-                // Low, multi-branched growth; not a miniature tall tree.
-                PlantPreset::Shrub => (0.05, 0.08, 0.13, 0.18, 0.40, BranchGrowth::Classic),
+                PlantPreset::Acacia=>(0.56,0.03,0.22,0.09,0.33,BranchGrowth::CanopyGuided),
+                PlantPreset::Birch=>(0.44,0.08,0.28,0.09,0.34,BranchGrowth::CanopyGuided),
+                PlantPreset::Ebony=>(0.36,0.06,0.14,0.13,0.24,BranchGrowth::CanopyGuided),
+                PlantPreset::Kapok=>(0.62,0.04,0.23,0.14,0.25,BranchGrowth::CanopyGuided),
+                PlantPreset::Maple=>(0.33,0.06,0.19,0.15,0.26,BranchGrowth::CanopyGuided),
+                PlantPreset::CrimsonKingMaple=>(0.33,0.06,0.19,0.14,0.25,BranchGrowth::CanopyGuided),
+                PlantPreset::Oak=>(0.36,0.06,0.20,0.12,0.28,BranchGrowth::CanopyGuided),
+                PlantPreset::Purpleheart=>(0.43,0.04,0.18,0.12,0.27,BranchGrowth::CanopyGuided),
+                PlantPreset::Walnut=>(0.36,0.05,0.16,0.16,0.31,BranchGrowth::CanopyGuided),
+                PlantPreset::Willow=>(0.36,0.05,0.02,-0.25,0.24,BranchGrowth::Classic),
+                PlantPreset::BaldCypress=>(0.08,0.04,0.10,0.05,0.22,BranchGrowth::Classic),
+                PlantPreset::MediterraneanCypress=>(0.04,0.03,0.13,0.04,0.19,BranchGrowth::Classic),
+                PlantPreset::Larch=>(0.09,0.05,0.13,0.06,0.25,BranchGrowth::Classic),
+                PlantPreset::Pine=>(0.10,0.03,0.09,0.05,0.20,BranchGrowth::Classic),
+                PlantPreset::Redwood=>(0.06,0.04,0.11,0.05,0.19,BranchGrowth::Classic),
+                PlantPreset::RedApple|PlantPreset::PinkApple|PlantPreset::YellowApple=>
+                    (0.22,0.07,0.16,0.10,0.28,BranchGrowth::CanopyGuided),
+                PlantPreset::Pear=>(0.32,0.04,0.24,0.10,0.28,BranchGrowth::CanopyGuided),
+                PlantPreset::Olive=>(0.17,0.07,0.11,0.12,0.36,BranchGrowth::Classic),
+                PlantPreset::Peach=>(0.19,0.08,0.18,0.13,0.27,BranchGrowth::CanopyGuided),
+                PlantPreset::Cherry=>(0.27,0.05,0.20,0.12,0.30,BranchGrowth::CanopyGuided),
+                PlantPreset::Mango=>(0.32,0.04,0.15,0.12,0.23,BranchGrowth::CanopyGuided),
+                PlantPreset::Orange=>(0.21,0.06,0.12,0.11,0.27,BranchGrowth::CanopyGuided),
+                PlantPreset::Lychee=>(0.30,0.05,0.16,0.11,0.28,BranchGrowth::CanopyGuided),
+                PlantPreset::Breadfruit=>(0.42,0.06,0.21,0.12,0.28,BranchGrowth::CanopyGuided),
+                PlantPreset::Pomegranate=>(0.06,0.07,0.12,0.13,0.30,BranchGrowth::Classic),
+                PlantPreset::GreenBamboo|PlantPreset::BrownBamboo=>
+                    (0.53,0.04,0.10,0.08,0.25,BranchGrowth::Classic),
+                PlantPreset::Shrub=>(0.05,0.08,0.13,0.18,0.40,BranchGrowth::Classic),
             };
         Self {
             preset, seed: 42, height, trunk_radius: radius, branch_count: branches,
