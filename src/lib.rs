@@ -153,6 +153,22 @@ impl Graph {
         self.links.retain(|l| l.to != to || l.input != input);
     }
 
+    /// Move either end of an existing cable as a single, validated operation.
+    /// If the new connection would create a cycle, preserve the original cable.
+    pub fn rewire(
+        &mut self, old_to: u64, old_input: usize,
+        new_from: u64, new_to: u64, new_input: usize,
+    ) -> Result<(), String> {
+        if !self.links.iter().any(|l| l.to == old_to && l.input == old_input) {
+            return Err("Original connection not found".into());
+        }
+        let mut proposed = self.clone();
+        proposed.disconnect(old_to, old_input);
+        proposed.connect(new_from, new_to, new_input)?;
+        *self = proposed;
+        Ok(())
+    }
+
     fn reaches(&self, start: u64, goal: u64) -> bool {
         let mut stack = vec![start];
         let mut seen = HashSet::new();
@@ -450,6 +466,51 @@ mod tests {
         empty.disconnect(2, 0);
         let normals = empty.render_normal_rgba(8, 8).unwrap();
         assert!(normals.chunks_exact(4).all(|px| px == [128, 128, 255, 255]));
+    }
+
+    #[test]
+    fn reconnect_source_preserves_target_socket() {
+        let mut graph = Graph::default();
+        let alternate = graph.add_node(NodeKind::Color { rgb: [10, 20, 30] }, [2.0, 3.0]);
+        graph.rewire(2, 0, alternate, 2, 0).unwrap();
+        assert_eq!(graph.links.len(), 1);
+        assert_eq!(graph.links[0].from, alternate);
+        assert_eq!(graph.links[0].to, 2);
+    }
+
+    #[test]
+    fn move_connection_to_different_input() {
+        let mut graph = Graph::default();
+        let blend = graph.add_node(NodeKind::Blend { factor: 0.5 }, [2.0, 3.0]);
+        graph.rewire(2, 0, 1, blend, 1).unwrap();
+        assert_eq!(graph.links.len(), 1);
+        assert_eq!(graph.links[0].to, blend);
+        assert_eq!(graph.links[0].input, 1);
+        assert!(graph.links.iter().all(|link| link.to != 2));
+    }
+
+    #[test]
+    fn failed_rewire_does_not_destroy_previous_connection() {
+        let mut graph = Graph::default();
+        let filter = graph.add_node(NodeKind::Invert, [2.0, 3.0]);
+        graph.connect(filter, 2, 0).unwrap(); // replaces original output cable
+        let before = graph.links.len();
+        assert!(graph.rewire(2, 0, 2, filter, 0).is_err()); // Output cannot be a source
+        assert_eq!(graph.links.len(), before);
+        assert_eq!(graph.links[0].from, filter);
+        assert_eq!(graph.links[0].to, 2);
+        graph.validate().unwrap();
+    }
+
+    #[test]
+    fn failed_cycle_rewire_preserves_graph() {
+        let mut graph = Graph::default();
+        let first = graph.add_node(NodeKind::Invert, [0.0, 0.0]);
+        let second = graph.add_node(NodeKind::Invert, [1.0, 1.0]);
+        graph.connect(first, second, 0).unwrap();
+        assert!(graph.rewire(second, 0, second, first, 0).is_err());
+        assert!(graph.links.iter().any(|l| l.from == first && l.to == second));
+        graph.validate().unwrap();
     }
 
     #[test]
