@@ -48,6 +48,9 @@ frame or per foliage hexel*. Its output uses existing `FoliageBakeCache`
 keys, which already include source, blade width and species. Changing width
 rebakes only affected leaf textures; identical recipes reuse cached bytes.
 Existing CPU/GPU tree-render paths still consume a 64px RGBA card.
+The GPU scene-upload regression specifically verifies that changing Willow or
+Cottonwood vector art changes **only the leaf texture upload**, not the
+mesh vertex buffer, bark texture or seasonal palette upload.
 
 Regression coverage checks valid and invalid species combinations, finite
 width bounds, deterministic vector/legacy differences, Eastern/Fremont/Black
