@@ -167,6 +167,7 @@ impl VoxelAsset {
         pseudo_project.bark_color = self.bark_color;
         pseudo_project.leaf_color = self.leaf_color;
         pseudo_project.leaf_render = self.leaf_render;
+        pseudo_project.materials = self.materials.clone();
         crate::foliage::mtl(&pseudo_project)
     }
 }
