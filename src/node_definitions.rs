@@ -175,6 +175,45 @@ mod tests {
     }
 
     #[test]
+    fn all_catalog_graphs_have_valid_unique_parameter_definitions() {
+        use crate::presets::builtin_presets;
+        use crate::VoxelSettings;
+        let presets=builtin_presets().unwrap();
+        assert_eq!(presets.len(),1039);
+        for preset in presets {
+            let graph=preset.build_graph(VoxelSettings::default());
+            graph.validate().unwrap();
+            for node in &graph.nodes {
+                let mut ids=std::collections::HashSet::new();
+                for param in node.kind.parameters() {
+                    assert!(ids.insert(param.id),"duplicate {} in {}",
+                        param.id,node.kind.type_id());
+                    assert!(!param.label.is_empty());
+                    match param.control {
+                        ParameterControl::Float{min,max,default,..} => {
+                            assert!(min.is_finite()&&max.is_finite()&&default.is_finite());
+                            assert!(min<=default&&default<=max);
+                        }
+                        ParameterControl::Integer{min,max,step,default} => {
+                            assert!(step>0&&min<=default&&default<=max);
+                            assert_eq!((default-min)%step,0);
+                        }
+                        ParameterControl::Seed{..}|ParameterControl::Color{..}=>{}
+                    }
+                }
+                for index in 0..node.kind.input_count() {
+                    let port=node.kind.input_definition(index).unwrap();
+                    assert!(!port.id.is_empty());
+                    assert!(!port.label.is_empty());
+                }
+                if !matches!(node.kind,NodeKind::Output) {
+                    assert!(node.kind.output_definition().is_some());
+                }
+            }
+        }
+    }
+
+    #[test]
     fn level_parameters_have_stable_ids_and_explicit_ranges() {
         let params=parameters(&NodeKind::Levels{black:0.0,white:1.0,gamma:1.0});
         assert_eq!(params.iter().map(|p|p.id).collect::<Vec<_>>(),
