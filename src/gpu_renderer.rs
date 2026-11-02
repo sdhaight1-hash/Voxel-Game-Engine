@@ -34,6 +34,16 @@ struct Uniforms {
     up: [f32; 4],
     view: [f32; 4],
     wind: [f32; 4],
+    season: [f32; 4],
+    leaf_base: [f32; 4],
+}
+
+/// The palette is uploaded only when the authored scene changes. Per-frame
+/// season progress stays in the small camera uniform instead.
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct GpuPalette {
+    stops: [[f32;4];16],
 }
 
 /// Immutable scene is rebuilt only when voxel geometry or material bake changes.
@@ -44,6 +54,8 @@ pub struct Scene {
     pub span: f32,
     bark_rgba: Vec<u8>,
     leaf_rgba: Vec<u8>,
+    palette: GpuPalette,
+    leaf_base: [f32;4],
     wind_strength: f32,
     wind_speed: f32,
     voxel_size: f32,
@@ -51,7 +63,7 @@ pub struct Scene {
 
 impl Scene {
     pub fn from_mesh(mesh: &FoliageMesh, bark: &[u8], leaf: &[u8],
-                     leaf_tint: [u8; 3]) -> Self {
+                     leaf_tint: [u8; 3],palette:[[f32;4];16]) -> Self {
         let mut min = [f32::INFINITY;3];
         let mut max = [f32::NEG_INFINITY;3];
         let mut vertices = Vec::with_capacity(mesh.triangles.len() * 3);
@@ -109,6 +121,9 @@ impl Scene {
         Self {
             vertices,center,span,
             bark_rgba:bark.to_vec(),leaf_rgba:leaf.to_vec(),
+            palette:GpuPalette{stops:palette},
+            leaf_base:[leaf_tint[0] as f32/255.0,leaf_tint[1] as f32/255.0,
+                leaf_tint[2] as f32/255.0,1.0],
             wind_strength:mesh.leaf_render.wind_strength,
             wind_speed:mesh.leaf_render.wind_speed,
             voxel_size:mesh.voxel_size,
@@ -129,6 +144,7 @@ struct Resources {
     pipeline: wgpu::RenderPipeline,
     group_layout: wgpu::BindGroupLayout,
     uniform: wgpu::Buffer,
+    palette_buffer: wgpu::Buffer,
     bind_group: Option<wgpu::BindGroup>,
     vertex: Option<wgpu::Buffer>,
     vertex_count: u32,
@@ -153,7 +169,7 @@ impl GpuViewport {
             label:Some("voxel-material-uniforms"),
             entries:&[
                 wgpu::BindGroupLayoutEntry {
-                    binding:0,visibility:wgpu::ShaderStages::VERTEX,
+                    binding:0,visibility:wgpu::ShaderStages::VERTEX_FRAGMENT,
                     ty:wgpu::BindingType::Buffer {
                         ty:wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset:false,min_binding_size:None,
@@ -179,6 +195,13 @@ impl GpuViewport {
                     binding:3,visibility:wgpu::ShaderStages::FRAGMENT,
                     ty:wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count:None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding:4,visibility:wgpu::ShaderStages::FRAGMENT,
+                    ty:wgpu::BindingType::Buffer {
+                        ty:wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset:false,min_binding_size:None,
+                    },count:None,
                 },
             ],
         });
@@ -246,10 +269,15 @@ impl GpuViewport {
             contents:bytemuck::bytes_of(&Uniforms::zeroed()),
             usage:wgpu::BufferUsages::COPY_DST|wgpu::BufferUsages::UNIFORM,
         });
+        let palette_buffer=device.create_buffer_init(&wgpu::util::BufferInitDescriptor{
+            label:Some("voxel-foliage-season-palettes"),
+            contents:bytemuck::bytes_of(&GpuPalette::zeroed()),
+            usage:wgpu::BufferUsages::COPY_DST|wgpu::BufferUsages::UNIFORM,
+        });
         let texture_id=rs.renderer.write().register_native_texture(
             device,&target_view,wgpu::FilterMode::Linear);
         rs.renderer.write().callback_resources.insert(Resources {
-            pipeline,group_layout,uniform,bind_group:None,
+            pipeline,group_layout,uniform,palette_buffer,bind_group:None,
             vertex:None,vertex_count:0,last_scene:None,
             _target:target,target_view,
             _depth:depth,depth_view,
@@ -258,13 +286,14 @@ impl GpuViewport {
     }
 
     pub fn paint(&self,ui:&egui::Ui, rect:egui::Rect,scene:Arc<Scene>,
-                 yaw:f32, zoom:f32, time:f32) {
+                 yaw:f32, zoom:f32, time:f32,season_progress:f32) {
         // Egui presents the GPU render target, populated during callback.prepare.
         ui.painter().image(self.texture_id,rect,
             egui::Rect::from_min_max(egui::Pos2::ZERO,egui::Pos2::new(1.0,1.0)),
             egui::Color32::WHITE);
         ui.painter().add(egui_wgpu::Callback::new_paint_callback(
-            rect,RenderScene{scene,yaw,zoom,time,width:rect.width(),height:rect.height()}));
+            rect,RenderScene{scene,yaw,zoom,time,season_progress,
+                width:rect.width(),height:rect.height()}));
     }
 }
 
@@ -273,6 +302,7 @@ struct RenderScene {
     yaw:f32,
     zoom:f32,
     time:f32,
+    season_progress:f32,
     width:f32,
     height:f32,
 }
@@ -297,7 +327,8 @@ impl egui_wgpu::CallbackTrait for RenderScene {
                     usage:wgpu::BufferUsages::VERTEX,
                 }));
             resources.vertex_count=scene.vertices.len() as u32;
-
+            queue.write_buffer(&resources.palette_buffer,0,
+                bytemuck::bytes_of(&scene.palette));
             let bark=upload_rgba(device,queue,&scene.bark_rgba);
             let foliage=upload_rgba(device,queue,&scene.leaf_rgba);
             let bark_view=bark.create_view(&Default::default());
@@ -318,6 +349,8 @@ impl egui_wgpu::CallbackTrait for RenderScene {
                     wgpu::BindGroupEntry{binding:1,resource:wgpu::BindingResource::TextureView(&bark_view)},
                     wgpu::BindGroupEntry{binding:2,resource:wgpu::BindingResource::TextureView(&leaf_view)},
                     wgpu::BindGroupEntry{binding:3,resource:wgpu::BindingResource::Sampler(&sampler)},
+                    wgpu::BindGroupEntry{binding:4,
+                        resource:resources.palette_buffer.as_entire_binding()},
                 ],
             }));
             // The bind group retains the texture views and sampler resources.
@@ -337,6 +370,8 @@ impl egui_wgpu::CallbackTrait for RenderScene {
             up:[up[0],up[1],up[2],2.0*pixels/self.height.max(1.0)],
             view:[front[0],front[1],front[2],0.4/span],
             wind:[self.time,self.scene.wind_strength,self.scene.wind_speed,self.scene.voxel_size],
+            season:[self.season_progress.rem_euclid(4.0),0.0,0.0,0.0],
+            leaf_base:self.scene.leaf_base,
         };
         queue.write_buffer(&resources.uniform,0,bytemuck::bytes_of(&globals));
 
@@ -432,7 +467,8 @@ mod tests {
             VoxelCell{x:0,y:0,z:1,material:Material::Leaf},
         ]).unwrap();
         let rgba=vec![255;TEX_SIZE as usize*TEX_SIZE as usize*4];
-        let scene=Scene::from_mesh(&mesh,&rgba,&rgba,[50,150,80]);
+        let palette=texture_studio::foliage_materials::SeasonalPalettes::default();
+        let scene=Scene::from_mesh(&mesh,&rgba,&rgba,[50,150,80],palette.gpu_stops());
         assert_eq!(scene.triangle_count(),mesh.triangle_count());
         assert!(scene.vertices.iter().any(|v|v.kind==0.0));
         assert!(scene.vertices.iter().any(|v|v.kind==1.0&&v.sway_weight==1.0));
