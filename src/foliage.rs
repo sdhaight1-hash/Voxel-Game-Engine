@@ -3,6 +3,7 @@
 //! intersecting cutout cards. There is no dependency on imported game assets.
 
 use crate::voxel::VoxelShape;
+use crate::foliage_materials::FoliageMaterials;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::f32::consts::{PI, TAU};
@@ -168,6 +169,8 @@ pub struct FoliageProject {
     pub voxel_size: f32,
     #[serde(default)]
     pub leaf_render: LeafRenderSettings,
+    #[serde(default)]
+    pub materials: FoliageMaterials,
 }
 
 impl Default for FoliageProject {
@@ -235,11 +238,13 @@ impl FoliageProject {
             bark_color: bark, leaf_color: leaves,
             shape: VoxelShape::Cube, voxel_size: default_voxel_size(),
             leaf_render: LeafRenderSettings::default(),
+            materials: FoliageMaterials::for_species(preset),
         }
     }
 
     pub fn validate(&self) -> Result<(), String> {
         self.leaf_render.validate()?;
+        self.materials.validate()?;
         for (name, x, min, max) in [
             ("height", self.height, 0.5, 30.0),
             ("trunk radius", self.trunk_radius, 0.02, 2.0),
