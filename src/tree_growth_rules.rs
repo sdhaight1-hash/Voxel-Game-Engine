@@ -50,6 +50,42 @@ impl TreeGrowthRules {
     }
 }
 
+/// Species-level trunk proportions. Radius is still a solid 1m hexel
+/// occupancy; this rule controls the occupancy envelope and base flare.
+#[derive(Clone, Copy, Debug)]
+pub struct TrunkGrowthRules {
+    pub taper: f32,
+    pub base_flare: f32,
+    pub height_seed_variation: f32,
+    pub radius_seed_variation: f32,
+}
+
+impl PlantPreset {
+    pub fn trunk_growth_rules(self) -> TrunkGrowthRules {
+        // Height and thickness vary inside conservative type-level bounds.
+        // Stylized bases do not imply a physical root/buttress model.
+        let (taper,base_flare) = match self {
+            Self::GreenBamboo|Self::BrownBamboo => (0.08,0.0),
+            Self::Kapok => (0.67,0.95),
+            Self::Redwood => (0.58,0.40),
+            Self::BaldCypress => (0.65,0.52),
+            Self::Olive => (0.62,0.18),
+            Self::Pomegranate|Self::Shrub => (0.70,0.0),
+            Self::MediterraneanCypress => (0.60,0.10),
+            Self::Birch|Self::Larch|Self::Pine => (0.70,0.08),
+            Self::Willow => (0.65,0.24),
+            Self::Oak|Self::Walnut => (0.75,0.22),
+            Self::Acacia => (0.68,0.20),
+            _ => (0.72,0.12),
+        };
+        TrunkGrowthRules {
+            taper,base_flare,
+            height_seed_variation:0.055,
+            radius_seed_variation:0.10,
+        }
+    }
+}
+
 impl PlantPreset {
     pub fn growth_rules(self) -> TreeGrowthRules {
         use LeafPlacement::*;
@@ -98,6 +134,21 @@ impl PlantPreset {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_trunk_profile_is_bounded() {
+        for species in PlantPreset::ALL {
+            let trunk=species.trunk_growth_rules();
+            assert!((0.0..=0.85).contains(&trunk.taper));
+            assert!((0.0..=1.0).contains(&trunk.base_flare));
+            assert!((0.0..=0.10).contains(&trunk.height_seed_variation));
+            assert!((0.0..=0.15).contains(&trunk.radius_seed_variation));
+        }
+        assert!(PlantPreset::Kapok.trunk_growth_rules().base_flare >
+            PlantPreset::Maple.trunk_growth_rules().base_flare);
+        assert!(PlantPreset::GreenBamboo.trunk_growth_rules().taper <
+            PlantPreset::Oak.trunk_growth_rules().taper);
+    }
 
     #[test]
     fn every_preset_has_valid_seed_limits() {
