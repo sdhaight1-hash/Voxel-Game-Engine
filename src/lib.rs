@@ -9,6 +9,7 @@ pub mod foliage;
 pub mod tree_growth_rules;
 pub mod plant_climate;
 pub mod flora_prefab;
+pub mod hexel_clip;
 pub mod asset;
 pub mod foliage_materials;
 pub mod presets;
