@@ -137,6 +137,26 @@ impl Scene {
     pub fn triangle_count(&self)->usize {self.vertices.len()/3}
 }
 
+/// The scene Arc can change for geometry, palette, or material edits.
+#[derive(Debug, PartialEq, Eq)]
+struct SceneUploads {
+    geometry: bool,
+    bark: bool,
+    leaf: bool,
+    palette: bool,
+}
+
+fn scene_uploads(previous: Option<&Scene>, next: &Scene) -> SceneUploads {
+    SceneUploads {
+        geometry: previous.is_none_or(|old|
+            bytemuck::cast_slice::<Vertex,u8>(&old.vertices)
+                != bytemuck::cast_slice::<Vertex,u8>(&next.vertices)),
+        bark: previous.is_none_or(|old|old.bark_rgba!=next.bark_rgba),
+        leaf: previous.is_none_or(|old|old.leaf_rgba!=next.leaf_rgba),
+        palette: previous.is_none_or(|old|old.palette.stops!=next.palette.stops),
+    }
+}
+
 pub struct GpuViewport {
     pub texture_id: egui::TextureId,
     pub backend: String,
@@ -149,6 +169,9 @@ struct Resources {
     uniform: wgpu::Buffer,
     palette_buffer: wgpu::Buffer,
     bind_group: Option<wgpu::BindGroup>,
+    bark_view: Option<wgpu::TextureView>,
+    leaf_view: Option<wgpu::TextureView>,
+    sampler: Option<wgpu::Sampler>,
     vertex: Option<wgpu::Buffer>,
     vertex_count: u32,
     last_scene: Option<Arc<Scene>>,
@@ -281,6 +304,7 @@ impl GpuViewport {
             device,&target_view,wgpu::FilterMode::Linear);
         rs.renderer.write().callback_resources.insert(Resources {
             pipeline,group_layout,uniform,palette_buffer,bind_group:None,
+            bark_view:None,leaf_view:None,sampler:None,
             vertex:None,vertex_count:0,last_scene:None,
             _target:target,target_view,
             _depth:depth,depth_view,
@@ -321,42 +345,55 @@ impl egui_wgpu::CallbackTrait for RenderScene {
         if !resources.last_scene.as_ref()
             .is_some_and(|old|Arc::ptr_eq(old,&self.scene)) {
             let scene=&self.scene;
-            let vertices=if scene.vertices.is_empty() {vec![Vertex::zeroed()]}
-                else {scene.vertices.clone()};
-            resources.vertex=Some(device.create_buffer_init(
-                &wgpu::util::BufferInitDescriptor {
-                    label:Some("voxel-geometry-vertices"),
-                    contents:bytemuck::cast_slice(&vertices),
-                    usage:wgpu::BufferUsages::VERTEX,
+            let uploads=scene_uploads(resources.last_scene.as_deref(),scene);
+            if uploads.geometry {
+                let vertices=if scene.vertices.is_empty() {vec![Vertex::zeroed()]}
+                    else {scene.vertices.clone()};
+                resources.vertex=Some(device.create_buffer_init(
+                    &wgpu::util::BufferInitDescriptor {
+                        label:Some("voxel-geometry-vertices"),
+                        contents:bytemuck::cast_slice(&vertices),
+                        usage:wgpu::BufferUsages::VERTEX,
+                    }));
+                resources.vertex_count=scene.vertices.len() as u32;
+            }
+            if uploads.palette {
+                queue.write_buffer(&resources.palette_buffer,0,
+                    bytemuck::bytes_of(&scene.palette));
+            }
+            if uploads.bark {
+                resources.bark_view=Some(upload_rgba(device,queue,&scene.bark_rgba)
+                    .create_view(&Default::default()));
+            }
+            if uploads.leaf {
+                resources.leaf_view=Some(upload_rgba(device,queue,&scene.leaf_rgba)
+                    .create_view(&Default::default()));
+            }
+            if uploads.bark || uploads.leaf || resources.bind_group.is_none() {
+                let sampler=resources.sampler.get_or_insert_with(||
+                    device.create_sampler(&wgpu::SamplerDescriptor {
+                        label:Some("voxel-pixel-sampler"),
+                        mag_filter:wgpu::FilterMode::Linear,
+                        min_filter:wgpu::FilterMode::Linear,
+                        address_mode_u:wgpu::AddressMode::Repeat,
+                        address_mode_v:wgpu::AddressMode::Repeat,
+                        ..Default::default()
+                    }));
+                resources.bind_group=Some(device.create_bind_group(&wgpu::BindGroupDescriptor{
+                    label:Some("voxel-material-bindings"),
+                    layout:&resources.group_layout,
+                    entries:&[
+                        wgpu::BindGroupEntry{binding:0,resource:resources.uniform.as_entire_binding()},
+                        wgpu::BindGroupEntry{binding:1,resource:wgpu::BindingResource::TextureView(
+                            resources.bark_view.as_ref().expect("bark uploaded"))},
+                        wgpu::BindGroupEntry{binding:2,resource:wgpu::BindingResource::TextureView(
+                            resources.leaf_view.as_ref().expect("leaf uploaded"))},
+                        wgpu::BindGroupEntry{binding:3,resource:wgpu::BindingResource::Sampler(sampler)},
+                        wgpu::BindGroupEntry{binding:4,
+                            resource:resources.palette_buffer.as_entire_binding()},
+                    ],
                 }));
-            resources.vertex_count=scene.vertices.len() as u32;
-            queue.write_buffer(&resources.palette_buffer,0,
-                bytemuck::bytes_of(&scene.palette));
-            let bark=upload_rgba(device,queue,&scene.bark_rgba);
-            let foliage=upload_rgba(device,queue,&scene.leaf_rgba);
-            let bark_view=bark.create_view(&Default::default());
-            let leaf_view=foliage.create_view(&Default::default());
-            let sampler=device.create_sampler(&wgpu::SamplerDescriptor{
-                label:Some("voxel-pixel-sampler"),
-                mag_filter:wgpu::FilterMode::Linear,
-                min_filter:wgpu::FilterMode::Linear,
-                address_mode_u:wgpu::AddressMode::Repeat,
-                address_mode_v:wgpu::AddressMode::Repeat,
-                ..Default::default()
-            });
-            resources.bind_group=Some(device.create_bind_group(&wgpu::BindGroupDescriptor{
-                label:Some("voxel-material-bindings"),
-                layout:&resources.group_layout,
-                entries:&[
-                    wgpu::BindGroupEntry{binding:0,resource:resources.uniform.as_entire_binding()},
-                    wgpu::BindGroupEntry{binding:1,resource:wgpu::BindingResource::TextureView(&bark_view)},
-                    wgpu::BindGroupEntry{binding:2,resource:wgpu::BindingResource::TextureView(&leaf_view)},
-                    wgpu::BindGroupEntry{binding:3,resource:wgpu::BindingResource::Sampler(&sampler)},
-                    wgpu::BindGroupEntry{binding:4,
-                        resource:resources.palette_buffer.as_entire_binding()},
-                ],
-            }));
-            // The bind group retains the texture views and sampler resources.
+            }
             resources.last_scene=Some(self.scene.clone());
         }
 
@@ -462,6 +499,44 @@ mod tests {
         ).validate(&module).expect("WGSL shader validation failed");
         assert!(module.entry_points.iter().any(|e|e.name=="vs_main"));
         assert!(module.entry_points.iter().any(|e|e.name=="fs_main"));
+    }
+
+    #[test]
+    fn gpu_scene_uploads_only_changed_resources() {
+        let mesh=FoliageMesh::from_voxels(VoxelShape::Cube,0.5,vec![
+            VoxelCell{x:0,y:0,z:0,material:Material::Bark},
+        ]).unwrap();
+        let bark=vec![40;TEX_SIZE as usize*TEX_SIZE as usize*4];
+        let leaf=vec![120;TEX_SIZE as usize*TEX_SIZE as usize*4];
+        let mut palette=texture_studio::foliage_materials::SeasonalPalettes::default()
+            .gpu_stops();
+        let baseline=Scene::from_mesh(&mesh,&bark,&leaf,[50,150,80],palette,0.0);
+        assert_eq!(scene_uploads(None,&baseline),SceneUploads {
+            geometry:true,bark:true,leaf:true,palette:true,
+        });
+        let identical=Scene::from_mesh(&mesh,&bark,&leaf,[50,150,80],palette,0.0);
+        assert_eq!(scene_uploads(Some(&baseline),&identical),SceneUploads {
+            geometry:false,bark:false,leaf:false,palette:false,
+        });
+        palette[0][0]=0.7;
+        let season=Scene::from_mesh(&mesh,&bark,&leaf,[50,150,80],palette,0.0);
+        assert_eq!(scene_uploads(Some(&baseline),&season),SceneUploads {
+            geometry:false,bark:false,leaf:false,palette:true,
+        });
+        let mut tinted=bark.clone();
+        tinted[0]=90;
+        let material=Scene::from_mesh(&mesh,&tinted,&leaf,[50,150,80],palette,0.0);
+        assert_eq!(scene_uploads(Some(&season),&material),SceneUploads {
+            geometry:false,bark:true,leaf:false,palette:false,
+        });
+        let grown=FoliageMesh::from_voxels(VoxelShape::Cube,0.5,vec![
+            VoxelCell{x:0,y:0,z:0,material:Material::Bark},
+            VoxelCell{x:0,y:0,z:1,material:Material::Bark},
+        ]).unwrap();
+        let different_mesh=Scene::from_mesh(&grown,&tinted,&leaf,[50,150,80],palette,0.0);
+        assert_eq!(scene_uploads(Some(&material),&different_mesh),SceneUploads {
+            geometry:true,bark:false,leaf:false,palette:false,
+        });
     }
 
     #[test]
