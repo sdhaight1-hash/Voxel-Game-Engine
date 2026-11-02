@@ -2418,7 +2418,31 @@ mod wire_interaction_tests {
 }
 
 fn main() -> eframe::Result {
+    // wgpu owns window presentation AND the voxel editor's 3D renderer.
+    // Prefer Vulkan on native systems, with Metal, DX12, and GL fallback.
+    let mut wgpu_options=eframe::egui_wgpu::WgpuConfiguration::default();
+    if let eframe::egui_wgpu::WgpuSetup::CreateNew(ref mut setup)
+        =wgpu_options.wgpu_setup {
+        setup.native_adapter_selector=Some(Arc::new(|adapters,surface| {
+            let score=|adapter:&eframe::egui_wgpu::wgpu::Adapter| {
+                use eframe::egui_wgpu::wgpu::Backend;
+                match adapter.get_info().backend {
+                    Backend::Vulkan=>5,
+                    Backend::Metal=>4,
+                    Backend::Dx12=>3,
+                    Backend::Gl=>2,
+                    _=>1,
+                }
+            };
+            adapters.iter().filter(|adapter|
+                surface.is_none_or(|surface|!surface.get_capabilities(adapter).formats.is_empty()))
+                .max_by_key(|adapter|score(adapter)).cloned()
+                .ok_or_else(||"No wgpu adapter can present to this window".to_owned())
+        }));
+    }
     let options = eframe::NativeOptions {
+        renderer:eframe::Renderer::Wgpu,
+        wgpu_options,
         viewport: egui::ViewportBuilder::default()
             .with_title("Voxel Game Engine — Voxel Asset Editor")
             .with_inner_size([1330.0, 780.0])
