@@ -112,7 +112,7 @@ Voxel Game Engine is organized around **four linked workspaces**. **Assets** is 
 
 Use **Library → Foliage** to generate **grid-based trees with harvestable wood and leaf cells**. Trunks are full 1 m wood hexels; branches use tapered six-sided wood meshes and thin twig ribbons while remaining bound to occupied wood hexels; leaves render crossed cutout cards. This implements the block-world interpretation of the workflow shown in the supplied Unreal Engine 5.7 tutorial, while remaining native Rust.
 
-**Natural-world tree catalog:** The original 29 requested entries remain, plus an additional ornamental **Cherry Blossom** tree: **30 tree/bamboo entries (28 tree/fruit/ornamental varieties and 2 bamboo)**. `Shrub` stays separate (31 selectable presets in total). The dropdown groups species by family.
+**Natural-world tree catalog:** The original 29 requested entries remain, plus ornamental **Cherry Blossom** and three new palms: **33 tree/bamboo entries (31 tree/fruit/ornamental varieties and 2 bamboo)**. `Shrub` stays separate (**34 total selectable presets**). The Tree Designer dropdown groups them by family.
 
 | Group | Presets |
 |---|---|
@@ -120,9 +120,12 @@ Use **Library → Foliage** to generate **grid-based trees with harvestable wood
 | Conifer & evergreen (5) | Bald Cypress, Mediterranean Cypress, Larch, Pine, Redwood |
 | Fruit trees (12) | Red Apple, Pink Apple, Yellow Apple, Pear, Olive, Peach, Cherry, Mango, Orange, Lychee, Breadfruit, Pomegranate |
 | Bamboo (2) | Green Bamboo, Brown Bamboo |
-| Other foliage | Shrub (not one of the 30 tree/bamboo entries) |
+| Palms (3) | Coconut Palm, Date Palm, Fan Palm |
+| Other foliage | Shrub (not one of the 33 tree/bamboo entries) |
 
 **Ornamental Cherry Blossom (sakura):** A distinct, non-fruiting visual preset alongside the existing fruit-bearing Cherry. It has a spreading/vase-shaped crown and green summer leaves. In the **wgpu seasonal preview**, early Spring (season 0) draws procedural pink five-petal blossom clusters over the existing leaf cards. Blossoms fade by late Spring, without changes to seed geometry or voxel occupancy. Summer remains green, Autumn is bronze-red, and Winter uses a muted dormant color. The overlay applies to imported editable Assets that retain the Cherry Blossom leaf-species material. It is a preview shader effect, not separate harvestable flower hexels, particle shedding or a new fruit system. Conventional OBJ/PNG exports and the CPU preview remain static summer/base leaf artwork without the transient blossom overlay.
+
+**Palm growth architecture:** Coconut, Date, and Fan Palm use a dedicated seeded generator, not the broadleaf branching algorithm. Their single nearly cylindrical trunk supports crown-only curved petioles. Coconut and Date Palms use distinct pinnate (feather) foliage masks; Fan Palm uses radial palmate leaf cards. The existing 1 m hexel occupancy, editable branch ownership (petioles are recorded as `MajorBranch` solely for structural editing), deterministic seed, GPU leaf-color interpolation, wind, save/load and OBJ/MTL exports still work. Frond count and reach appear in Tree Designer, and the normal woody-twig controls are hidden for palms. These presets **do not** yet create harvestable coconuts/dates, mature leaf scars or physically modeled individual leaflets; the palm leaves remain alpha-cutout cards.
 
 **Game-scale structural presets:** Each entry has its own initial tree height, trunk radius, branch count, branch reach, canopy density, colors, and growth parameters. Dense broadleaf crowns now combine overlapping interior-filled lobes and an upper crown cap; Willow additionally distributes foliage along its descending shoots instead of relying exclusively on end clusters. Conifers receive intermediate needle groups along selected branches. Key shape families include broad round crowns, Acacia's high spreading umbrella, Kapok's tall trunk/upper crown, Pine/Larch/Redwood tiered conifers, a narrow Mediterranean Cypress, drooping Willow, small orchard fruit trees and upright bamboo culms. These are procedural **1 m hexel** shapes; they are not imported models or a botanical growth simulator. Species and seeds remain editable.
 
