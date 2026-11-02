@@ -1,0 +1,18 @@
+{
+    "$schema": "https://moddbcdn.vintagestory.at/schema/modinfo.latest.json",
+    "type": "Code",
+    "modid": "vsecomachina",
+    "name": "Eco Machina",
+    "authors": [
+        "Svend Richter"
+    ],
+    "description": "Render-only tree overhaul for Vintage Story: tapered trunk geometry, species-aware foliage tinting, and seamless trunk/branch connectors. Server-safe, multiplayer-friendly.",
+    "website": "https://mods.vintagestory.at/ecomachina",
+    "version": "0.6.1",
+    "side": "Universal",
+    "requiredOnClient": true,
+    "requiredOnServer": true,
+    "dependencies": {
+        "game": "1.22.0"
+    }
+}

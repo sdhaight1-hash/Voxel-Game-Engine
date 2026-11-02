@@ -1,0 +1,61 @@
+{
+  "EnableTaperedWoodRendering": true,
+  "EnableDiagonalRenderConnections": true,
+  "EnableFoliageStubs": true,
+  "EnableElbowSpines": true,
+  "EnableDecorSnappedLayers": true,
+  "EnableBeehiveSnap": true,
+  "EnableBranchColorTinting": true,
+  "BranchColorTintingGradientBlend": 0.7,
+  "BranchColorTintingSaturationMul": 1.0,
+  "BranchColorTintingValueMul": 1.0,
+  "RenderOnlyAoRootIntensity": 0.6,
+  "RenderOnlyAoBranchIntensity": 0.5,
+  "RenderOnlyAoThinningIntensity": 0.4,
+  "TaperedDarkFaceLiftEnabled": true,
+  "TaperedDarkFaceLiftThreshold": 40,
+  "TaperedDarkFaceLiftFactor": 0.80,
+  "TaperedDarkFaceLiftMinDelta": 12,
+  "UvMode": "FingerprintAuto",
+  "AllowLegacyUvFallback": true,
+
+  "AutoClaimMode": "All",
+  "EnableWorldgenPreclaim": true,
+
+  "EnableTreeGrowthLifecycle": false,
+
+  "RingExpansionDiagnosticsEnabled": false,
+
+  "EnableTaperedUvDebugLogging": false,
+  "EnableUvLayoutDebug": false,
+  "EnableUvLayoutDumpToJson": false,
+  "DebugScopeReentryWindowMs": 3000,
+  "ClickDiagEnabled": false,
+  "VanillaAutoClaimDiagEnabled": false,
+  "BeltDiagEnabled": false,
+  "MushroomSnapDiagEnabled": false,
+  "BeehiveSnapDiagEnabled": false,
+  "VineStackDiagEnabled": false,
+  "DiagonalSnapDiagEnabled": false,
+  "WorldgenPreclaimDiagEnabled": false,
+  "SaplingGrowthDiagEnabled": false,
+  "ChunkSendDiagEnabled": false,
+  "AutoClaimTickDiagEnabled": false,
+  "TessProfileEnabled": false,
+  "CubeRouteDiagEnabled": false,
+  "RenderStatePersistenceDiagEnabled": false,
+
+  "AttachmentScaling": {
+    "Vine": {
+      "ThresholdThickness": 0.5,
+      "MinScale": 0.4,
+      "YOverlap": 0.04,
+      "MaxStackLookupDistance": 8
+    },
+    "Mushroom": {
+      "ThresholdThickness": 0.5,
+      "MinScale": 0.5,
+      "YOverlap": 0.0
+    }
+  }
+}

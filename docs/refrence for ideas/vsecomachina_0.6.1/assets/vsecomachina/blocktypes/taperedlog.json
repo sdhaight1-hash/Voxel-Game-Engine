@@ -1,0 +1,102 @@
+{
+  "code": "taperedlog",
+  "class": "TaperedLog",
+  "variantgroups": [
+    { "code": "woodtype", "loadFromProperties": "block/wood" },
+    { "code": "axis", "states": ["x", "y", "z"] },
+    { "code": "thickness", "states": [
+      "1.000",
+      "0.9375",
+      "0.875",
+      "0.8125",
+      "0.750",
+      "0.6875",
+      "0.625",
+      "0.5625",
+      "0.500",
+      "0.4375",
+      "0.375",
+      "0.3125",
+      "0.250",
+      "0.1875",
+      "0.125",
+      "0.0625"
+    ] },
+    { "code": "parentdir", "states": [
+      "none",
+      "dx-1_dy-1_dz-1",
+      "dx-1_dy-1_dz0",
+      "dx-1_dy-1_dz1",
+      "dx-1_dy0_dz-1",
+      "dx-1_dy0_dz0",
+      "dx-1_dy0_dz1",
+      "dx-1_dy1_dz-1",
+      "dx-1_dy1_dz0",
+      "dx-1_dy1_dz1",
+      "dx0_dy-1_dz-1",
+      "dx0_dy-1_dz0",
+      "dx0_dy-1_dz1",
+      "dx0_dy0_dz-1",
+      "dx0_dy0_dz1",
+      "dx0_dy1_dz-1",
+      "dx0_dy1_dz0",
+      "dx0_dy1_dz1",
+      "dx1_dy-1_dz-1",
+      "dx1_dy-1_dz0",
+      "dx1_dy-1_dz1",
+      "dx1_dy0_dz-1",
+      "dx1_dy0_dz0",
+      "dx1_dy0_dz1",
+      "dx1_dy1_dz-1",
+      "dx1_dy1_dz0",
+      "dx1_dy1_dz1"
+    ] }
+  ],
+  "shape": { "base": "vsecomachina:block/taperedlog/cube" },
+  "drawtype": "json",
+  "sideopaque": { "all": false },
+  "blockmaterial": "Wood",
+  "attributes": {
+    "preventsDecay": true
+  },
+  "replaceable": 500,
+  "resistance": 4.5,
+  "sounds": {
+    "place": "block/planks",
+    "walk": "walk/wood",
+    "hit": "block/planks",
+    "break": "block/planks",
+    "byTool": {
+      "Axe": { "hit": "block/chop", "break": "block/planks" }
+    }
+  },
+  "drops": [
+    { "type": "block", "code": "game:log-placed-{woodtype}-ud", "quantity": { "avg": 1 } }
+  ],
+  "texturesByType": {
+    "*-y-*": {
+      "north": { "base": "game:block/wood/bark/{woodtype}" },
+      "east": { "base": "game:block/wood/bark/{woodtype}" },
+      "south": { "base": "game:block/wood/bark/{woodtype}" },
+      "west": { "base": "game:block/wood/bark/{woodtype}" },
+      "up": { "base": "game:block/wood/treetrunk/{woodtype}" },
+      "down": { "base": "game:block/wood/treetrunk/{woodtype}" }
+    },
+    "*-x-*": {
+      "north": { "base": "game:block/wood/bark/{woodtype}-h" },
+      "south": { "base": "game:block/wood/bark/{woodtype}-h" },
+      "up": { "base": "game:block/wood/bark/{woodtype}-h" },
+      "down": { "base": "game:block/wood/bark/{woodtype}-h" },
+      "east": { "base": "game:block/wood/treetrunk/{woodtype}" },
+      "west": { "base": "game:block/wood/treetrunk/{woodtype}" }
+    },
+    "*-z-*": {
+      "north": { "base": "game:block/wood/treetrunk/{woodtype}" },
+      "south": { "base": "game:block/wood/treetrunk/{woodtype}" },
+      "east": { "base": "game:block/wood/bark/{woodtype}-h" },
+      "west": { "base": "game:block/wood/bark/{woodtype}-h" },
+      "up": { "base": "game:block/wood/bark/{woodtype}-h" },
+      "down": { "base": "game:block/wood/bark/{woodtype}-h" }
+    }
+  }
+}
