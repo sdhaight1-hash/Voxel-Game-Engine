@@ -14,7 +14,9 @@ pub mod asset;
 pub mod foliage_materials;
 pub mod presets;
 pub mod node_library;
+pub mod node_definitions;
 pub use node_library::LibraryNode;
+use node_definitions::{PortDefinition, SocketType};
 pub use voxel::{VoxelSettings, VoxelShape, SideMapping};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -45,6 +47,12 @@ pub enum NodeKind {
     Noise { scale: u32, octaves: u8, seed: u32 },
     Checker { tiles: u32 },
     Color { rgb: [u8; 3] },
+    /// Typed scalar source; automatically broadcasts into legacy RGB inputs.
+    Scalar { value: f32 },
+    /// Explicit conversion from RGB to a luminance scalar.
+    Luminance,
+    /// Scalar-only, three-parameter levels remap. Does not mutate old node kinds.
+    Levels { black: f32, white: f32, gamma: f32 },
     Invert,
     Blend { factor: f32 },
     Bricks { columns: u32, rows: u32, mortar: f32 },
@@ -61,6 +69,9 @@ impl NodeKind {
             Self::Noise { .. } => "Noise",
             Self::Checker { .. } => "Checker",
             Self::Color { .. } => "Color",
+            Self::Scalar { .. } => "Scalar",
+            Self::Luminance => "Luminance",
+            Self::Levels { .. } => "Levels",
             Self::Invert => "Invert",
             Self::Blend { .. } => "Blend",
             Self::Bricks { .. } => "Bricks",
@@ -75,8 +86,10 @@ impl NodeKind {
     pub fn input_count(&self) -> usize {
         match self {
             Self::Noise { .. } | Self::Checker { .. } | Self::Color { .. }
-                | Self::Bricks { .. } | Self::Voronoi { .. } | Self::Strata { .. } => 0,
-            Self::Invert | Self::Colorize { .. } => 1,
+                | Self::Scalar { .. } | Self::Bricks { .. } | Self::Voronoi { .. }
+                | Self::Strata { .. } => 0,
+            Self::Invert | Self::Colorize { .. } | Self::Luminance
+                | Self::Levels { .. } => 1,
             Self::Blend { .. } => 2,
             Self::Library { operation, .. } => operation.input_count(),
             Self::Output => 4,
@@ -91,10 +104,65 @@ impl NodeKind {
             (Self::Output, 1) => "Roughness",
             (Self::Output, 2) => "Metallic",
             (Self::Output, 3) => "Height",
+            (Self::Levels { .. }, 0) => "Scalar",
+            (Self::Luminance,0) => "Color",
             (Self::Invert | Self::Colorize { .. }, 0) => "Image",
             (Self::Library { operation, .. }, i) => operation.input_name(i),
             _ => "",
         }
+    }
+
+    /// Stable node-kind ID for new authoring metadata. Existing serde tags and
+    /// numeric graph socket indices are unchanged.
+    pub fn type_id(&self) -> String {
+        match self {
+            Self::Noise{..}=>"noise".into(),
+            Self::Checker{..}=>"checker".into(),
+            Self::Color{..}=>"color".into(),
+            Self::Scalar{..}=>"scalar".into(),
+            Self::Luminance=>"luminance".into(),
+            Self::Levels{..}=>"levels".into(),
+            Self::Invert=>"invert".into(),
+            Self::Blend{..}=>"blend".into(),
+            Self::Bricks{..}=>"bricks".into(),
+            Self::Voronoi{..}=>"voronoi".into(),
+            Self::Strata{..}=>"strata".into(),
+            Self::Colorize{..}=>"colorize".into(),
+            Self::Library{operation,..}=>format!("library.{operation:?}"),
+            Self::Output=>"material_output".into(),
+        }
+    }
+
+    pub fn output_type(&self) -> SocketType {
+        match self {
+            Self::Scalar{..}|Self::Luminance|Self::Levels{..}=>SocketType::Scalar,
+            _=>SocketType::Color, // Existing RGB evaluation semantics.
+        }
+    }
+
+    pub fn input_type(&self, index:usize) -> Option<SocketType> {
+        if index>=self.input_count() {return None;}
+        Some(if matches!(self,Self::Levels{..}) {
+            SocketType::Scalar
+        } else {
+            SocketType::Color
+        })
+    }
+
+    pub fn input_definition(&self,index:usize)->Option<PortDefinition> {
+        const IDS:[&str;4]=["input_0","input_1","input_2","input_3"];
+        self.input_type(index).map(|data_type|PortDefinition {
+            id:IDS[index],label:self.input_name(index),data_type,
+        })
+    }
+
+    pub fn output_definition(&self)->Option<PortDefinition> {
+        if matches!(self,Self::Output) {return None;}
+        Some(PortDefinition{id:"output",label:"Output",data_type:self.output_type()})
+    }
+
+    pub fn parameters(&self)->&'static [node_definitions::ParameterDefinition] {
+        node_definitions::parameters(self)
     }
 }
 
@@ -161,8 +229,13 @@ impl Graph {
         if matches!(source.kind, NodeKind::Output) {
             return Err("Output nodes cannot feed other nodes".to_string());
         }
-        if input >= target.kind.input_count() {
+        let Some(expected)=target.kind.input_type(input) else {
             return Err("That input socket does not exist".to_string());
+        };
+        let actual=source.kind.output_type();
+        if !actual.can_feed(expected) {
+            return Err(format!("Cannot connect {actual:?} to {expected:?} on {}",
+                target.kind.input_name(input)));
         }
         if from == to || self.reaches(to, from) {
             return Err("Connection would create a cycle".to_string());
@@ -234,6 +307,14 @@ impl Graph {
                     => return Err("Strata settings out of range".into()),
                 NodeKind::Library { amount, .. } if !amount.is_finite() || !(0.0..=1.0).contains(&amount)
                     => return Err("Library node amount must be between 0 and 1".into()),
+                NodeKind::Scalar { value } if !value.is_finite() ||
+                    !(0.0..=1.0).contains(&value)
+                    => return Err("Scalar value must be 0..1".into()),
+                NodeKind::Levels { black,white,gamma } if
+                    !black.is_finite() || !white.is_finite() || !gamma.is_finite() ||
+                    !(0.0..1.0).contains(&black) || !(0.0..=1.0).contains(&white) ||
+                    black>=white || !(0.1..=5.0).contains(&gamma)
+                    => return Err("Levels require 0 <= black < white <= 1 and gamma 0.1..5".into()),
                 _ => {}
             }
         }
@@ -242,6 +323,10 @@ impl Graph {
             let to = self.node(link.to).ok_or("Broken destination link")?;
             if matches!(from.kind, NodeKind::Output) || link.input >= to.kind.input_count() {
                 return Err("Invalid link socket".into());
+            }
+            if !from.kind.output_type().can_feed(
+                to.kind.input_type(link.input).expect("validated socket")) {
+                return Err(format!("Incompatible socket types at node {}",link.to));
             }
             if !ports.insert((link.to, link.input)) {
                 return Err("Multiple links to the same input".into());
@@ -354,6 +439,18 @@ impl Graph {
                 [grey; 3]
             }
             NodeKind::Color { rgb } => rgb.map(|c| c as f32 / 255.0),
+            NodeKind::Scalar { value } => [value;3],
+            NodeKind::Luminance => {
+                let rgb=self.sample_input(id,0,u,v);
+                let grey=(0.2126*rgb[0]+0.7152*rgb[1]+0.0722*rgb[2])
+                    .clamp(0.0,1.0);
+                [grey;3]
+            }
+            NodeKind::Levels { black,white,gamma } => {
+                let value=self.sample_input(id,0,u,v)[0];
+                let mapped=((value-black)/(white-black)).clamp(0.0,1.0).powf(gamma);
+                [mapped;3]
+            }
             NodeKind::Invert => self.sample_input(id, 0, u, v).map(|c| 1.0 - c),
             NodeKind::Blend { factor } => {
                 let a = self.sample_input(id, 0, u, v);
@@ -599,6 +696,65 @@ mod tests {
         let restored: Graph = serde_json::from_str(&text).unwrap();
         restored.validate().unwrap();
         assert_eq!(restored.node(2).unwrap().kind.input_count(), 4);
+    }
+
+    #[test]
+    fn typed_ports_allow_scalar_to_color_but_not_implicit_color_to_scalar() {
+        let mut graph=Graph::default();
+        let scalar=graph.add_node(NodeKind::Scalar{value:0.5},[0.0,0.0]);
+        let levels=graph.add_node(NodeKind::Levels{
+            black:0.25,white:0.75,gamma:1.0
+        },[25.0,0.0]);
+        assert_eq!(graph.node(scalar).unwrap().kind.output_type(),SocketType::Scalar);
+        assert_eq!(graph.node(levels).unwrap().kind.input_type(0),Some(SocketType::Scalar));
+        assert!(graph.connect(1,levels,0).unwrap_err().contains("Color to Scalar"));
+        graph.connect(scalar,levels,0).unwrap();
+        graph.connect(levels,2,0).unwrap();
+        assert_eq!(&graph.render_rgba(1,1).unwrap()[..4],&[128,128,128,255]);
+        let saved=serde_json::to_string(&graph).unwrap();
+        let restored:Graph=serde_json::from_str(&saved).unwrap();
+        assert_eq!(graph.render_rgba(8,8).unwrap(),restored.render_rgba(8,8).unwrap());
+        graph.connect(scalar,2,0).unwrap();
+        assert_eq!(&graph.render_rgba(1,1).unwrap()[..4],&[128,128,128,255]);
+        assert_eq!(graph.node(levels).unwrap().kind.parameters().len(),3);
+    }
+
+    #[test]
+    fn explicit_luminance_converts_legacy_rgb_for_scalar_levels() {
+        let mut graph=Graph::default();
+        let luminance=graph.add_node(NodeKind::Luminance,[10.0,10.0]);
+        let levels=graph.add_node(NodeKind::Levels{
+            black:0.2,white:0.8,gamma:1.0
+        },[20.0,10.0]);
+        graph.connect(1,luminance,0).unwrap();
+        graph.connect(luminance,levels,0).unwrap();
+        graph.connect(levels,2,0).unwrap();
+        assert_eq!(graph.node(luminance).unwrap().kind.input_type(0),
+            Some(SocketType::Color));
+        assert_eq!(graph.node(luminance).unwrap().kind.output_type(),
+            SocketType::Scalar);
+        let pixels=graph.render_rgba(32,32).unwrap();
+        let restored:Graph=serde_json::from_str(&serde_json::to_string(&graph).unwrap()).unwrap();
+        assert_eq!(restored.render_rgba(32,32).unwrap(),pixels);
+    }
+
+    #[test]
+    fn typed_socket_invalid_saved_links_and_level_parameters_are_rejected() {
+        let mut graph=Graph::default();
+        let levels=graph.add_node(NodeKind::Levels{
+            black:0.0,white:1.0,gamma:1.0,
+        },[0.0,0.0]);
+        graph.links.push(Link{from:1,to:levels,input:0});
+        assert!(graph.validate().unwrap_err().contains("Incompatible socket"));
+        graph.links.clear();
+        graph.node_mut(levels).unwrap().kind=NodeKind::Levels{
+            black:0.8,white:0.2,gamma:1.0,
+        };
+        assert!(graph.validate().is_err());
+        graph.node_mut(levels).unwrap().kind=NodeKind::Levels{
+            black:0.0,white:1.0,gamma:f32::NAN,
+        };
+        assert!(graph.validate().is_err());
     }
 
     #[test]
