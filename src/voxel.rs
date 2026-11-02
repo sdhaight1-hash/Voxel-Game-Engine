@@ -37,8 +37,12 @@ impl VoxelShape {
     /// Vertices are used by the atlas and software preview.
     pub fn footprint(self) -> Vec<[f32; 2]> {
         let n = self.sides();
+        if self == Self::Cube {
+            // Full [-1,1] square: cap UVs cover the same domain as the atlas.
+            return vec![[1.0, 1.0], [-1.0, 1.0], [-1.0, -1.0], [1.0, -1.0]];
+        }
         (0..n).map(|i| {
-            let a = 2.0 * PI * i as f32 / n as f32 + PI / 4.0;
+            let a = 2.0 * PI * i as f32 / n as f32 + PI / 6.0;
             [a.cos(), a.sin()]
         }).collect()
     }
@@ -326,6 +330,65 @@ pub fn render_voxel_preview(
     Ok(image)
 }
 
+/// Write a UV-unwrapped voxel mesh compatible with this atlas (OBJ V is upward).
+/// Each side owns 4 vertices and each cap is fan-triangulated.
+pub fn export_obj(meta: &AtlasLayout, material_file: &str) -> String {
+    let mut output = format!("# Texture Studio native voxel mesh
+mtllib {material_file}
+o voxel
+usemtl voxel_material
+");
+    let ring = meta.shape.footprint();
+    let n = ring.len();
+    let mut next_index = 1usize;
+    let mut vertex = |out: &mut String, face: usize, xyz: [f32;3], uv: [f32;2]| -> usize {
+        let f = &meta.faces[face];
+        let u = f.uv_rect[0] + uv[0] * (f.uv_rect[2]-f.uv_rect[0]);
+        let v = f.uv_rect[1] + uv[1] * (f.uv_rect[3]-f.uv_rect[1]);
+        let idx = next_index;
+        next_index += 1;
+        out.push_str(&format!("v {:.6} {:.6} {:.6}
+vt {:.8} {:.8}
+",xyz[0],xyz[1],xyz[2],u,1.0-v));
+        idx
+    };
+    for i in 0..n {
+        let a=ring[i];
+        let b=ring[(i+1)%n];
+        output.push_str(&format!("g side_{i}
+"));
+        let p = [
+            vertex(&mut output,i,[a[0],a[1],-1.0],[0.0,1.0]),
+            vertex(&mut output,i,[b[0],b[1],-1.0],[1.0,1.0]),
+            vertex(&mut output,i,[b[0],b[1],1.0],[1.0,0.0]),
+            vertex(&mut output,i,[a[0],a[1],1.0],[0.0,0.0]),
+        ];
+        output.push_str(&format!("f {0}/{0} {1}/{1} {2}/{2}
+f {0}/{0} {2}/{2} {3}/{3}
+",p[0],p[1],p[2],p[3]));
+    }
+    for (face,z) in [(n,1.0),(n+1,-1.0)] {
+        output.push_str(if face==n {"g top
+"}else{"g bottom
+"});
+        for i in 0..n {
+            let a=ring[i];
+            let b=ring[(i+1)%n];
+            let center=vertex(&mut output,face,[0.0,0.0,z],[0.5,0.5]);
+            let av=vertex(&mut output,face,[a[0],a[1],z],[(a[0]+1.0)*0.5,(1.0-a[1])*0.5]);
+            let bv=vertex(&mut output,face,[b[0],b[1],z],[(b[0]+1.0)*0.5,(1.0-b[1])*0.5]);
+            if face == n {
+                output.push_str(&format!("f {0}/{0} {1}/{1} {2}/{2}
+",center,av,bv));
+            } else {
+                output.push_str(&format!("f {0}/{0} {2}/{2} {1}/{1}
+",center,av,bv));
+            }
+        }
+    }
+    output
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -379,6 +442,26 @@ mod tests {
             let preview=render_voxel_preview(&graph,VoxelSettings{shape,..VoxelSettings::default()},64,0.8).unwrap();
             assert_eq!(preview.len(),64*64*4);
             assert!(preview.chunks_exact(4).any(|px|px[0]!=21));
+        }
+    }
+
+    #[test]
+    fn cube_cap_uv_covers_entire_material_square() {
+        let p=VoxelShape::Cube.footprint();
+        assert!(p.iter().any(|v| *v==[1.0,1.0]));
+        assert!(p.iter().any(|v| *v==[-1.0,-1.0]));
+    }
+
+    #[test]
+    fn obj_exports_correct_face_and_triangle_counts() {
+        for shape in [VoxelShape::Cube,VoxelShape::HexPrism] {
+            let meta=layout(VoxelSettings{shape,..Default::default()},32).unwrap();
+            let obj=export_obj(&meta,"voxel.mtl");
+            let triangles=obj.lines().filter(|line|line.starts_with("f ")).count();
+            assert_eq!(triangles,shape.sides()*4);
+            assert_eq!(obj.lines().filter(|line|line.starts_with("vt ")).count(),
+                obj.lines().filter(|line|line.starts_with("v ")).count());
+            assert!(obj.contains("mtllib voxel.mtl"));
         }
     }
 
