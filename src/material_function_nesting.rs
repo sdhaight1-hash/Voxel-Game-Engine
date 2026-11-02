@@ -1,7 +1,8 @@
 //! Resolve nested function calls into the same flat Graph used by all
 //! existing material baker, cache, asset and PBR export code paths.
 use crate::{Graph,Link,NodeKind};
-use crate::material_functions::{MaterialFunctionLibrary,MaterialFunctionInstance};
+use crate::material_functions::{MaterialFunctionLibrary,MaterialFunctionInstance,
+    FunctionOverride,FunctionParameterKind};
 use std::collections::HashMap;
 
 const MAX_NESTING_DEPTH:usize=8;
@@ -31,7 +32,22 @@ fn resolve_nested(library:&MaterialFunctionLibrary,
     let result=(|| {
         let mut graph=function.instantiate(reference)?;
         for call in &function.calls {
-            let child=resolve_nested(library,&call.reference,stack)?;
+            let mut nested_reference=call.reference.clone();
+            // An exposed parent parameter may forward the same override to
+            // the nested child's exposed "frequency" parameter. The child
+            // validates its own parameter target before resolution.
+            for override_value in &reference.overrides {
+                if function.parameters.iter().any(|param|
+                    param.key==override_value.key &&
+                    param.kind==FunctionParameterKind::NestedNoiseScale &&
+                    param.node_id==call.placeholder_node_id) {
+                    nested_reference.overrides.retain(|item|item.key!="frequency");
+                    nested_reference.overrides.push(FunctionOverride{
+                        key:"frequency".into(),value:override_value.value,
+                    });
+                }
+            }
+            let child=resolve_nested(library,&nested_reference,stack)?;
             splice_child_albedo(&mut graph,call.placeholder_node_id,child)?;
         }
         if graph.nodes.len()>MAX_RESOLVED_NODES {
@@ -168,6 +184,30 @@ mod tests {
         drop(library);
         let restored:FoliageMaterials=serde_json::from_str(&serialized).unwrap();
         assert_eq!(restored.bake_bark(32,[100,70,45]).unwrap(),baked);
+    }
+
+    #[test]
+    fn parent_frequency_override_reaches_nested_child_and_changes_bark_pixels() {
+        use crate::material_functions::{FunctionParameter,FunctionParameterKind};
+        let mut library=MaterialFunctionLibrary::default();
+        library.insert(MaterialFunction::from_graph("noise".into(),1,
+            Graph::default()).unwrap()).unwrap();
+        let mut parent=with_placeholder("bark","noise");
+        let placeholder=parent.calls[0].placeholder_node_id;
+        // Parent's own Noise node is not on its Albedo path; its exposed
+        // frequency must explicitly target the nested child instead.
+        parent.parameters=vec![FunctionParameter{
+            key:"frequency".into(),node_id:placeholder,
+            kind:FunctionParameterKind::NestedNoiseScale,
+        }];
+        library.insert(parent).unwrap();
+        let low=library.resolve(&inst("bark",1,Some(4))).unwrap();
+        let high=library.resolve(&inst("bark",1,Some(22))).unwrap();
+        assert_ne!(low.render_rgba(32,32).unwrap(),
+            high.render_rgba(32,32).unwrap());
+        let child=library.resolve(&inst("noise",1,Some(22))).unwrap();
+        assert_eq!(high.render_rgba(32,32).unwrap(),
+            child.render_rgba(32,32).unwrap());
     }
 
     #[test]
