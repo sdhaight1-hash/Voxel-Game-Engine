@@ -1355,6 +1355,19 @@ impl Studio {
                             BranchGrowth::CanopyGuided,"Canopy guided").changed();
                     });
                 }
+                if !tree.preset.is_palm() && !matches!(tree.preset,
+                    PlantPreset::GreenBamboo|PlantPreset::BrownBamboo) {
+                    ui.collapsing("Structural wood thickness (pipe model)",|ui|{
+                        changed |= ui.add(egui::Slider::new(
+                            &mut tree.wood_pipe_blend,0.0..=1.0)
+                            .text("Foliage-load influence")).changed();
+                        changed |= ui.add(egui::Slider::new(
+                            &mut tree.wood_pipe_exponent,1.5..=3.0)
+                            .text("Branch area exponent")).changed();
+                        ui.small("Calculates support from occupied leaf hexels, not GPU cards.");
+                        ui.small("Radii and new wood occupancy remain bounded; original species habit preserved.");
+                    });
+                }
                 let rules=tree.preset.growth_rules();
                 ui.small(format!("Species architecture: {:?} branches, {:?} foliage",
                     rules.phyllotaxy,rules.foliage));

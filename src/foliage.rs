@@ -584,6 +584,11 @@ pub struct FoliageProject {
     pub branch_length: f32,
     #[serde(default)]
     pub branch_growth: BranchGrowth,
+    /// Pipe-model influence on authored woody branch radii; palms and bamboo
+    /// use their anatomical stem/frond rules instead.
+    pub wood_pipe_blend: f32,
+    /// Area/pipe conservation exponent (2 = cross-sectional area).
+    pub wood_pipe_exponent: f32,
     /// Optional artist overrides. Absent in older saved foliage projects.
     /// Values are constrained around the currently selected species.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -694,7 +699,8 @@ pub struct TreeStructure {
     pub root_footprint: Vec<[i32; 2]>,
     pub branches: Vec<TreeBranch>,
     pub cells: Vec<TreeCell>,
-    /// One or more tapered spans per branch; no path is regenerated after
+    /// Tapered trunk-spine (id 0) and branch spans; old saves without the spine
+    /// continue to show a solid hexel trunk. No path is regenerated after
     /// a player removes a wood hexel.
     #[serde(default)]
     pub spans: Vec<BranchSpan>,
@@ -721,14 +727,15 @@ impl TreeStructure {
                 return Err("Branch parent must precede its child".into());
             }
         }
-        if self.spans.len()>self.branches.len()*3 {
-            return Err("Too many branch segments for the tree".into());
+        if self.spans.len()>self.branches.len()*3+128 {
+            return Err("Too many branch or trunk segments for the tree".into());
         }
         for span in &self.spans {
+            let max_radius=if span.branch_id==0 {8_000} else {500};
             if !by_id.contains_key(&span.branch_id) ||
-                span.branch_id==0 ||
                 span.start_radius_mm==0 || span.end_radius_mm==0 ||
-                span.start_radius_mm>500 || span.end_radius_mm>500 ||
+                span.start_radius_mm>max_radius ||
+                span.end_radius_mm>max_radius ||
                 span.from_mm==span.to_mm ||
                 span.from_mm.iter().chain(span.to_mm.iter())
                     .any(|&v|!(-129_000..=129_000).contains(&v)) {
@@ -892,7 +899,9 @@ impl FoliageProject {
             };
         Self {
             preset, seed: 42, height, trunk_radius: radius, branch_count: branches,
-            branch_length, branch_growth, carve_bottom, carve_top,
+            branch_length, branch_growth,
+            wood_pipe_blend:0.35, wood_pipe_exponent:2.3,
+            carve_bottom, carve_top,
             growth_rules_override: None, trunk_rules_override: None,
             gravity, phototropism, slope: 0.0, overall_scale: 1.0, prune: 0.0,
             leaf_density: density, leaf_scale, leaf_angle, leaf_variation,
@@ -952,6 +961,8 @@ impl FoliageProject {
             ("height", self.height, 0.5, 30.0),
             ("trunk radius", self.trunk_radius, 0.02, 2.0),
             ("branch length", self.branch_length, 0.1, 1.5),
+            ("pipe-model blend", self.wood_pipe_blend, 0.0, 1.0),
+            ("pipe-model exponent", self.wood_pipe_exponent, 1.5, 3.0),
             ("carve bottom", self.carve_bottom, 0.0, 0.85),
             ("carve top", self.carve_top, 0.0, 0.85),
             ("gravity", self.gravity, -1.0, 1.0),
@@ -1070,6 +1081,23 @@ impl FoliageProject {
             id:0,parent:None,root:[0,0,0],
             tip:grid_key(shape,size,trunk(1.0)),part:TreePart::Trunk
         });
+        // Preserve an explicit, deterministic trunk centerline for smooth render
+        // geometry. Hexel occupancy remains the authority and is unchanged.
+        // 1m segments retain authored trunk lean, taper and basal flare.
+        let levels=(h/size).ceil().max(1.0) as u32;
+        let radius_at=|t:f32| {
+            let flare=(1.0-t/0.18).max(0.0).powi(2);
+            (radius*(1.0-t*trunk_rules.taper)*
+                (1.0+trunk_rules.base_flare*flare))
+                .clamp(size*0.20,8.0*size)
+        };
+        for k in 0..levels {
+            let a=k as f32/levels as f32;
+            let b=(k+1) as f32/levels as f32;
+            spans.push(BranchSpan::new(0,trunk(a),trunk(b),
+                radius_at(a),radius_at(b)));
+        }
+
 
         for i in 0..self.branch_count {
             let rand=|channel|hash01(self.seed,i,channel);
@@ -1204,6 +1232,23 @@ impl FoliageProject {
         for cell in cells.keys() { ownership.insert(*cell,(TreePart::Trunk,Some(0))); }
         branches.push(TreeBranch {id:0,parent:None,root:[0,0,0],
             tip:grid_key(shape,s,trunk(1.0)),part:TreePart::Trunk});
+        // Preserve an explicit, deterministic trunk centerline for smooth render
+        // geometry. Hexel occupancy remains the authority and is unchanged.
+        // 1m segments retain authored trunk lean, taper and basal flare.
+        let levels=(h/s).ceil().max(1.0) as u32;
+        let radius_at=|t:f32| {
+            let flare=(1.0-t/0.18).max(0.0).powi(2);
+            (trunk_radius*(1.0-t*trunk_rules.taper)*
+                (1.0+trunk_rules.base_flare*flare))
+                .clamp(s*0.20,8.0*s)
+        };
+        for k in 0..levels {
+            let a=k as f32/levels as f32;
+            let b=(k+1) as f32/levels as f32;
+            spans.push(BranchSpan::new(0,trunk(a),trunk(b),
+                radius_at(a),radius_at(b)));
+        }
+
         let mut targets = Vec::new();
         if self.branch_growth == BranchGrowth::CanopyGuided {
             let crown_radius = self.branch_length * h * 0.75;
@@ -1463,7 +1508,8 @@ impl FoliageProject {
         if cells.len() > 40_000 {
             return Err("Tree exceeds 40,000 game hexels: reduce size, branching or canopy density".into());
         }
-        if self.leaf_density>0.0 && !spans.is_empty() && matches!(self.preset,
+        if self.leaf_density>0.0 && spans.iter().any(|s|s.branch_id!=0)
+            && matches!(self.preset,
             PlantPreset::Oak|PlantPreset::Walnut|PlantPreset::Ebony|
             PlantPreset::Maple|PlantPreset::CrimsonKingMaple|
             PlantPreset::Mango|PlantPreset::Lychee|
@@ -1484,6 +1530,12 @@ impl FoliageProject {
                     ownership.insert(cell,(TreePart::Foliage,Some(0)));
                 }
             }
+        }
+        if !matches!(self.preset,
+            PlantPreset::CoconutPalm|PlantPreset::DatePalm|PlantPreset::FanPalm|
+            PlantPreset::GreenBamboo|PlantPreset::BrownBamboo) {
+            apply_pipe_model(&mut spans,&branches,&mut cells,&mut ownership,
+                trunk_radius,self.wood_pipe_exponent,self.wood_pipe_blend);
         }
         if cells.len() > 40_000 {
             return Err("Tree exceeds 40,000 game hexels: reduce size, branching or canopy density".into());
@@ -1509,6 +1561,63 @@ impl FoliageProject {
         Ok(FoliageMesh { voxels, triangles, shape,
             voxel_size: s, height: h, leaf_render: self.leaf_render,
             structure:Some(structure) })
+    }
+}
+
+/// A bottom-up pipe-model radius pass using the *actual occupied foliage
+/// hexels* as support demand. Decorative card count never enters the model.
+/// Existing species thickness is the authored baseline: blend and bounded
+/// 0.65–1.35 scaling prevent this appearance pass from erasing silhouettes.
+/// Any additional wood volume is claimed into the authoritative grid.
+fn apply_pipe_model(
+    spans:&mut [BranchSpan], branches:&[TreeBranch],
+    cells:&mut BTreeMap<[i32;3],Material>,
+    owners:&mut BTreeMap<[i32;3],(TreePart,Option<u32>)>,
+    base_radius:f32, exponent:f32, blend:f32,
+) {
+    if blend<=0.0 || branches.len()<=1 {return;}
+    let mut load:BTreeMap<u32,f32>=branches.iter().map(|b|(b.id,1.0)).collect();
+    for (part,owner) in owners.values() {
+        if *part==TreePart::Foliage {
+            if let Some(id)=owner {
+                if let Some(weight)=load.get_mut(id) {*weight+=1.0;}
+            }
+        }
+    }
+    // Parent IDs always precede children, including optional extra twigs.
+    for branch in branches.iter().rev() {
+        if let Some(parent)=branch.parent {
+            let child=load.get(&branch.id).copied().unwrap_or(1.0);
+            *load.entry(parent).or_default()+=child;
+        }
+    }
+    let root_load=load.get(&0).copied().unwrap_or(1.0).max(1.0);
+    let parts:BTreeMap<_,_>=branches.iter().map(|b|(b.id,b.part)).collect();
+    for span in spans.iter_mut().filter(|s|s.branch_id!=0) {
+        let support=load.get(&span.branch_id).copied().unwrap_or(1.0);
+        let target=base_radius*0.85*(support/root_load).powf(1.0/exponent);
+        let old=span.start_radius_mm as f32/1000.0;
+        let wanted=old*(1.0-blend)+target*blend;
+        let factor=(wanted/old).clamp(0.65,1.35);
+        let start=(old*factor).clamp(0.026,0.5);
+        let end=(span.end_radius_mm as f32/1000.0*factor)
+            .clamp(0.020,start*0.96);
+        let grew=start>old+0.001 || end>span.end_radius_mm as f32/1000.0+0.001;
+        span.start_radius_mm=(start*1000.0).round() as u16;
+        span.end_radius_mm=(end*1000.0).round() as u16;
+        if grew {
+            let a=span.from_mm.map(|v|v as f32/1000.0);
+            let b=span.to_mm.map(|v|v as f32/1000.0);
+            let mut new_wood=BTreeMap::new();
+            paint_line(&mut new_wood,VoxelShape::HexPrism,WORLD_HEXEL_SIZE_METRES,
+                a,b,start.max(end),Material::Bark);
+            for (cell,material) in new_wood {
+                let old=cells.insert(cell,material);
+                if old.is_none() || old.is_some_and(Material::is_foliage) {
+                    owners.insert(cell,(parts[&span.branch_id],Some(span.branch_id)));
+                }
+            }
+        }
     }
 }
 
@@ -1948,9 +2057,183 @@ fn add_tapered_branch_section(out:&mut Vec<Triangle>,cell:[i32;3],
     }
 }
 
-/// Same underlying mesh for Foliage, Assets, GPU preview and OBJ export.
-/// Continuous source paths are sampled solely for display; the voxel map
-/// determines which individual pieces are allowed to exist.
+/// Clip a visible wood fragment to every intersected *occupied* hexel.
+/// The clipped polygon inherits the world-cell owner for deletion, picking,
+/// rendering and OBJ export. No mesh fragment can survive an erased wood cell.
+fn emit_owned_wood(
+    out:&mut Vec<Triangle>, raw:Triangle,
+    cells:&BTreeMap<[i32;3],Material>,
+    roles:&BTreeMap<[i32;3],TreePart>,
+    size:f32, visualized:&mut BTreeSet<[i32;3]>,
+) {
+    use crate::hexel_clip::{Vertex, triangle_candidates, clip_to_hex_prism};
+    let source=std::array::from_fn::<_,3,_>(|i| Vertex {
+        position:raw.points[i],uv:raw.uv[i],
+    });
+    // Convexity gives us an inexpensive exact fast path: all three corners
+    // inside one hexel implies the entire triangle lies inside it.
+    let nearest=grid_key(VoxelShape::HexPrism,size,raw.points[0]);
+    if cells.get(&nearest)==Some(&Material::Bark)
+        && matches!(roles.get(&nearest),
+            Some(TreePart::Trunk|TreePart::MajorBranch|TreePart::SmallBranch))
+        && raw.points.iter().all(|p|
+            crate::hexel_clip::contains(*p,nearest,size)) {
+        visualized.insert(nearest);
+        out.push(Triangle{cell:nearest,..raw});
+        return;
+    }
+    for cell in triangle_candidates(source,size) {
+        // Artist-painted blocks are separate solids, never replaced by an
+        // old generated path. Other generated limbs may share the same cell.
+        if cells.get(&cell)!=Some(&Material::Bark)
+            || !matches!(roles.get(&cell),
+                Some(TreePart::Trunk|TreePart::MajorBranch|TreePart::SmallBranch)) {
+            continue;
+        }
+        for piece in clip_to_hex_prism(source,cell,size) {
+            visualized.insert(cell);
+            out.push(Triangle {
+                points:piece.map(|v|v.position),
+                uv:piece.map(|v|v.uv),
+                cell, ..raw.clone()
+            });
+        }
+    }
+}
+
+/// The same rings are reused on both sides of each curve section, with a
+/// transported local frame rather than choosing a new axis at every joint.
+/// Bark UVs grow with distance and do not reset at branch knees.
+fn emit_continuous_span_chain(
+    out:&mut Vec<Triangle>, segments:&[&BranchSpan],
+    cells:&BTreeMap<[i32;3],Material>,
+    roles:&BTreeMap<[i32;3],TreePart>,
+    size:f32, visualized:&mut BTreeSet<[i32;3]>,
+) {
+    if segments.is_empty(){return;}
+    let mut positions:Vec<[f32;3]>=Vec::new();
+    let mut radii:Vec<f32>=Vec::new();
+    // A restrained branch collar around the parent attachment.
+    // This is render-only, and can never extend into an unowned cell.
+    let collar=if segments[0].branch_id==0 {0.0} else {0.07};
+    let mut travelled=0.0_f32;
+    for span in segments {
+        let a=span.from_mm.map(|x|x as f32/1000.0);
+        let b=span.to_mm.map(|x|x as f32/1000.0);
+        let d=sub3(b,a);
+        let distance=d.iter().map(|v|v*v).sum::<f32>().sqrt();
+        if distance<0.001 {continue;}
+        // Subdivide long spans before clipping. Shorter quads avoid crossing
+        // many hex boundaries and keep the candidate-cell search bounded.
+        let steps=(distance/0.70).ceil().max(1.0) as usize;
+        for i in 0..steps {
+            let t=i as f32/steps as f32;
+            positions.push(lerp3(a,b,t));
+            let r=((1.0-t)*span.start_radius_mm as f32+
+                t*span.end_radius_mm as f32)/1000.0;
+            let swelling=1.0+collar*(1.0-(travelled+t*distance)/0.75).max(0.0);
+            radii.push(r*swelling);
+        }
+        travelled+=distance;
+    }
+    let Some(last)=segments.last() else {return;};
+    positions.push(last.to_mm.map(|x|x as f32/1000.0));
+    radii.push(last.end_radius_mm as f32/1000.0);
+    if positions.len()<2{return;}
+    let mut tangents=Vec::with_capacity(positions.len());
+    let mut normals=Vec::with_capacity(positions.len());
+    let mut binormals=Vec::with_capacity(positions.len());
+    let mut previous_normal:Option<[f32;3]>=None;
+    for i in 0..positions.len() {
+        let d=if i==0 {sub3(positions[1],positions[0])}
+        else if i+1==positions.len() {sub3(positions[i],positions[i-1])}
+        else {sub3(positions[i+1],positions[i-1])};
+        let tangent=normalize3(d);
+        let reference=previous_normal.unwrap_or_else(||{
+            if tangent[2].abs()<0.90 {[0.0,0.0,1.0]} else {[0.0,1.0,0.0]}
+        });
+        // Project the previous frame into the new tangent plane. For
+        // near-parallel tangents this is a minimal-twist transport.
+        let dot=reference.iter().zip(tangent).map(|(a,b)|a*b).sum::<f32>();
+        let projected=sub3(reference,mul3(tangent,dot));
+        let norm=projected.iter().map(|v|v*v).sum::<f32>().sqrt();
+        let u=if norm<0.0001 {
+            let axis=if tangent[2].abs()<0.90 {[0.0,0.0,1.0]}
+                else {[0.0,1.0,0.0]};
+            normalize3(cross3(tangent,axis))
+        } else {mul3(projected,1.0/norm)};
+        let v=normalize3(cross3(tangent,u));
+        tangents.push(tangent);
+        normals.push(u);
+        binormals.push(v);
+        previous_normal=Some(u);
+    }
+    let mut uv_v=0.0;
+    const SIDES:usize=6;
+    for i in 0..positions.len()-1 {
+        let a=positions[i];
+        let b=positions[i+1];
+        let len=sub3(b,a).iter().map(|v|v*v).sum::<f32>().sqrt();
+        if len<0.00001 {continue;}
+        let mut raw=Vec::new();
+        if radii[i].max(radii[i+1])<=0.085 {
+            // Fine twigs remain crossed bark ribbons, still clipped to their
+            // owning wood hexels instead of creating non-harvestable geometry.
+            add_twig_ribbons(&mut raw,[0,0,0],a,b,
+                radii[i],radii[i+1],normals[i],binormals[i]);
+        } else {
+            let ring=|j:usize,center:[f32;3],radius:f32| {
+                let angle=TAU*j as f32/SIDES as f32;
+                add3(center,add3(mul3(normals[i],angle.cos()*radius),
+                    mul3(binormals[i],angle.sin()*radius)))
+            };
+            let next_ring=|j:usize,center:[f32;3],radius:f32| {
+                let angle=TAU*j as f32/SIDES as f32;
+                add3(center,add3(mul3(normals[i+1],angle.cos()*radius),
+                    mul3(binormals[i+1],angle.sin()*radius)))
+            };
+            for j in 0..SIDES {
+                let k=(j+1)%SIDES;
+                let q0=ring(j,a,radii[i]);
+                let q1=ring(k,a,radii[i]);
+                let q2=next_ring(k,b,radii[i+1]);
+                let q3=next_ring(j,b,radii[i+1]);
+                let outward=branch_outward(normalize3(sub3(q0,a)));
+                let u0=j as f32/SIDES as f32;
+                let u1=(j+1) as f32/SIDES as f32;
+                push_triangle(&mut raw,q0,q1,q2,Material::Bark,[0,0,0],
+                    outward,[[u0,uv_v],[u1,uv_v],[u1,uv_v+len]]);
+                push_triangle(&mut raw,q0,q2,q3,Material::Bark,[0,0,0],
+                    outward,[[u0,uv_v],[u1,uv_v+len],[u0,uv_v+len]]);
+            }
+            // Cap *true* path tips only, not every artificial subdivision.
+            // A later world harvesting system may add exposed cut scars.
+            if i==0 {
+                for j in 1..SIDES-1 {
+                    push_triangle(&mut raw,ring(0,a,radii[i]),
+                        ring(j+1,a,radii[i]),ring(j,a,radii[i]),
+                        Material::Bark,[0,0,0],branch_outward(mul3(tangents[i],-1.0)),
+                        [[0.0,0.0],[1.0,0.0],[0.5,0.5]]);
+                }
+            }
+            if i+2==positions.len() {
+                for j in 1..SIDES-1 {
+                    push_triangle(&mut raw,next_ring(0,b,radii[i+1]),
+                        next_ring(j,b,radii[i+1]),
+                        next_ring(j+1,b,radii[i+1]),Material::Bark,[0,0,0],
+                        branch_outward(tangents[i+1]),
+                        [[0.0,0.0],[0.5,0.5],[1.0,0.0]]);
+                }
+            }
+        }
+        for tri in raw {emit_owned_wood(out,tri,cells,roles,size,visualized);}
+        uv_v+=len;
+    }
+}
+
+/// Common organic render surface for Foliage, editable Assets, GPU preview and
+/// OBJ export. The actual 1m occupied hexels are never regenerated here.
+/// Legacy saves without a trunk spine keep their original solid trunk.
 fn tree_surface_triangles(
     cells:&BTreeMap<[i32;3],Material>,shape:VoxelShape,size:f32,
     render:LeafRenderSettings,structure:Option<&TreeStructure>,
@@ -1960,59 +2243,31 @@ fn tree_surface_triangles(
         return surface_triangles(cells,shape,size,render);
     };
     let roles:BTreeMap<_,_>=tree.cells.iter().map(|part|(part.cell,part.part)).collect();
+    let smooth_trunk=tree.spans.iter().any(|span|span.branch_id==0);
     let mut solids=cells.clone();
-    // Remove block surfaces only for cells represented by tapered limbs.
-    // Full-size trunk and manually added wood cells stay solid.
     for (cell,material) in cells {
-        if material.is_wood() &&
-            matches!(roles.get(cell),Some(TreePart::MajorBranch|TreePart::SmallBranch)) {
+        if material.is_wood() && matches!(roles.get(cell),
+            Some(TreePart::MajorBranch|TreePart::SmallBranch)) ||
+            (material.is_wood() && smooth_trunk &&
+                roles.get(cell)==Some(&TreePart::Trunk)) {
             solids.remove(cell);
         }
     }
     let mut triangles=surface_triangles(&solids,shape,size,render);
     let mut visualized=BTreeSet::new();
+    // Source span order follows parent-before-child generation and is stable
+    // across source JSON, Tree Designer, Asset conversion and OBJ export.
+    let mut paths:BTreeMap<u32,Vec<&BranchSpan>>=BTreeMap::new();
     for span in &tree.spans {
-        let a=span.from_mm.map(|v|v as f32/1000.0);
-        let b=span.to_mm.map(|v|v as f32/1000.0);
-        let distance=sub3(b,a);
-        let length=(distance[0]*distance[0]+distance[1]*distance[1]
-                    +distance[2]*distance[2]).sqrt();
-        let steps=(length/0.08).ceil().max(1.0) as usize;
-        // Coalesce each run of the smooth path inside one harvestable
-        // hexel. One section is emitted per occupied cell, not per sample.
-        let mut active:Option<([i32;3],usize)>=None;
-        for i in 0..=steps {
-            let key=if i<steps {
-                let t=(i as f32+0.5)/steps as f32;
-                let cell=grid_key(shape,size,lerp3(a,b,t));
-                if cells.get(&cell)==Some(&Material::Bark) &&
-                    matches!(roles.get(&cell),Some(TreePart::MajorBranch|TreePart::SmallBranch)) {
-                    Some(cell)
-                } else {None}
-            } else {None};
-            if let Some((old,first))=active {
-                if key!=Some(old) {
-                    let t0=first as f32/steps as f32;
-                    let t1=i as f32/steps as f32;
-                    let r0=(span.start_radius_mm as f32+
-                        (span.end_radius_mm as f32-span.start_radius_mm as f32)*t0)/1000.0;
-                    let r1=(span.start_radius_mm as f32+
-                        (span.end_radius_mm as f32-span.start_radius_mm as f32)*t1)/1000.0;
-                    add_tapered_branch_section(&mut triangles,old,
-                        lerp3(a,b,t0),lerp3(a,b,t1),r0,r1);
-                    visualized.insert(old);
-                    active=None;
-                }
-            }
-            if let Some(cell)=key {
-                if active.is_none(){active=Some((cell,i));}
-            }
-        }
+        paths.entry(span.branch_id).or_default().push(span);
     }
-    // Rasterization inserts face-adjacent bridge hexels to preserve
-    // harvestable connectivity, even when the smooth centreline narrowly
-    // misses their centers. Give every such cell a thin visible connection
-    // toward its owner path rather than an invisible collision/harvest block.
+    for path in paths.values() {
+        emit_continuous_span_chain(&mut triangles,path,cells,&roles,size,
+            &mut visualized);
+    }
+    // Diagonal wood-hexel bridging may introduce occupied cells outside the
+    // source tube's sampled surface. Give only these residual owned branch
+    // hexels a thin *clipped* connector, never invisible physical material.
     for part in &tree.cells {
         if !matches!(part.part,TreePart::MajorBranch|TreePart::SmallBranch)
             || visualized.contains(&part.cell)
@@ -2041,7 +2296,22 @@ fn tree_surface_triangles(
             let (a,b)=if best<0.005 {
                 (add3(center,mul3(dir,-0.30)),add3(center,mul3(dir,0.30)))
             } else {(point,center)};
-            add_tapered_branch_section(&mut triangles,part.cell,a,b,0.07,0.045);
+            let mut raw=Vec::new();
+            add_tapered_branch_section(&mut raw,[0,0,0],a,b,0.07,0.045);
+            for t in raw {
+                // A bridge-cell fallback is never allowed to cross the
+                // specified ownership boundary.
+                use crate::hexel_clip::{Vertex,clip_to_hex_prism};
+                let input=std::array::from_fn(|i|Vertex{
+                    position:t.points[i],uv:t.uv[i]});
+                for piece in clip_to_hex_prism(input,part.cell,size) {
+                    triangles.push(Triangle{
+                        points:piece.map(|v|v.position),
+                        uv:piece.map(|v|v.uv),
+                        cell:part.cell,..t.clone()
+                    });
+                }
+            }
         }
     }
     triangles
@@ -2185,6 +2455,107 @@ pub fn mtl(project: &FoliageProject) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pipe_model_uses_foliage_support_without_breaking_legacy_projects() {
+        let mut p=FoliageProject::from_preset(PlantPreset::Oak);
+        p.wood_pipe_blend=0.0;
+        let original=p.generate().unwrap();
+        p.wood_pipe_blend=1.0;
+        p.wood_pipe_exponent=2.0;
+        let adapted=p.generate().unwrap();
+        assert_ne!(original.structure.as_ref().unwrap().spans,
+            adapted.structure.as_ref().unwrap().spans);
+        assert_eq!(original.structure.as_ref().unwrap()
+            .spans.iter().filter(|s|s.branch_id==0).collect::<Vec<_>>(),
+            adapted.structure.as_ref().unwrap()
+            .spans.iter().filter(|s|s.branch_id==0).collect::<Vec<_>>(),
+            "Pipe model must not change the authored trunk");
+        adapted.structure.as_ref().unwrap().validate(&adapted.voxels).unwrap();
+        let json=serde_json::to_string(&p).unwrap();
+        let reloaded: FoliageProject=serde_json::from_str(&json).unwrap();
+        assert_eq!(reloaded.wood_pipe_blend,1.0);
+        assert_eq!(reloaded.wood_pipe_exponent,2.0);
+        let mut old:serde_json::Value=serde_json::from_str(&json).unwrap();
+        old.as_object_mut().unwrap().remove("wood_pipe_blend");
+        old.as_object_mut().unwrap().remove("wood_pipe_exponent");
+        let old: FoliageProject=serde_json::from_value(old).unwrap();
+        old.validate().unwrap();
+        assert_eq!(old.wood_pipe_blend,0.35);
+        assert_eq!(old.wood_pipe_exponent,2.3);
+    }
+
+    #[test]
+    fn organic_wood_triangles_never_leave_authoritative_hexels() {
+        for preset in [PlantPreset::Oak,PlantPreset::Pine,
+                       PlantPreset::FremontCottonwood,PlantPreset::CaturraCoffee,
+                       PlantPreset::CoconutPalm,PlantPreset::GreenBamboo] {
+            let mesh=FoliageProject::from_preset(preset).generate().unwrap();
+            let structure=mesh.structure.as_ref().unwrap();
+            assert!(structure.spans.iter().any(|s|s.branch_id==0),
+                "{preset:?}: missing smooth trunk source");
+            let wood:BTreeSet<_>=mesh.voxels.iter().filter(|v|v.material.is_wood())
+                .map(|v|[v.x,v.y,v.z]).collect();
+            let mut count=0;
+            for tri in mesh.triangles.iter().filter(|t|t.material.is_wood()) {
+                assert!(wood.contains(&tri.cell),"{preset:?} visual ghost");
+                for position in tri.points {
+                    assert!(crate::hexel_clip::contains(position,tri.cell,mesh.voxel_size),
+                        "{preset:?}: triangle escapes {:?} at {position:?}",tri.cell);
+                }
+                count+=1;
+            }
+            assert!(count>50,"{preset:?}: no organic wood");
+        }
+    }
+
+    #[test]
+    fn authored_hexel_deletion_and_painting_never_resurrect_branch_surfaces() {
+        use crate::asset::VoxelAsset;
+        let project=FoliageProject::from_preset(PlantPreset::Oak);
+        let mesh=project.generate().unwrap();
+        let mut asset=VoxelAsset::from_tree(&project,&mesh,&crate::Graph::default());
+        let remove=mesh.triangles.iter().find(|t|
+            t.material.is_wood() && mesh.structure.as_ref().unwrap().cells
+            .iter().any(|c|c.cell==t.cell&&c.part==TreePart::MajorBranch))
+            .expect("test Oak has visible branch");
+        let position=remove.cell;
+        assert_eq!(asset.harvest_cell(position),Some(Material::Bark));
+        let trimmed=asset.mesh().unwrap();
+        assert!(!trimmed.triangles.iter()
+            .any(|t|t.cell==position&&t.material.is_wood()));
+        // Painting a different owned branch cell as leaf must not retain the
+        // old branch geometry, even when its historical span still exists.
+        let another=mesh.triangles.iter().find(|t|
+            t.material.is_wood() && t.cell!=position &&
+            mesh.structure.as_ref().unwrap().cells.iter()
+                .any(|c|c.cell==t.cell&&c.part==TreePart::MajorBranch))
+            .unwrap().cell;
+        assert!(asset.paint(another,Material::Leaf));
+        assert!(!asset.mesh().unwrap().triangles.iter()
+            .any(|t|t.cell==another&&t.material.is_wood()));
+        let loaded=VoxelAsset::from_json(&asset.to_json().unwrap()).unwrap();
+        assert_eq!(loaded.mesh().unwrap().obj(),asset.mesh().unwrap().obj());
+        assert!(!loaded.contains(position));
+    }
+
+    #[test]
+    fn older_tree_structure_without_trunk_spine_retains_original_trunk_blocks() {
+        let project=FoliageProject::from_preset(PlantPreset::Birch);
+        let mesh=project.generate().unwrap();
+        let mut legacy=mesh.structure.clone().unwrap();
+        legacy.spans.retain(|span|span.branch_id!=0);
+        legacy.validate(&mesh.voxels).unwrap();
+        let rebuild=FoliageMesh::from_voxels_with_render(
+            mesh.shape,mesh.voxel_size,mesh.voxels.clone(),mesh.leaf_render)
+            .unwrap().with_tree_structure(Some(legacy));
+        let trunk=mesh.structure.as_ref().unwrap().cells.iter()
+            .find(|p|p.part==TreePart::Trunk).unwrap().cell;
+        assert!(rebuild.triangles.iter().any(|t|
+            t.cell==trunk&&t.material.is_wood()));
+        assert_eq!(rebuild.voxels,mesh.voxels);
+    }
+
 
     #[test]
     fn tree_growth_presets_are_saved_loaded_and_change_the_generated_tree() {
@@ -2431,8 +2802,8 @@ mod tests {
                 b.part==TreePart::SmallBranch).count();
             assert!(twigs>=majors && twigs<=majors*2,
                 "{species:?}: {twigs} twigs for {majors} limbs");
-            assert!(tree.spans.iter().all(|span|
-                span.start_radius_mm>span.end_radius_mm));
+            assert!(tree.spans.iter().filter(|span|span.branch_id!=0)
+                .all(|span|span.start_radius_mm>span.end_radius_mm));
             tree.validate(&mesh.voxels).unwrap();
         }
     }
@@ -2457,12 +2828,15 @@ mod tests {
                 "{preset:?}: branch tubes missing");
             assert!(mesh.triangles.iter().any(|t|
                 t.material.is_wood() && trunk_cells.contains(&t.cell)),
-                "{preset:?}: solid trunk missing");
+                "{preset:?}: trunk surface missing");
             assert!(mesh.triangles.iter().any(|t|t.cutout &&
                 t.material.is_foliage()),"{preset:?}: leaf cards missing");
-            assert!(tree.spans.iter().all(|s|s.start_radius_mm<=420
-                && s.end_radius_mm<=420 && s.start_radius_mm>s.end_radius_mm),
-                "{preset:?}: branches must taper and fit within 1m cells");
+            assert!(tree.spans.iter().filter(|s|s.branch_id!=0).all(|s|
+                s.start_radius_mm<=500 && s.end_radius_mm<=500 &&
+                s.start_radius_mm>s.end_radius_mm),
+                "{preset:?}: generated branch radii must be tapered and bounded");
+            assert!(tree.spans.iter().any(|s|s.branch_id==0),
+                "{preset:?}: smooth trunk must have an authored spine");
             let again=FoliageProject::from_preset(preset).generate().unwrap();
             assert_eq!(mesh.triangles.len(),again.triangles.len());
             assert_eq!(mesh.triangles[0].points,again.triangles[0].points);
@@ -2492,6 +2866,15 @@ mod tests {
                 mesh.voxels.iter().map(|v| (v.x, v.y, v.z)).collect();
             assert_eq!(unique.len(), mesh.voxel_count());
             assert!(mesh.triangle_count() > 0);
+            let wood:BTreeSet<_>=mesh.voxels.iter()
+                .filter(|cell|cell.material.is_wood())
+                .map(|cell|[cell.x,cell.y,cell.z]).collect();
+            for face in mesh.triangles.iter().filter(|face|face.material.is_wood()) {
+                assert!(wood.contains(&face.cell),"{preset:?}: unowned wood");
+                assert!(face.points.iter().all(|point|
+                    crate::hexel_clip::contains(*point,face.cell,mesh.voxel_size)),
+                    "{preset:?}: wood escaped owning hexel {:?}",face.cell);
+            }
         }
     }
 
