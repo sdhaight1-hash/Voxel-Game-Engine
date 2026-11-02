@@ -112,7 +112,18 @@ Voxel Game Engine is organized around **four linked workspaces**. **Assets** is 
 
 Use **Library → Foliage** to generate **grid-based trees with distinct geometry for bark and leaves**—a saved set of occupied bark and leaf cells; bark is a block mesh, while a leaf cell can render custom crossed polygon cards. This implements the block-world interpretation of the workflow shown in the supplied Unreal Engine 5.7 tutorial, while remaining native Rust.
 
-**Plant starters:** Oak, Pine, Birch, Willow, Maple, Shrub. Seeded generation produces trunk and connected wood branches with per-species crown and leaf-hexel variation. The **Tree Preset** inspector supports **Canopy guided** (default, seeded crown targets) or **Classic** (another artistic branch pattern). This is a lightweight guided branch approach, not a complete space-colonization solver.
+**Game-scale tree presets:** Oak, Pine, Birch, Willow, Maple, Shrub. All six are now tuned for real 1 m hexels rather than sub-metre cells. Selecting a preset resets the growth parameters to its species-specific defaults:
+
+| Preset | Nominal height | Designed silhouette | Default branching |
+|---|---:|---|---|
+| Oak | 13 m | Heavy trunk, broad canopy and raised crown | Canopy guided |
+| Pine | 18 m | Tall trunk, narrowing conifer crown | Classic |
+| Birch | 15 m | Slimmer trunk, lighter narrow upper crown | Canopy guided |
+| Willow | 12 m | Spreading branches with pronounced downward droop | Classic |
+| Maple | 13 m | Broad, densely foliated crown | Canopy guided |
+| Shrub | 3.5 m | Low, compact branching and foliage | Classic |
+
+The user can switch branching style afterward. **Canopy guided** steers branch ends toward seeded crown targets; it is not a full iterative space-colonization solver. These are authored, deterministic style defaults, not a botanical growth simulation.
 
 **Game-standard hexels only:** All Foliage generation, preview and exports use **axial Q/R with integer vertical Z**, a 1 m across-flats footprint and a 1 m vertical layer. Bark is solid physical hexel geometry; leaf hexels are logical removable cells represented visually by crossed, alpha-cutout texture cards. Wood has priority over leaf occupancy. Diagonal branches are bridged with face-adjacent hexels. A full standard hexel is approximately 0.866 m³.
 
