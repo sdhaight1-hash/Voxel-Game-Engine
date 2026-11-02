@@ -27,8 +27,8 @@ remain within 0..1. Input/output are clamped to the authored domain.
 The representation is bounded and inline to preserve the existing
 `NodeKind: Copy` authoring architecture. The graph's existing
 validation rejects malformed count, nonfinite coordinates, positions
-outside the fixed endpoints, unordered points and values outside
-0..1. The node and its control points use ordinary JSON serialization.
+outside the fixed endpoints, points closer than 0.001 in normalized
+input position and values outside 0..1. The node and its control points use ordinary JSON serialization.
 Exact-UV memoized and one-channel sampling run the same CPU logic.
 
 No new dependency, GPU shader, tree geometry/occupancy change or
