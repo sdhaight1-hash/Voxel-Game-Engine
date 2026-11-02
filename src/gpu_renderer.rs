@@ -38,6 +38,10 @@ struct Uniforms {
     leaf_base: [f32; 4],
 }
 
+fn leaf_coverage_uniform(enabled:bool)->f32 {
+    if enabled {1.0} else {0.0}
+}
+
 /// The palette is uploaded only when the authored scene changes. Per-frame
 /// season progress stays in the small camera uniform instead.
 #[repr(C)]
@@ -446,7 +450,7 @@ impl egui_wgpu::CallbackTrait for RenderScene {
             wind:[self.time,self.scene.wind_strength,self.scene.wind_speed,self.scene.voxel_size],
             season:[self.season_progress.rem_euclid(4.0),
                 self.scene.flower_kind,
-                if self.ordered_leaf_coverage {1.0} else {0.0},0.0],
+                leaf_coverage_uniform(self.ordered_leaf_coverage),0.0],
             leaf_base:self.scene.leaf_base,
         };
         queue.write_buffer(&resources.uniform,0,bytemuck::bytes_of(&globals));
@@ -641,13 +645,11 @@ mod tests {
         let scene=Scene::from_mesh(&mesh,&bark,&leaves,[40,140,50],palette,0.0);
         // RenderScene.ordered_leaf_coverage is not part of Scene or the
         // upload key. It only goes into globals.season.z each frame.
-        for ordered_leaf_coverage in [false,true] {
-            let mode=if ordered_leaf_coverage {1.0f32} else {0.0};
-            assert_eq!(mode,if ordered_leaf_coverage {1.0} else {0.0});
-            assert_eq!(scene_uploads(Some(&scene),&scene),SceneUploads {
-                geometry:false,bark:false,leaf:false,palette:false,
-            });
-        }
+        assert_eq!(leaf_coverage_uniform(false),0.0);
+        assert_eq!(leaf_coverage_uniform(true),1.0);
+        assert_eq!(scene_uploads(Some(&scene),&scene),SceneUploads {
+            geometry:false,bark:false,leaf:false,palette:false,
+        });
     }
 
     #[test]
