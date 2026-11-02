@@ -1,7 +1,7 @@
 use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, TextureHandle, Vec2};
 use std::{collections::HashMap, path::{Path, PathBuf}};
-use std::f32::consts::PI;
-use texture_studio::{Graph, NodeKind};
+use texture_studio::{Graph, NodeKind, VoxelShape, SideMapping};
+use texture_studio::voxel::{render_atlas, render_voxel_preview, export_obj};
 
 const NODE_W: f32 = 170.0;
 const PREVIEW_SIZE: u32 = 256;
@@ -29,7 +29,9 @@ struct Studio {
     preview: Option<TextureHandle>,
     selected_preview: Option<TextureHandle>,
     previewed_id: Option<u64>,
-    sphere: Option<TextureHandle>,
+    voxel_preview: Option<TextureHandle>,
+    atlas_preview: Option<TextureHandle>,
+    voxel_yaw: f32,
     thumbs: HashMap<u64, TextureHandle>,
     preview_channel: usize,
     view: u8,
@@ -52,7 +54,9 @@ impl Default for Studio {
             preview: None,
             selected_preview: None,
             previewed_id: None,
-            sphere: None,
+            voxel_preview: None,
+            atlas_preview: None,
+            voxel_yaw: 0.82,
             thumbs: HashMap::new(),
             preview_channel: 0,
             view: 0,
@@ -81,9 +85,14 @@ impl Studio {
             Ok(pixels) => put_texture(ctx, &mut self.preview, "output-preview", pixels, PREVIEW_SIZE),
             Err(err) => self.status = format!("Preview error: {err}"),
         }
-        match make_sphere_preview(&self.graph, PREVIEW_SIZE) {
-            Ok(pixels) => put_texture(ctx, &mut self.sphere, "sphere-preview", pixels, PREVIEW_SIZE),
-            Err(err) => self.status = format!("Sphere preview error: {err}"),
+        match render_voxel_preview(&self.graph, self.graph.voxel, PREVIEW_SIZE, self.voxel_yaw) {
+            Ok(pixels) => put_texture(ctx, &mut self.voxel_preview, "voxel-preview", pixels, PREVIEW_SIZE),
+            Err(err) => self.status = format!("Voxel preview error: {err}"),
+        }
+        match render_atlas(&self.graph, self.preview_channel, self.graph.voxel, 64) {
+            Ok((meta, pixels)) => put_texture_rect(ctx, &mut self.atlas_preview,
+                "voxel-atlas", pixels, [meta.width as usize, meta.height as usize]),
+            Err(err) => self.status = format!("Voxel atlas error: {err}"),
         }
         if let Some(id) = self.selected {
             if let Ok(pixels) = self.graph.render_node_rgba(id, PREVIEW_SIZE, PREVIEW_SIZE) {
@@ -200,6 +209,46 @@ impl Studio {
         self.status = match result {
             Ok(()) => format!("Five PBR maps exported to {}", folder.display()),
             Err(err) => format!("Material export failed: {err}"),
+        };
+    }
+
+    fn export_voxel(&mut self) {
+        let Some(folder) = rfd::FileDialog::new().pick_folder() else { return; };
+        let size = self.export_size;
+        let settings = self.graph.voxel;
+        let result: Result<(), String> = (|| {
+            let channels = ["albedo", "roughness", "metallic", "height", "normal"];
+            for filename in [
+                "voxel_albedo.png", "voxel_roughness.png", "voxel_metallic.png",
+                "voxel_height.png", "voxel_normal.png",
+                "voxel_layout.json", "voxel.obj", "voxel.mtl",
+            ] {
+                if folder.join(filename).exists() {
+                    return Err(format!("{filename} already exists — choose an empty folder"));
+                }
+            }
+            let mut metadata = None;
+            for (channel, name) in channels.iter().enumerate() {
+                let (atlas, pixels) = render_atlas(&self.graph, channel, settings, size)?;
+                save_png_rect(&folder.join(format!("voxel_{name}.png")),
+                    atlas.width, atlas.height, &pixels)?;
+                metadata = Some(atlas);
+            }
+            let atlas = metadata.ok_or("Could not create voxel atlas")?;
+            std::fs::write(folder.join("voxel_layout.json"),
+                serde_json::to_string_pretty(&atlas).map_err(|e| e.to_string())?)
+                .map_err(|e| e.to_string())?;
+            std::fs::write(folder.join("voxel.obj"), export_obj(&atlas, "voxel.mtl"))
+                .map_err(|e| e.to_string())?;
+            std::fs::write(folder.join("voxel.mtl"),
+                "newmtl voxel_material\nKd 1.0 1.0 1.0\nmap_Kd voxel_albedo.png\n")
+                .map_err(|e| e.to_string())?;
+            Ok(())
+        })();
+        self.status = match result {
+            Ok(()) => format!("Exported {} voxel with five PBR atlases and UV-mapped OBJ to {}",
+                settings.shape.name(), folder.display()),
+            Err(err) => format!("Voxel export failed: {err}"),
         };
     }
 
@@ -846,7 +895,13 @@ fn draw_wire(painter: &egui::Painter, a: Pos2, b: Pos2, color: Color32) {
 fn put_texture(ctx: &egui::Context, slot: &mut Option<TextureHandle>, name: &str,
     rgba: Vec<u8>, size: u32)
 {
-    let image = egui::ColorImage::from_rgba_unmultiplied([size as usize, size as usize], &rgba);
+    put_texture_rect(ctx, slot, name, rgba, [size as usize, size as usize]);
+}
+
+fn put_texture_rect(ctx: &egui::Context, slot: &mut Option<TextureHandle>, name: &str,
+    rgba: Vec<u8>, dimensions: [usize;2])
+{
+    let image = egui::ColorImage::from_rgba_unmultiplied(dimensions, &rgba);
     if let Some(existing) = slot {
         existing.set(image, egui::TextureOptions::LINEAR);
     } else {
@@ -855,52 +910,19 @@ fn put_texture(ctx: &egui::Context, slot: &mut Option<TextureHandle>, name: &str
 }
 
 fn save_png(path: &Path, size: u32, pixels: &[u8]) -> Result<(), String> {
+    save_png_rect(path, size, size, pixels)
+}
+
+fn save_png_rect(path: &Path, width: u32, height: u32, pixels: &[u8]) -> Result<(), String> {
+    if pixels.len() != (width as usize * height as usize * 4) {
+        return Err("PNG buffer dimensions do not match".into());
+    }
     let file = std::fs::File::create(path).map_err(|e| e.to_string())?;
-    let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), size, size);
+    let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), width, height);
     encoder.set_color(png::ColorType::Rgba);
     encoder.set_depth(png::BitDepth::Eight);
     let mut writer = encoder.write_header().map_err(|e| e.to_string())?;
     writer.write_image_data(pixels).map_err(|e| e.to_string())
-}
-
-/// Approximate lit sphere: actual generated albedo, roughness and metallic textures are
-/// sampled on spherical UVs. This is a preview, not a physically accurate PBR shader.
-fn make_sphere_preview(graph: &Graph, size: u32) -> Result<Vec<u8>, String> {
-    let albedo = graph.render_output_channel_rgba(0, size, size)?;
-    let roughness = graph.render_output_channel_rgba(1, size, size)?;
-    let metallic = graph.render_output_channel_rgba(2, size, size)?;
-    let mut pixels = vec![0u8; (size * size * 4) as usize];
-    for y in 0..size {
-        for x in 0..size {
-            let p = ((y * size + x) * 4) as usize;
-            pixels[p..p + 4].copy_from_slice(&[21, 25, 33, 255]);
-            let sx = (x as f32 + 0.5) * 2.0 / size as f32 - 1.0;
-            let sy = 1.0 - (y as f32 + 0.5) * 2.0 / size as f32;
-            let r2 = sx * sx + sy * sy;
-            if r2 >= 0.88 { continue; }
-            let nz = (1.0 - r2 / 0.88).sqrt();
-            let nx = sx / 0.88_f32.sqrt();
-            let ny = sy / 0.88_f32.sqrt();
-            let u = (nz.atan2(nx) / (2.0 * PI) + 0.5).rem_euclid(1.0);
-            let v = (ny.asin() / PI + 0.5).clamp(0.0, 0.9999);
-            let tx = (u * size as f32) as u32;
-            let ty = (v * size as f32) as u32;
-            let tex = ((ty * size + tx) * 4) as usize;
-            let rough = roughness[tex] as f32 / 255.0;
-            let metal = metallic[tex] as f32 / 255.0;
-            let diffuse = (nx * 0.41 + ny * 0.6 + nz * 0.68).max(0.0);
-            let half = (nx * 0.22 + ny * 0.34 + nz * 0.91).max(0.0);
-            let spec = half.powf(5.0 + (1.0 - rough) * 100.0);
-            for channel in 0..3 {
-                let base = albedo[tex + channel] as f32 / 255.0;
-                let reflectance = 0.04 * (1.0 - metal) + base * metal;
-                let lit = base * (0.18 + 0.82 * diffuse) * (1.0 - 0.65 * metal)
-                    + reflectance * spec * (1.0 - rough * 0.65);
-                pixels[p + channel] = (lit.clamp(0.0, 1.0) * 255.0).round() as u8;
-            }
-        }
-    }
-    Ok(pixels)
 }
 
 #[cfg(test)]
