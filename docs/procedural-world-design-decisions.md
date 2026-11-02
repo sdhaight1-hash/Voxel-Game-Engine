@@ -41,7 +41,7 @@ The user-selected vertical world height is fixed for each world at creation.
 
 `Y` is vertical; `X` and `Z` are horizontal. `H` is the number of valid vertical block positions, `0 ... H-1`.
 
-\`Y_sea = floor(H × 0.431372549)\`
+`Y_sea = floor(H × 0.431372549)`
 
 *The proportional sea-level rule is the **current provisional default**, inspired by Vintage Story. The four selectable world-height presets and 512-block default are decided; final sea-level modes are not.*
 
