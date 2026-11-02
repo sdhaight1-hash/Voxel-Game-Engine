@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 pub const MATERIAL_SIZE: u32 = 128;
 
 fn default_threshold() -> f32 { 0.5 }
+fn default_bark_tint_strength() -> f32 { 0.0 }
 fn default_leaf_species() -> PlantPreset { PlantPreset::Oak }
 
 /// Four seasons × four gradient stops (shadow, base, midtone, highlight).
@@ -113,7 +114,7 @@ impl Default for SeasonalPalettes {
 pub enum MaterialRole { Bark, Leaf, Opacity }
 impl MaterialRole {
     pub fn name(self)-> &'static str {match self {
-        Self::Bark=>"Bark",Self::Leaf=>"Leaf Albedo",Self::Opacity=>"Leaf Cutout",
+        Self::Bark=>"Bark",Self::Leaf=>"Leaf Pattern (palette-tinted)",Self::Opacity=>"Leaf Cutout",
     }}
 }
 
@@ -126,6 +127,10 @@ pub struct FoliageMaterials {
     /// Optional height/greyscale-style graph applied as an additional opacity mask.
     /// The original leaf-card silhouette is always preserved.
     pub leaf_opacity: Option<Graph>,
+    /// 0 = unchanged authored graph; 1 = graph luminance colored by bark_color.
+    /// Defaults to 0 so existing tree materials remain pixel-identical.
+    #[serde(default = "default_bark_tint_strength")]
+    pub bark_tint_strength: f32,
     pub bark_preset: Option<String>,
     pub leaf_preset: Option<String>,
     /// The shape of the leaf-card cutout. Travels with the authored asset,
@@ -145,6 +150,7 @@ pub struct FoliageMaterials {
 impl Default for FoliageMaterials {
     fn default() -> Self {
         Self { bark: None, leaf: None, leaf_opacity: None,
+            bark_tint_strength: 0.0,
             bark_preset: None, leaf_preset: None,
             leaf_species: PlantPreset::Oak, fruit_color: None,
             seasonal_palettes: None, cutout_threshold: 0.5 }
@@ -158,6 +164,10 @@ impl FoliageMaterials {
     }
 
     pub fn validate(&self) -> Result<(), String> {
+        if !self.bark_tint_strength.is_finite()
+            || !(0.0..=1.0).contains(&self.bark_tint_strength) {
+            return Err("Bark tint strength must be 0..1".into());
+        }
         if !self.cutout_threshold.is_finite()
             || !(0.0..=1.0).contains(&self.cutout_threshold) {
             return Err("Foliage cutout threshold must be 0..1".into());
@@ -321,8 +331,23 @@ impl FoliageMaterials {
     pub fn bake_bark(&self,size:u32,bark_tint:[u8;3])->Result<Vec<u8>,String> {
         self.validate()?;
         if size==0 || size>1024 {return Err("Bark bake must be 1..1024 px".into());}
-        if let Some(graph)=&self.bark {graph.render_rgba(size,size)}
-        else {Ok(bark_tint.iter().copied().chain(std::iter::once(255))
+        if let Some(graph)=&self.bark {
+            let mut rgba=graph.render_rgba(size,size)?;
+            let mix=self.bark_tint_strength;
+            if mix>0.0 {
+                for pixel in rgba.chunks_exact_mut(4) {
+                    let luminance=(0.25*pixel[0] as f32 + 0.60*pixel[1] as f32
+                        + 0.15*pixel[2] as f32)/255.0;
+                    let shade=0.5+0.5*luminance;
+                    for ch in 0..3 {
+                        let tinted=bark_tint[ch] as f32*shade;
+                        pixel[ch]=(pixel[ch] as f32*(1.0-mix)+tinted*mix)
+                            .round().clamp(0.0,255.0) as u8;
+                    }
+                }
+            }
+            Ok(rgba)
+        } else {Ok(bark_tint.iter().copied().chain(std::iter::once(255))
             .cycle().take(size as usize*size as usize*4).collect())}
     }
 
@@ -525,10 +550,31 @@ mod tests {
     }
 
     #[test]
+    fn bark_tint_is_explicit_and_old_graph_colors_remain_unchanged() {
+        let mut mat=FoliageMaterials::default();
+        let mut graph=Graph::default();
+        graph.nodes[0].kind=crate::NodeKind::Color{rgb:[100,120,140]};
+        mat.bark=Some(graph.clone());
+        let old=graph.render_rgba(8,8).unwrap();
+        assert_eq!(mat.bake_bark(8,[200,70,20]).unwrap(),old);
+        mat.bark_tint_strength=1.0;
+        let tinted=mat.bake_bark(8,[200,70,20]).unwrap();
+        assert_ne!(tinted,old);
+        assert!(tinted.chunks_exact(4).all(|p|p[0]>p[1] && p[1]>p[2]));
+        let restored:FoliageMaterials=serde_json::from_str(
+            &serde_json::to_string(&mat).unwrap()).unwrap();
+        assert_eq!(restored.bark_tint_strength,1.0);
+        assert_eq!(restored.bake_bark(8,[200,70,20]).unwrap(),tinted);
+        mat.bark_tint_strength=f32::NAN;
+        assert!(mat.validate().is_err());
+    }
+
+    #[test]
     fn legacy_materials_and_invalid_thresholds() {
         let old:FoliageMaterials=serde_json::from_str("{}").unwrap();
         assert!(old.bark.is_none());
         assert_eq!(old.cutout_threshold,0.5);
+        assert_eq!(old.bark_tint_strength,0.0);
         let mut m=old;
         m.cutout_threshold=f32::NAN;
         assert!(m.validate().is_err());
