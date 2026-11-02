@@ -113,7 +113,13 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         rgba = textureSampleLevel(bark_tex, linear_sampler, input.uv, 0.0);
     } else if (input.kind < 1.5) {
         rgba = textureSampleLevel(foliage_tex, linear_sampler, input.uv, 0.0);
-        let blossom=spring_bloom_amount()*cherry_blossom_mask(input.uv);
+        let bloom=spring_bloom_amount();
+        var blossom=0.0;
+        // Do not evaluate the procedural flower mask for any other species
+        // or outside the brief early-spring bloom window.
+        if (bloom>0.05) {
+            blossom=bloom*cherry_blossom_mask(input.uv);
+        }
         // Petals can extend outside the permanent green-leaf silhouette.
         // When bloom fades, the original cutout remains unchanged.
         if (rgba.a < 0.5 && blossom < 0.55) { discard; }
