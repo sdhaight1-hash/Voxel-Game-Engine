@@ -1147,8 +1147,12 @@ fn paint_leaf_cluster(
                     (y as u32).wrapping_mul(19349663) ^
                     (z as u32).wrapping_mul(83492791);
                 let jitter = hash01(seed ^ cell_seed, cluster_id, 3);
-                let edge = 0.80 + variation * (jitter - 0.5) * 0.45;
-                if dist > edge.max(0.3) || jitter > density { continue; }
+                // Preserve an almost solid canopy interior and concentrate
+                // silhouette irregularity toward the outer surface. The
+                // density slider still controls occupancy at low values.
+                let edge = 0.95 + variation * (jitter - 0.5) * 0.34;
+                let chance=(density + (1.0-dist).max(0.0)*0.35).min(1.0);
+                if dist > edge.max(0.35) || jitter > chance { continue; }
                 let color = hash01(seed, cell_seed, cluster_id);
                 let material = if color < 0.28 { Material::LeafDark }
                     else if color > 0.77 { Material::LeafLight } else { Material::Leaf };
@@ -1220,31 +1224,35 @@ fn push_triangle(out: &mut Vec<Triangle>, a: [f32; 3], b: [f32; 3],
     out.push(Triangle { points: [a, b, c], material, cell, outward,
         uv, cutout: false, wind_weight: [0.0; 3] });
 }
+/// Each logical 1 m leaf hexel hosts several separate textured sprays.
+/// Their staggered placement increases canopy coverage without creating
+/// more harvestable cells, extra entities or non-authoritative foliage.
 fn add_leaf_cards(triangles:&mut Vec<Triangle>, pos:[i32;3],
                   material:Material, shape:VoxelShape, size:f32) {
     let c=grid_position(shape,size,pos);
     let id=(pos[0] as u32).wrapping_mul(0x9e3779b9)
         ^(pos[1] as u32).wrapping_mul(0x85ebca6b)
         ^(pos[2] as u32).wrapping_mul(0xc2b2ae35);
-    let quarter=(id.wrapping_mul(0x27d4eb2d)>>30) as f32;
-    let rotation=quarter*PI*0.5;
-    let tilt=((id>>8)&31) as f32/31.0*0.16-0.08;
-    let width=size*(0.43+((id>>13)&7) as f32/100.0);
-    let z0=c[2]-size*0.44;
-    let z1=c[2]+size*0.47;
-    for plane in 0..2 {
-        let angle=rotation+PI*0.25+plane as f32*PI*0.5;
+    let count=6; // 6 independently oriented, double-sided leaf sprays.
+    for plane in 0..count {
+        let seed=id ^ (plane as u32).wrapping_mul(0x27d4eb2d);
+        let angle=TAU*hash01(seed,1,3);
+        let width=size*(0.34+0.09*hash01(seed,2,5));
+        let dx=size*(hash01(seed,3,9)-0.5)*0.42;
+        let dy=size*(hash01(seed,4,11)-0.5)*0.42;
+        let z=size*(hash01(seed,5,13)-0.5)*0.30;
+        let drift=size*(hash01(seed,6,17)-0.5)*0.18;
         let d=[angle.cos()*width,angle.sin()*width];
-        let drift=size*tilt*(if plane==0 {1.0} else {-1.0});
+        let z0=c[2]+z-size*0.39;
+        let z1=c[2]+z+size*0.39;
         let quad=[
-            [c[0]-d[0],c[1]-d[1],z0],
-            [c[0]+d[0],c[1]+d[1],z0],
-            [c[0]+d[0]+drift,c[1]+d[1]-drift,z1],
-            [c[0]-d[0]+drift,c[1]-d[1]-drift,z1],
+            [c[0]+dx-d[0],c[1]+dy-d[1],z0],
+            [c[0]+dx+d[0],c[1]+dy+d[1],z0],
+            [c[0]+dx+d[0]+drift,c[1]+dy+d[1]-drift,z1],
+            [c[0]+dx-d[0]+drift,c[1]+dy-d[1]-drift,z1],
         ];
         let uv=[[0.0,1.0],[1.0,1.0],[1.0,0.0],[0.0,0.0]];
         let weights=[0.0,0.0,1.0,1.0];
-        // Both sides: OBJ and preview work with backface culling enabled.
         for idx in [[0,1,2],[0,2,3],[2,1,0],[3,2,0]] {
             triangles.push(Triangle {
                 points:idx.map(|i|quad[i]),
