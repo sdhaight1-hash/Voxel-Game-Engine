@@ -1277,6 +1277,134 @@
         "Turquoise"
       ],
       "profile": "shell"
+    },
+    {
+      "category": "Trees & Wood",
+      "family": "Flowering hardwood species",
+      "names": [
+        "Cherry Blossom",
+        "Kentucky Coffeetree"
+      ],
+      "variants": [
+        "Bark / trunk sides"
+      ],
+      "profile": "wood"
+    },
+    {
+      "category": "Trees & Wood",
+      "family": "Flowering hardwood species",
+      "names": [
+        "Cherry Blossom",
+        "Kentucky Coffeetree"
+      ],
+      "variants": [
+        "Leaf-only canopy"
+      ],
+      "profile": "foliage"
+    },
+    {
+      "category": "Trees & Wood",
+      "family": "Populus cottonwoods",
+      "names": [
+        "Eastern Cottonwood",
+        "Fremont Cottonwood",
+        "Black Cottonwood"
+      ],
+      "variants": [
+        "Bark / trunk sides"
+      ],
+      "profile": "wood"
+    },
+    {
+      "category": "Trees & Wood",
+      "family": "Populus cottonwoods",
+      "names": [
+        "Eastern Cottonwood",
+        "Fremont Cottonwood",
+        "Black Cottonwood"
+      ],
+      "variants": [
+        "Leaf-only canopy"
+      ],
+      "profile": "foliage"
+    },
+    {
+      "category": "Trees & Wood",
+      "family": "Palms and fronds",
+      "names": [
+        "Coconut Palm",
+        "Date Palm",
+        "Fan Palm"
+      ],
+      "variants": [
+        "Stalk sides"
+      ],
+      "profile": "wood"
+    },
+    {
+      "category": "Trees & Wood",
+      "family": "Palms and fronds",
+      "names": [
+        "Coconut Palm",
+        "Date Palm",
+        "Fan Palm"
+      ],
+      "variants": [
+        "Frond canopy"
+      ],
+      "profile": "foliage"
+    },
+    {
+      "category": "Fruit Trees",
+      "family": "Coffee plants",
+      "names": [
+        "Arabica Coffee",
+        "Caturra Coffee",
+        "Maragogipe Coffee",
+        "Castillo Coffee",
+        "Tabi Coffee"
+      ],
+      "variants": [
+        "Bark"
+      ],
+      "profile": "wood"
+    },
+    {
+      "category": "Fruit Trees",
+      "family": "Coffee plants",
+      "names": [
+        "Arabica Coffee",
+        "Caturra Coffee",
+        "Maragogipe Coffee",
+        "Castillo Coffee",
+        "Tabi Coffee"
+      ],
+      "variants": [
+        "Leaves"
+      ],
+      "profile": "foliage"
+    },
+    {
+      "category": "Vegetation",
+      "family": "Shrub wood",
+      "names": [
+        "Shrub"
+      ],
+      "variants": [
+        "Bark / trunk sides"
+      ],
+      "profile": "wood"
+    },
+    {
+      "category": "Vegetation",
+      "family": "Shrub leaves",
+      "names": [
+        "Shrub"
+      ],
+      "variants": [
+        "Leaf-only canopy"
+      ],
+      "profile": "foliage"
     }
   ]
 }

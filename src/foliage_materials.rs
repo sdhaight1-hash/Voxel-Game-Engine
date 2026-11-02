@@ -274,7 +274,8 @@ impl FoliageMaterials {
         Ok(())
     }
 
-    /// Map each plant family to *existing* built-in bark/leaf appearance variants.
+    /// Map each plant to its own original, data-driven bark/leaf material.
+    /// Old saved trees and assets retain their serialized graph snapshots.
     /// No geometry or species art is claimed to be scanned or game-derived.
     pub fn for_species(species: PlantPreset) -> Self {
         let mut out=Self::default();
@@ -287,7 +288,7 @@ impl FoliageMaterials {
         // Reuse exact names and variant types from the existing natural
         // material catalog. No extra external texture library is required.
         let name=species.material_name();
-        let bark_variants:&[&str]=if species.is_bamboo() {
+        let bark_variants:&[&str]=if species.is_bamboo() || species.is_palm() {
             &["Stalk sides"]
         } else if species==PlantPreset::Willow {
             &["Willow bark","Bark / trunk sides"]
@@ -298,6 +299,8 @@ impl FoliageMaterials {
         };
         let leaf_variants:&[&str]=if species.is_bamboo() {
             &["Leaves"]
+        } else if species.is_palm() {
+            &["Frond canopy"]
         } else if species==PlantPreset::Willow {
             &["Willow hanging leaf clusters","Willow leaves"]
         } else if species.group()=="Fruit trees" || species.is_coffee() {

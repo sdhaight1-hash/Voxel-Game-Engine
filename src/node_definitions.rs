@@ -278,7 +278,7 @@ mod tests {
         use crate::presets::builtin_presets;
         use crate::VoxelSettings;
         let presets=builtin_presets().unwrap();
-        assert_eq!(presets.len(),1039);
+        assert_eq!(presets.len(),1067);
         for preset in presets {
             let graph=preset.build_graph(VoxelSettings::default());
             graph.validate().unwrap();
