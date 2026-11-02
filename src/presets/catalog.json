@@ -1,0 +1,1282 @@
+{
+  "version": 1,
+  "source": "User-supplied Complete Natural Texture Catalog; names/variants are descriptive, not extracted game image assets",
+  "groups": [
+    {
+      "category": "Stone & Rock",
+      "family": "Igneous / volcanic",
+      "names": [
+        "Andesite",
+        "Basalt",
+        "Granite",
+        "Kimberlite",
+        "Obsidian",
+        "Peridotite",
+        "Scoria",
+        "Tuff"
+      ],
+      "variants": [
+        "Solid rock",
+        "Cracked rock",
+        "Exposed cliff face",
+        "Loose fragments",
+        "Small stones",
+        "Boulder",
+        "Mineral-bearing rock"
+      ],
+      "profile": "rock"
+    },
+    {
+      "category": "Stone & Rock",
+      "family": "Sedimentary",
+      "names": [
+        "Bauxite",
+        "Chalk",
+        "Chert",
+        "Claystone",
+        "Conglomerate",
+        "Limestone",
+        "Sandstone",
+        "Shale",
+        "Travertine"
+      ],
+      "variants": [
+        "Solid rock",
+        "Cracked rock",
+        "Exposed cliff face",
+        "Loose fragments",
+        "Small stones",
+        "Boulder",
+        "Mineral-bearing rock"
+      ],
+      "profile": "rock"
+    },
+    {
+      "category": "Stone & Rock",
+      "family": "Metamorphic",
+      "names": [
+        "Marble",
+        "Phyllite",
+        "Slate"
+      ],
+      "variants": [
+        "Solid rock",
+        "Cracked rock",
+        "Exposed cliff face",
+        "Loose fragments",
+        "Small stones",
+        "Boulder",
+        "Mineral-bearing rock"
+      ],
+      "profile": "rock"
+    },
+    {
+      "category": "Stone & Rock",
+      "family": "Other geological",
+      "names": [
+        "Halite",
+        "Suevite"
+      ],
+      "variants": [
+        "Solid rock",
+        "Cracked rock",
+        "Exposed cliff face",
+        "Loose fragments",
+        "Small stones",
+        "Boulder",
+        "Mineral-bearing rock"
+      ],
+      "profile": "rock"
+    },
+    {
+      "category": "Stone & Rock",
+      "family": "Marble coloration",
+      "names": [
+        "White marble",
+        "Pink marble",
+        "Green marble"
+      ],
+      "variants": [
+        "Solid rock",
+        "Cracked rock",
+        "Exposed cliff face",
+        "Loose fragments",
+        "Small stones",
+        "Boulder",
+        "Mineral-bearing rock"
+      ],
+      "profile": "rock"
+    },
+    {
+      "category": "Ores & Minerals",
+      "family": "Copper",
+      "names": [
+        "Native copper",
+        "Malachite"
+      ],
+      "variants": [
+        "Ore-bearing host rock",
+        "Surface ore exposure",
+        "Rich deposit",
+        "Natural crystal formation",
+        "Loose ore piece"
+      ],
+      "profile": "ore"
+    },
+    {
+      "category": "Ores & Minerals",
+      "family": "Tin",
+      "names": [
+        "Cassiterite"
+      ],
+      "variants": [
+        "Ore-bearing host rock",
+        "Surface ore exposure",
+        "Rich deposit",
+        "Natural crystal formation",
+        "Loose ore piece"
+      ],
+      "profile": "ore"
+    },
+    {
+      "category": "Ores & Minerals",
+      "family": "Iron",
+      "names": [
+        "Hematite",
+        "Limonite",
+        "Magnetite"
+      ],
+      "variants": [
+        "Ore-bearing host rock",
+        "Surface ore exposure",
+        "Rich deposit",
+        "Natural crystal formation",
+        "Loose ore piece"
+      ],
+      "profile": "ore"
+    },
+    {
+      "category": "Ores & Minerals",
+      "family": "Lead",
+      "names": [
+        "Galena"
+      ],
+      "variants": [
+        "Ore-bearing host rock",
+        "Surface ore exposure",
+        "Rich deposit",
+        "Natural crystal formation",
+        "Loose ore piece"
+      ],
+      "profile": "ore"
+    },
+    {
+      "category": "Ores & Minerals",
+      "family": "Zinc",
+      "names": [
+        "Sphalerite"
+      ],
+      "variants": [
+        "Ore-bearing host rock",
+        "Surface ore exposure",
+        "Rich deposit",
+        "Natural crystal formation",
+        "Loose ore piece"
+      ],
+      "profile": "ore"
+    },
+    {
+      "category": "Ores & Minerals",
+      "family": "Bismuth",
+      "names": [
+        "Bismuthinite"
+      ],
+      "variants": [
+        "Ore-bearing host rock",
+        "Surface ore exposure",
+        "Rich deposit",
+        "Natural crystal formation",
+        "Loose ore piece"
+      ],
+      "profile": "ore"
+    },
+    {
+      "category": "Ores & Minerals",
+      "family": "Gold",
+      "names": [
+        "Native gold"
+      ],
+      "variants": [
+        "Ore-bearing host rock",
+        "Surface ore exposure",
+        "Rich deposit",
+        "Natural crystal formation",
+        "Loose ore piece"
+      ],
+      "profile": "ore"
+    },
+    {
+      "category": "Ores & Minerals",
+      "family": "Silver",
+      "names": [
+        "Native silver"
+      ],
+      "variants": [
+        "Ore-bearing host rock",
+        "Surface ore exposure",
+        "Rich deposit",
+        "Natural crystal formation",
+        "Loose ore piece"
+      ],
+      "profile": "ore"
+    },
+    {
+      "category": "Ores & Minerals",
+      "family": "Nickel",
+      "names": [
+        "Pentlandite"
+      ],
+      "variants": [
+        "Ore-bearing host rock",
+        "Surface ore exposure",
+        "Rich deposit",
+        "Natural crystal formation",
+        "Loose ore piece"
+      ],
+      "profile": "ore"
+    },
+    {
+      "category": "Ores & Minerals",
+      "family": "Chromium",
+      "names": [
+        "Chromite"
+      ],
+      "variants": [
+        "Ore-bearing host rock",
+        "Surface ore exposure",
+        "Rich deposit",
+        "Natural crystal formation",
+        "Loose ore piece"
+      ],
+      "profile": "ore"
+    },
+    {
+      "category": "Ores & Minerals",
+      "family": "Titanium",
+      "names": [
+        "Ilmenite"
+      ],
+      "variants": [
+        "Ore-bearing host rock",
+        "Surface ore exposure",
+        "Rich deposit",
+        "Natural crystal formation",
+        "Loose ore piece"
+      ],
+      "profile": "ore"
+    },
+    {
+      "category": "Ores & Minerals",
+      "family": "Meteoric",
+      "names": [
+        "Meteoric iron"
+      ],
+      "variants": [
+        "Ore-bearing host rock",
+        "Surface ore exposure",
+        "Rich deposit",
+        "Natural crystal formation",
+        "Loose ore piece"
+      ],
+      "profile": "ore"
+    },
+    {
+      "category": "Ores & Minerals",
+      "family": "Coal",
+      "names": [
+        "Lignite (brown coal)",
+        "Bituminous coal (black coal)",
+        "Anthracite"
+      ],
+      "variants": [
+        "Natural deposit",
+        "Exposed vein",
+        "Loose fragments"
+      ],
+      "profile": "ore"
+    },
+    {
+      "category": "Ores & Minerals",
+      "family": "Salts",
+      "names": [
+        "Halite",
+        "Sylvite",
+        "Saltpeter"
+      ],
+      "variants": [
+        "Natural deposit",
+        "Crystal formation",
+        "Loose fragments"
+      ],
+      "profile": "crystal"
+    },
+    {
+      "category": "Ores & Minerals",
+      "family": "Other minerals",
+      "names": [
+        "Alum",
+        "Borax",
+        "Cinnabar",
+        "Sulfur",
+        "Corundum"
+      ],
+      "variants": [
+        "Natural deposit",
+        "Crystal formation",
+        "Loose fragments"
+      ],
+      "profile": "crystal"
+    },
+    {
+      "category": "Ores & Minerals",
+      "family": "Crystalline",
+      "names": [
+        "Quartz",
+        "Olivine",
+        "Lapis lazuli"
+      ],
+      "variants": [
+        "Natural deposit",
+        "Crystal formation",
+        "Loose fragments"
+      ],
+      "profile": "crystal"
+    },
+    {
+      "category": "Ores & Minerals",
+      "family": "Gemstones",
+      "names": [
+        "Diamond",
+        "Emerald",
+        "Peridot"
+      ],
+      "variants": [
+        "Natural crystal",
+        "Host rock",
+        "Loose fragment"
+      ],
+      "profile": "crystal"
+    },
+    {
+      "category": "Ores & Minerals",
+      "family": "Additional reference minerals",
+      "names": [
+        "Fluorite",
+        "Graphite",
+        "Kernite",
+        "Phosphorite",
+        "Rhodochrosite",
+        "Uranium"
+      ],
+      "variants": [
+        "Natural deposit",
+        "Crystalline"
+      ],
+      "profile": "crystal"
+    },
+    {
+      "category": "Soil & Ground",
+      "family": "Soil",
+      "names": [
+        "Barren soil"
+      ],
+      "variants": [
+        "Bare"
+      ],
+      "profile": "soil"
+    },
+    {
+      "category": "Soil & Ground",
+      "family": "Soil",
+      "names": [
+        "Low-fertility soil",
+        "Medium-fertility soil",
+        "High-fertility soil"
+      ],
+      "variants": [
+        "Bare",
+        "Sparse grass",
+        "Patchy grass",
+        "Grassy"
+      ],
+      "profile": "soil"
+    },
+    {
+      "category": "Soil & Ground",
+      "family": "Natural ground",
+      "names": [
+        "Forest floor",
+        "Peat",
+        "Bony soil"
+      ],
+      "variants": [
+        "Natural deposit"
+      ],
+      "profile": "soil"
+    },
+    {
+      "category": "Sand, Gravel & Clay",
+      "family": "Sand",
+      "names": [
+        "Andesite sand",
+        "Basalt sand",
+        "Bauxite sand",
+        "Chalk sand",
+        "Chert sand",
+        "Claystone sand",
+        "Conglomerate sand",
+        "Granite sand",
+        "Limestone sand",
+        "Peridotite sand",
+        "Phyllite sand",
+        "Sandstone sand",
+        "Shale sand",
+        "Slate sand"
+      ],
+      "variants": [
+        "Natural sand"
+      ],
+      "profile": "sand"
+    },
+    {
+      "category": "Sand, Gravel & Clay",
+      "family": "Gravel",
+      "names": [
+        "Andesite gravel",
+        "Basalt gravel",
+        "Bauxite gravel",
+        "Chalk gravel",
+        "Chert gravel",
+        "Claystone gravel",
+        "Conglomerate gravel",
+        "Granite gravel",
+        "Limestone gravel",
+        "Peridotite gravel",
+        "Phyllite gravel",
+        "Sandstone gravel",
+        "Shale gravel",
+        "Slate gravel"
+      ],
+      "variants": [
+        "Natural gravel"
+      ],
+      "profile": "gravel"
+    },
+    {
+      "category": "Sand, Gravel & Clay",
+      "family": "Clay deposits",
+      "names": [
+        "Blue clay",
+        "Red clay",
+        "Fire clay"
+      ],
+      "variants": [
+        "Bare",
+        "Grass-covered top"
+      ],
+      "profile": "clay"
+    },
+    {
+      "category": "Sand, Gravel & Clay",
+      "family": "Loose natural terrain",
+      "names": [
+        "Mud",
+        "Muddy gravel",
+        "Sludgy gravel",
+        "Loose stones",
+        "Flint",
+        "Natural sediment",
+        "Rock fragments"
+      ],
+      "variants": [
+        "Natural surface"
+      ],
+      "profile": "gravel"
+    },
+    {
+      "category": "Trees & Wood",
+      "family": "Broadleaf / hardwood",
+      "names": [
+        "Acacia",
+        "Birch",
+        "Ebony",
+        "Kapok",
+        "Maple",
+        "Oak",
+        "Purpleheart",
+        "Walnut"
+      ],
+      "variants": [
+        "Bark / trunk sides",
+        "Exposed log end grain",
+        "Branches and twigs",
+        "Branch-bearing leaves",
+        "Leaf-only canopy",
+        "Sapling",
+        "Mature foliage",
+        "Autumn foliage",
+        "Dormant branches",
+        "Dead or decaying wood",
+        "Fallen log",
+        "Snow-covered foliage"
+      ],
+      "profile": "wood"
+    },
+    {
+      "category": "Trees & Wood",
+      "family": "Conifers",
+      "names": [
+        "Bald cypress",
+        "Mediterranean cypress",
+        "Larch",
+        "Pine",
+        "Redwood"
+      ],
+      "variants": [
+        "Bark / trunk sides",
+        "Exposed log end grain",
+        "Branches and twigs",
+        "Branch-bearing leaves",
+        "Leaf-only canopy",
+        "Sapling",
+        "Mature foliage",
+        "Autumn foliage",
+        "Dormant branches",
+        "Dead or decaying wood",
+        "Fallen log",
+        "Snow-covered foliage"
+      ],
+      "profile": "wood"
+    },
+    {
+      "category": "Trees & Wood",
+      "family": "Distinct variety",
+      "names": [
+        "Crimson King maple"
+      ],
+      "variants": [
+        "Bark / trunk sides",
+        "Exposed log end grain",
+        "Branches and twigs",
+        "Branch-bearing leaves",
+        "Leaf-only canopy",
+        "Sapling",
+        "Mature foliage",
+        "Autumn foliage",
+        "Dormant branches",
+        "Dead or decaying wood",
+        "Fallen log",
+        "Snow-covered foliage"
+      ],
+      "profile": "wood"
+    },
+    {
+      "category": "Trees & Wood",
+      "family": "Bamboo",
+      "names": [
+        "Green bamboo",
+        "Brown bamboo"
+      ],
+      "variants": [
+        "Stalk sides",
+        "Stem ends",
+        "Leaves",
+        "Sapling",
+        "Dead stalk"
+      ],
+      "profile": "wood"
+    },
+    {
+      "category": "Trees & Wood",
+      "family": "Custom willow",
+      "names": [
+        "Willow"
+      ],
+      "variants": [
+        "Willow bark",
+        "Willow exposed wood",
+        "Willow leaves",
+        "Willow hanging leaf clusters",
+        "Thin drooping branches",
+        "Willow sapling",
+        "Willow dead branches",
+        "Willow seasonal foliage"
+      ],
+      "profile": "wood"
+    },
+    {
+      "category": "Fruit Trees",
+      "family": "Apple",
+      "names": [
+        "Red apple",
+        "Pink apple",
+        "Yellow apple"
+      ],
+      "variants": [
+        "Bark",
+        "Leaves",
+        "Blossoms",
+        "Unripe fruit",
+        "Ripe fruit",
+        "Seasonal dormancy"
+      ],
+      "profile": "fruit"
+    },
+    {
+      "category": "Fruit Trees",
+      "family": "Temperate",
+      "names": [
+        "Pear",
+        "Peach",
+        "Cherry"
+      ],
+      "variants": [
+        "Bark",
+        "Leaves",
+        "Blossoms",
+        "Unripe fruit",
+        "Ripe fruit",
+        "Seasonal dormancy"
+      ],
+      "profile": "fruit"
+    },
+    {
+      "category": "Fruit Trees",
+      "family": "Mediterranean",
+      "names": [
+        "Olive",
+        "Pomegranate"
+      ],
+      "variants": [
+        "Bark",
+        "Leaves",
+        "Blossoms",
+        "Unripe fruit",
+        "Ripe fruit",
+        "Seasonal dormancy"
+      ],
+      "profile": "fruit"
+    },
+    {
+      "category": "Fruit Trees",
+      "family": "Tropical / subtropical",
+      "names": [
+        "Mango",
+        "Orange",
+        "Lychee",
+        "Breadfruit"
+      ],
+      "variants": [
+        "Bark",
+        "Leaves",
+        "Blossoms",
+        "Unripe fruit",
+        "Ripe fruit",
+        "Seasonal dormancy"
+      ],
+      "profile": "fruit"
+    },
+    {
+      "category": "Berry Bushes",
+      "family": "Berries",
+      "names": [
+        "Beautyberry",
+        "Blueberry",
+        "Cloudberry",
+        "Cranberry",
+        "Blackberry",
+        "Blackcurrant",
+        "Raspberry",
+        "Redcurrant",
+        "Whitecurrant",
+        "Strawberry"
+      ],
+      "variants": [
+        "Young",
+        "Mature",
+        "Flowering",
+        "Unripe fruit",
+        "Ripe fruit",
+        "Depleted",
+        "Dormant",
+        "Unhealthy foliage"
+      ],
+      "profile": "foliage"
+    },
+    {
+      "category": "Flowers",
+      "family": "Common flowers",
+      "names": [
+        "Bluebell",
+        "Catmint",
+        "Cornflower",
+        "Cow parsley",
+        "Daffodil",
+        "Dwarf furze",
+        "Edelweiss",
+        "Forget-me-not",
+        "Golden poppy",
+        "Heather",
+        "Lily of the valley",
+        "Orange mallow",
+        "Mugwort",
+        "Wild daisy",
+        "Woad"
+      ],
+      "variants": [
+        "Natural bloom"
+      ],
+      "profile": "flower"
+    },
+    {
+      "category": "Flowers",
+      "family": "Ghost pipe",
+      "names": [
+        "Pink ghost pipe",
+        "Red ghost pipe",
+        "White ghost pipe"
+      ],
+      "variants": [
+        "Natural bloom"
+      ],
+      "profile": "flower"
+    },
+    {
+      "category": "Flowers",
+      "family": "Lupine",
+      "names": [
+        "Blue lupine",
+        "Orange lupine",
+        "Purple lupine",
+        "Red lupine",
+        "White lupine"
+      ],
+      "variants": [
+        "Natural bloom"
+      ],
+      "profile": "flower"
+    },
+    {
+      "category": "Flowers",
+      "family": "Rafflesia",
+      "names": [
+        "Brown rafflesia",
+        "Red rafflesia"
+      ],
+      "variants": [
+        "Natural bloom"
+      ],
+      "profile": "flower"
+    },
+    {
+      "category": "Vegetation",
+      "family": "Ferns",
+      "names": [
+        "Cinnamon/buckhorn fern",
+        "Deer fern",
+        "Eagle/bracken fern",
+        "Hart's tongue fern",
+        "Tree fern",
+        "Horsetail"
+      ],
+      "variants": [
+        "Natural foliage"
+      ],
+      "profile": "foliage"
+    },
+    {
+      "category": "Vegetation",
+      "family": "Grasses",
+      "names": [
+        "Standard grass"
+      ],
+      "variants": [
+        "Very short",
+        "Short",
+        "Medium-short",
+        "Medium",
+        "Tall",
+        "Very tall"
+      ],
+      "profile": "grass"
+    },
+    {
+      "category": "Vegetation",
+      "family": "Grasses",
+      "names": [
+        "Dry grass"
+      ],
+      "variants": [
+        "Dry / straw-colored"
+      ],
+      "profile": "grass"
+    },
+    {
+      "category": "Vegetation",
+      "family": "Grasses",
+      "names": [
+        "Redtop grass"
+      ],
+      "variants": [
+        "Flowering grass"
+      ],
+      "profile": "grass"
+    },
+    {
+      "category": "Vegetation",
+      "family": "Reeds / wetlands",
+      "names": [
+        "Cattail",
+        "Papyrus",
+        "Brown sedge",
+        "Tule"
+      ],
+      "variants": [
+        "Natural stems and leaves"
+      ],
+      "profile": "grass"
+    },
+    {
+      "category": "Vegetation",
+      "family": "Cacti",
+      "names": [
+        "Barrel cactus",
+        "Saguaro cactus",
+        "Silver torch cactus"
+      ],
+      "variants": [
+        "Natural surface"
+      ],
+      "profile": "foliage"
+    },
+    {
+      "category": "Vegetation",
+      "family": "Vines & lichens",
+      "names": [
+        "Wild vine",
+        "Tropical wild vine",
+        "Lace lichen"
+      ],
+      "variants": [
+        "Natural growth"
+      ],
+      "profile": "foliage"
+    },
+    {
+      "category": "Vegetation",
+      "family": "Aquatic plants",
+      "names": [
+        "Water lily",
+        "Hornwort",
+        "Milfoil"
+      ],
+      "variants": [
+        "Submerged or floating growth"
+      ],
+      "profile": "foliage"
+    },
+    {
+      "category": "Vegetation",
+      "family": "Crotons",
+      "names": [
+        "Crimson brown-green",
+        "Crimson green",
+        "Crimson orange",
+        "Dark green-gold",
+        "Dark green-gold-crimson",
+        "Green-orange",
+        "Lemon green",
+        "Lemon green-crimson"
+      ],
+      "variants": [
+        "Small",
+        "Medium"
+      ],
+      "profile": "foliage"
+    },
+    {
+      "category": "Mushrooms",
+      "family": "Ground mushrooms",
+      "names": [
+        "Orange oak bolete",
+        "King bolete",
+        "Bitter bolete",
+        "Devil's bolete",
+        "Fly agaric",
+        "Green cracked russula",
+        "Violet web cap",
+        "Almond mushroom",
+        "Red wine cap",
+        "Paddy straw",
+        "Death cap",
+        "Puffball",
+        "Earth ball",
+        "Chanterelle",
+        "Black trumpet",
+        "Field mushroom",
+        "Gold-drop milkcap",
+        "Indigo milkcap",
+        "Saffron milkcap",
+        "Common morel",
+        "Witchhat mushroom",
+        "Lobster mushroom",
+        "Jack-o'-lantern mushroom",
+        "Devilstooth mushroom",
+        "Elfin saddle",
+        "Blue meanie",
+        "Fool's conecap",
+        "Gold cap",
+        "Honey mushroom",
+        "Laughing jim",
+        "Liberty cap",
+        "Sickener",
+        "Wavy cap"
+      ],
+      "variants": [
+        "Cap surface",
+        "Stem surface"
+      ],
+      "profile": "fungus"
+    },
+    {
+      "category": "Mushrooms",
+      "family": "Tree-growing mushrooms",
+      "names": [
+        "Shiitake",
+        "Pink bonnet",
+        "Livermushroom",
+        "Funeral bell",
+        "Deer ear mushroom",
+        "Reishi",
+        "White oyster",
+        "Bearded tooth",
+        "Chicken of the woods",
+        "Tinder hoof",
+        "Dryad saddle",
+        "Pink oyster"
+      ],
+      "variants": [
+        "Fruiting body",
+        "Attachment surface"
+      ],
+      "profile": "fungus"
+    },
+    {
+      "category": "Wild Crops",
+      "family": "Grains",
+      "names": [
+        "Rye",
+        "Spelt",
+        "Rice",
+        "Amaranth"
+      ],
+      "variants": [
+        "Early growth",
+        "Intermediate growth",
+        "Mature foliage",
+        "Flowering",
+        "Fruiting",
+        "Dead or withered"
+      ],
+      "profile": "crop"
+    },
+    {
+      "category": "Wild Crops",
+      "family": "Fibrous / grains",
+      "names": [
+        "Flax"
+      ],
+      "variants": [
+        "Early growth",
+        "Intermediate growth",
+        "Mature foliage",
+        "Flowering",
+        "Fruiting",
+        "Dead or withered"
+      ],
+      "profile": "crop"
+    },
+    {
+      "category": "Wild Crops",
+      "family": "Vegetables",
+      "names": [
+        "Carrot",
+        "Onion",
+        "Parsnip",
+        "Turnip",
+        "Fennel"
+      ],
+      "variants": [
+        "Early growth",
+        "Intermediate growth",
+        "Mature foliage",
+        "Flowering",
+        "Fruiting",
+        "Dead or withered"
+      ],
+      "profile": "crop"
+    },
+    {
+      "category": "Wild Crops",
+      "family": "Root plants",
+      "names": [
+        "Cassava",
+        "Licorice"
+      ],
+      "variants": [
+        "Early growth",
+        "Intermediate growth",
+        "Mature foliage",
+        "Flowering",
+        "Fruiting",
+        "Dead or withered"
+      ],
+      "profile": "crop"
+    },
+    {
+      "category": "Wild Crops",
+      "family": "Legumes",
+      "names": [
+        "Soybean",
+        "Peanut"
+      ],
+      "variants": [
+        "Early growth",
+        "Intermediate growth",
+        "Mature foliage",
+        "Flowering",
+        "Fruiting",
+        "Dead or withered"
+      ],
+      "profile": "crop"
+    },
+    {
+      "category": "Wild Crops",
+      "family": "Fruiting plants",
+      "names": [
+        "Pineapple"
+      ],
+      "variants": [
+        "Early growth",
+        "Intermediate growth",
+        "Mature foliage",
+        "Flowering",
+        "Fruiting",
+        "Dead or withered"
+      ],
+      "profile": "crop"
+    },
+    {
+      "category": "Wild Crops",
+      "family": "Seed plants",
+      "names": [
+        "Sunflower"
+      ],
+      "variants": [
+        "Early growth",
+        "Intermediate growth",
+        "Mature foliage",
+        "Flowering",
+        "Fruiting",
+        "Dead or withered"
+      ],
+      "profile": "crop"
+    },
+    {
+      "category": "Water, Lava & Ice",
+      "family": "Water",
+      "names": [
+        "Fresh water",
+        "Saltwater"
+      ],
+      "variants": [
+        "Still surface",
+        "Flowing surface"
+      ],
+      "profile": "fluid"
+    },
+    {
+      "category": "Water, Lava & Ice",
+      "family": "Water",
+      "names": [
+        "Rapids"
+      ],
+      "variants": [
+        "Fast-flowing water"
+      ],
+      "profile": "fluid"
+    },
+    {
+      "category": "Water, Lava & Ice",
+      "family": "Lava",
+      "names": [
+        "Lava"
+      ],
+      "variants": [
+        "Still/source surface",
+        "Flowing surface"
+      ],
+      "profile": "lava"
+    },
+    {
+      "category": "Water, Lava & Ice",
+      "family": "Snow",
+      "names": [
+        "Snow"
+      ],
+      "variants": [
+        "Snow layers",
+        "Full snow blocks",
+        "Accumulated on terrain"
+      ],
+      "profile": "snow"
+    },
+    {
+      "category": "Water, Lava & Ice",
+      "family": "Ice",
+      "names": [
+        "Lake ice",
+        "Glacier ice",
+        "Packed glacier ice"
+      ],
+      "variants": [
+        "Natural frozen surface"
+      ],
+      "profile": "ice"
+    },
+    {
+      "category": "Water, Lava & Ice",
+      "family": "Environment",
+      "names": [
+        "Snow-covered soil",
+        "Snow-covered rock",
+        "Snow-covered vegetation",
+        "Freezing",
+        "Melting",
+        "Water-flow appearance"
+      ],
+      "variants": [
+        "Natural surface effect"
+      ],
+      "profile": "snow"
+    },
+    {
+      "category": "Natural Formations",
+      "family": "Caves",
+      "names": [
+        "Stalactites",
+        "Stalagmites"
+      ],
+      "variants": [
+        "Natural mineral surface"
+      ],
+      "profile": "rock"
+    },
+    {
+      "category": "Natural Formations",
+      "family": "Mineral formations",
+      "names": [
+        "Crystals",
+        "Mineral clusters",
+        "Natural quartz deposits"
+      ],
+      "variants": [
+        "Natural mineral surface"
+      ],
+      "profile": "crystal"
+    },
+    {
+      "category": "Natural Formations",
+      "family": "Rock fragments",
+      "names": [
+        "Loose stones",
+        "Flint",
+        "Loose ore pieces",
+        "Boulders"
+      ],
+      "variants": [
+        "Natural rock surface"
+      ],
+      "profile": "gravel"
+    },
+    {
+      "category": "Natural Formations",
+      "family": "Organic remains",
+      "names": [
+        "Bones",
+        "Skeletal remains",
+        "Carcasses"
+      ],
+      "variants": [
+        "Weathered remains surface"
+      ],
+      "profile": "bone"
+    },
+    {
+      "category": "Natural Formations",
+      "family": "Biological structures",
+      "names": [
+        "Wild beehives",
+        "Termite mounds"
+      ],
+      "variants": [
+        "Natural structure"
+      ],
+      "profile": "organic"
+    },
+    {
+      "category": "Natural Formations",
+      "family": "Bioluminescent growth",
+      "names": [
+        "Glowworms"
+      ],
+      "variants": [
+        "Bioluminescent growth"
+      ],
+      "profile": "organic"
+    },
+    {
+      "category": "Natural Formations",
+      "family": "World foundation",
+      "names": [
+        "Mantle / bedrock"
+      ],
+      "variants": [
+        "Natural foundation"
+      ],
+      "profile": "rock"
+    },
+    {
+      "category": "Seashells",
+      "family": "Seashell shapes",
+      "names": [
+        "Scallop",
+        "Sundial",
+        "Turritella",
+        "Clam",
+        "Conch",
+        "Seastar",
+        "Volute"
+      ],
+      "variants": [
+        "Plain",
+        "Latte",
+        "Cinnamon",
+        "Dark purple",
+        "Seafoam",
+        "Turquoise"
+      ],
+      "profile": "shell"
+    }
+  ]
+}
