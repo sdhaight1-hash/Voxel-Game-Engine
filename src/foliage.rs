@@ -12,7 +12,7 @@ use std::f32::consts::TAU;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PlantPreset {
     Acacia, Birch, Ebony, Kapok, Maple, CrimsonKingMaple, Oak,
-    Purpleheart, Walnut, Willow,
+    Purpleheart, Walnut, Willow, CherryBlossom,
     BaldCypress, MediterraneanCypress, Larch, Pine, Redwood,
     RedApple, PinkApple, YellowApple, Pear, Olive, Peach, Cherry,
     Mango, Orange, Lychee, Breadfruit, Pomegranate,
@@ -21,11 +21,11 @@ pub enum PlantPreset {
 }
 
 impl PlantPreset {
-    /// The user's full natural-world catalog: 27 tree/fruit varieties + 2 bamboo.
-    pub const TREE_CATALOG: [Self; 29] = [
+    /// Full natural-world catalog: 28 tree/fruit varieties + 2 bamboo.
+    pub const TREE_CATALOG: [Self; 30] = [
         Self::Acacia, Self::Birch, Self::Ebony, Self::Kapok, Self::Maple,
         Self::CrimsonKingMaple, Self::Oak, Self::Purpleheart, Self::Walnut,
-        Self::Willow, Self::BaldCypress, Self::MediterraneanCypress,
+        Self::Willow, Self::CherryBlossom, Self::BaldCypress, Self::MediterraneanCypress,
         Self::Larch, Self::Pine, Self::Redwood,
         Self::RedApple, Self::PinkApple, Self::YellowApple, Self::Pear,
         Self::Olive, Self::Peach, Self::Cherry, Self::Mango, Self::Orange,
@@ -33,10 +33,10 @@ impl PlantPreset {
         Self::GreenBamboo, Self::BrownBamboo,
     ];
     /// Shrub remains a separate non-tree authoring preset.
-    pub const ALL: [Self; 30] = [
+    pub const ALL: [Self; 31] = [
         Self::Acacia, Self::Birch, Self::Ebony, Self::Kapok, Self::Maple,
         Self::CrimsonKingMaple, Self::Oak, Self::Purpleheart, Self::Walnut,
-        Self::Willow, Self::BaldCypress, Self::MediterraneanCypress,
+        Self::Willow, Self::CherryBlossom, Self::BaldCypress, Self::MediterraneanCypress,
         Self::Larch, Self::Pine, Self::Redwood,
         Self::RedApple, Self::PinkApple, Self::YellowApple, Self::Pear,
         Self::Olive, Self::Peach, Self::Cherry, Self::Mango, Self::Orange,
@@ -49,7 +49,8 @@ impl PlantPreset {
             Self::Kapok=>"Kapok", Self::Maple=>"Maple",
             Self::CrimsonKingMaple=>"Crimson King Maple", Self::Oak=>"Oak",
             Self::Purpleheart=>"Purpleheart", Self::Walnut=>"Walnut",
-            Self::Willow=>"Willow", Self::BaldCypress=>"Bald Cypress",
+            Self::Willow=>"Willow", Self::CherryBlossom=>"Cherry Blossom",
+            Self::BaldCypress=>"Bald Cypress",
             Self::MediterraneanCypress=>"Mediterranean Cypress",
             Self::Larch=>"Larch", Self::Pine=>"Pine", Self::Redwood=>"Redwood",
             Self::RedApple=>"Red Apple", Self::PinkApple=>"Pink Apple",
@@ -65,7 +66,7 @@ impl PlantPreset {
         match self {
             Self::Acacia|Self::Birch|Self::Ebony|Self::Kapok|Self::Maple|
             Self::CrimsonKingMaple|Self::Oak|Self::Purpleheart|Self::Walnut|
-            Self::Willow => "Hardwood & broadleaf",
+            Self::Willow|Self::CherryBlossom => "Hardwood & broadleaf",
             Self::BaldCypress|Self::MediterraneanCypress|Self::Larch|
             Self::Pine|Self::Redwood => "Conifer & evergreen",
             Self::GreenBamboo|Self::BrownBamboo => "Bamboo",
@@ -82,6 +83,7 @@ impl PlantPreset {
             Self::RedApple=>"Red apple", Self::PinkApple=>"Pink apple",
             Self::YellowApple=>"Yellow apple",
             Self::GreenBamboo=>"Green bamboo", Self::BrownBamboo=>"Brown bamboo",
+            Self::CherryBlossom=>"Cherry", // Reuse the Cherry material recipes.
             Self::Shrub=>"Oak",
             _ => self.name(),
         }
@@ -293,7 +295,7 @@ fn leaf_pixel(species:PlantPreset,u:f32,v:f32)->(bool,bool) {
         PlantPreset::Ebony|PlantPreset::Mango|PlantPreset::Orange|
         PlantPreset::RedApple|PlantPreset::PinkApple|PlantPreset::YellowApple|
         PlantPreset::Pear|PlantPreset::Olive|PlantPreset::Peach|
-        PlantPreset::Cherry|PlantPreset::Pomegranate => {
+        PlantPreset::Cherry|PlantPreset::CherryBlossom|PlantPreset::Pomegranate => {
             let (rx,ry)=match species {
                 PlantPreset::Olive=>(0.031,0.099),
                 PlantPreset::Mango=>(0.050,0.124),
@@ -679,6 +681,7 @@ impl FoliageProject {
                 PlantPreset::Purpleheart => (19.0,0.88,42,0.54,0.05,0.82,0.82,[112,61,96],[57,124,65]),
                 PlantPreset::Walnut => (15.0,0.77,42,0.57,0.11,0.80,0.77,[94,76,58],[79,125,61]),
                 PlantPreset::Willow => (12.0,0.72,38,0.61,0.80,0.93,0.70,[91,86,61],[91,156,65]),
+                PlantPreset::CherryBlossom => (9.5,0.48,36,0.58,0.05,0.90,0.74,[107,73,65],[91,147,74]),
                 PlantPreset::BaldCypress => (19.0,0.75,42,0.39,0.05,0.74,0.47,[119,88,64],[90,128,70]),
                 PlantPreset::MediterraneanCypress => (17.0,0.53,42,0.19,0.02,0.91,0.37,[88,71,52],[39,86,58]),
                 PlantPreset::Larch => (17.0,0.55,42,0.44,0.03,0.69,0.42,[112,90,61],[126,157,70]),
@@ -723,6 +726,7 @@ impl FoliageProject {
                 PlantPreset::Olive=>(0.17,0.07,0.11,0.12,0.36,BranchGrowth::Classic),
                 PlantPreset::Peach=>(0.19,0.08,0.18,0.13,0.27,BranchGrowth::CanopyGuided),
                 PlantPreset::Cherry=>(0.27,0.05,0.20,0.12,0.30,BranchGrowth::CanopyGuided),
+                PlantPreset::CherryBlossom=>(0.39,0.05,0.21,0.13,0.29,BranchGrowth::CanopyGuided),
                 PlantPreset::Mango=>(0.32,0.04,0.15,0.12,0.23,BranchGrowth::CanopyGuided),
                 PlantPreset::Orange=>(0.21,0.06,0.12,0.11,0.27,BranchGrowth::CanopyGuided),
                 PlantPreset::Lychee=>(0.30,0.05,0.16,0.11,0.28,BranchGrowth::CanopyGuided),
@@ -844,6 +848,7 @@ impl FoliageProject {
             PlantPreset::Redwood => 0.20+1.15*(1.0-crown_t),
             PlantPreset::MediterraneanCypress => 0.20+0.24*(1.0-crown_t),
             PlantPreset::Birch|PlantPreset::Pear => 0.66+0.24*(1.0-crown_t),
+            PlantPreset::CherryBlossom => 0.63+0.80*crown_t,
             PlantPreset::Willow => 1.22-0.16*crown_t,
             PlantPreset::Purpleheart|PlantPreset::Mango|PlantPreset::Breadfruit =>
                 0.80+0.46*(1.0-center*center),
@@ -1069,7 +1074,7 @@ impl FoliageProject {
                 PlantPreset::Maple|PlantPreset::CrimsonKingMaple|
                 PlantPreset::Mango|PlantPreset::Lychee|
                 PlantPreset::RedApple|PlantPreset::PinkApple|PlantPreset::YellowApple|
-                PlantPreset::Cherry|PlantPreset::Orange);
+                PlantPreset::Cherry|PlantPreset::CherryBlossom|PlantPreset::Orange);
             let mut leaf_sites=vec![(tip,major_id),(fork,fork_id)];
             if broad_crown && i%3==0 {
                 leaf_sites.push((lerp3(mid,tip,0.68),major_id));
@@ -1160,7 +1165,7 @@ impl FoliageProject {
             PlantPreset::Maple|PlantPreset::CrimsonKingMaple|
             PlantPreset::Mango|PlantPreset::Lychee|
             PlantPreset::RedApple|PlantPreset::PinkApple|PlantPreset::YellowApple|
-            PlantPreset::Cherry|PlantPreset::Orange) {
+            PlantPreset::Cherry|PlantPreset::CherryBlossom|PlantPreset::Orange) {
             // Hide the otherwise exposed top of the full-height trunk within
             // a connected crown cap. No independent decorative leaf objects.
             let mut crown_cap=BTreeMap::new();
@@ -1929,10 +1934,10 @@ mod tests {
     }
 
     #[test]
-    fn tree_catalog_contains_all_29_requested_entries_in_order() {
+    fn tree_catalog_contains_30_entries_with_new_ornamental_cherry() {
         let expected=[
             "Acacia","Birch","Ebony","Kapok","Maple","Crimson King Maple",
-            "Oak","Purpleheart","Walnut","Willow",
+            "Oak","Purpleheart","Walnut","Willow","Cherry Blossom",
             "Bald Cypress","Mediterranean Cypress","Larch","Pine","Redwood",
             "Red Apple","Pink Apple","Yellow Apple","Pear","Olive","Peach",
             "Cherry","Mango","Orange","Lychee","Breadfruit","Pomegranate",
@@ -1941,9 +1946,9 @@ mod tests {
         let actual:Vec<_>=PlantPreset::TREE_CATALOG.iter()
             .map(|p|p.name()).collect();
         assert_eq!(actual,expected);
-        assert_eq!(PlantPreset::ALL.len(),30); // Shrub is not a tree entry
+        assert_eq!(PlantPreset::ALL.len(),31); // Shrub is not a tree entry
         assert_eq!(PlantPreset::TREE_CATALOG.iter()
-            .filter(|p|p.group()=="Hardwood & broadleaf").count(),10);
+            .filter(|p|p.group()=="Hardwood & broadleaf").count(),11);
         assert_eq!(PlantPreset::TREE_CATALOG.iter()
             .filter(|p|p.group()=="Conifer & evergreen").count(),5);
         assert_eq!(PlantPreset::TREE_CATALOG.iter()
@@ -1957,6 +1962,7 @@ mod tests {
         assert_eq!(PlantPreset::RedApple.fruit_color(),Some([193,42,38]));
         assert_eq!(PlantPreset::PinkApple.fruit_color(),Some([244,123,151]));
         assert_eq!(PlantPreset::YellowApple.fruit_color(),Some([237,198,45]));
+        assert_eq!(PlantPreset::CherryBlossom.fruit_color(),None);
     }
 
     #[test]

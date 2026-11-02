@@ -1,4 +1,4 @@
-//! Bounded architectural growth rules for the 29 authored tree/bamboo types.
+//! Bounded architectural growth rules for the 30 authored tree/bamboo types.
 //! These are stylized visual rules at the editor's 1m hexel resolution, not
 //! measured botanical growth simulations. Author-edited slider values still
 //! apply, but the seed cannot turn one species into a different silhouette.
@@ -150,6 +150,7 @@ impl PlantPreset {
                 Self::Olive => (Opposite, AlongTwigs, [-0.16,0.31],[-0.18,0.42],1.13,0.91,0.062,0.75),
                 Self::Peach => (Spiral, AlongTwigs, [-0.02,0.50],[-0.08,0.55],1.05,0.72,0.030,0.87),
                 Self::Cherry => (Spiral, OuterCrown, [0.05,0.62],[-0.03,0.56],1.01,0.62,0.024,0.97),
+                Self::CherryBlossom => (Spiral, OuterCrown, [0.15,0.65],[0.06,0.61],1.10,0.76,0.026,0.99),
                 Self::Mango => (Spiral, OuterCrown, [-0.06,0.42],[-0.08,0.50],1.09,0.86,0.025,1.10),
                 Self::Orange => (Spiral, OuterCrown, [0.00,0.47],[-0.06,0.46],0.98,0.62,0.029,0.99),
                 Self::Lychee => (Spiral, OuterCrown, [-0.02,0.46],[-0.08,0.48],1.04,0.69,0.027,0.93),

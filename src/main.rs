@@ -1292,6 +1292,10 @@ impl Studio {
                         }
                         if ui.selectable_label(self.foliage.preset == species,species.name()).clicked() {
                             self.foliage = FoliageProject::from_preset(species);
+                            if species==PlantPreset::CherryBlossom {
+                                // Show the signature pink flowers immediately.
+                                self.season_preview=0.0;
+                            }
                             self.foliage_dirty = true;
                             self.foliage_mats_dirty = true;
                         }
@@ -1331,6 +1335,10 @@ impl Studio {
                 ui.small(format!("Species architecture: {:?} branches, {:?} foliage",
                     rules.phyllotaxy,rules.foliage));
                 ui.small("Seed changes trunk lean, branches, twigs and leaf locations within species rules.");
+                if tree.preset==PlantPreset::CherryBlossom {
+                    ui.small("Ornamental sakura: short pink spring bloom, green summer leaves.");
+                    ui.small("Select Spring (0) in the season preview to see flowers.");
+                }
                 changed |= species_growth_editor(ui,tree);
                 ui.small("Canopy guided steers branches toward seeded crown targets.");
                 ui.small("Voxelize the selected species and branch layout at the grid resolution.");
@@ -1377,6 +1385,9 @@ impl Studio {
                     self.foliage_gpu_scene=None;
                 }
                 ui.small("Seasonal gradients affect color, not occupancy or falling leaves.");
+                if tree.preset==PlantPreset::CherryBlossom {
+                    ui.small("Spring blossoms are a temporary GPU petal overlay; leaf palettes remain independent.");
+                }
                 ui.small("Material slots: bark + dark, medium and light leaves.");
             }
             FoliageStage::FoliageDistributor => {
@@ -2177,7 +2188,8 @@ impl eframe::App for Studio {
                             self.asset_gpu_scene=Some(Arc::new(GpuScene::from_mesh(
                                 mesh,&bark,&self.asset_leaf_pixels,self.asset.leaf_color,
                                 self.asset.materials.effective_palettes(self.asset.leaf_color)
-                                    .gpu_stops())));
+                                    .gpu_stops(),
+                                self.asset.materials.leaf_species==PlantPreset::CherryBlossom)));
                         }
                     }
                 }
@@ -2199,7 +2211,8 @@ impl eframe::App for Studio {
                             self.foliage_gpu_scene=Some(Arc::new(GpuScene::from_mesh(
                                 mesh,&bark,&self.foliage_leaf_pixels,self.foliage.leaf_color,
                                 self.foliage.materials.effective_palettes(self.foliage.leaf_color)
-                                    .gpu_stops())));
+                                    .gpu_stops(),
+                                self.foliage.materials.leaf_species==PlantPreset::CherryBlossom)));
                         }
                     }
                 }

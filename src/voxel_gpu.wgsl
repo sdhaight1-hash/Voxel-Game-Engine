@@ -29,6 +29,35 @@ fn season_gradient(season:u32, amount:f32)->vec3<f32> {
                palettes.stops[offset+1u].rgb,fraction);
 }
 
+// Three clustered, five-petal blossoms projected on the existing cutout
+// leaf cards. They require no extra textures or tree-mesh regeneration.
+// The ornamental Cherry Blossom preset alone activates this overlay.
+fn cherry_blossom_mask(uv:vec2<f32>)->f32 {
+    let centers = array<vec2<f32>,3>(
+        vec2<f32>(0.33,0.33),
+        vec2<f32>(0.65,0.54),
+        vec2<f32>(0.37,0.73),
+    );
+    var mask=0.0;
+    for (var i=0u; i<3u; i=i+1u) {
+        for (var j=0u; j<5u; j=j+1u) {
+            let angle=f32(j)*1.25663706;
+            let center=centers[i]+vec2<f32>(cos(angle),sin(angle))*0.042;
+            let p=(uv-center)/vec2<f32>(0.052,0.045);
+            mask=max(mask,1.0-smoothstep(0.83,1.0,length(p)));
+        }
+        mask=max(mask,1.0-smoothstep(0.012,0.023,length(uv-centers[i])));
+    }
+    return mask;
+}
+
+fn spring_bloom_amount()->f32 {
+    if (globals.season.y<0.5) {return 0.0;}
+    let progress=fract(globals.season.x/4.0)*4.0;
+    // Bloom early in spring, then fall away well before summer.
+    return 1.0-smoothstep(0.18,0.72,progress);
+}
+
 fn seasonal_foliage(uv_y:f32)->vec3<f32> {
     let progress=fract(globals.season.x/4.0)*4.0;
     let start=u32(floor(progress));
@@ -84,12 +113,21 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         rgba = textureSampleLevel(bark_tex, linear_sampler, input.uv, 0.0);
     } else if (input.kind < 1.5) {
         rgba = textureSampleLevel(foliage_tex, linear_sampler, input.uv, 0.0);
-        if (rgba.a < 0.5) { discard; }
-        // Preserve baked species texture details and fruit accents; animate
-        // only their color multiplier. No per-frame texture uploads.
+        let bloom=spring_bloom_amount();
+        var blossom=0.0;
+        // Do not evaluate the procedural flower mask for any other species
+        // or outside the brief early-spring bloom window.
+        if (bloom>0.05) {
+            blossom=bloom*cherry_blossom_mask(input.uv);
+        }
+        // Petals can extend outside the permanent green-leaf silhouette.
+        // When bloom fades, the original cutout remains unchanged.
+        if (rgba.a < 0.5 && blossom < 0.55) { discard; }
         let base=max(globals.leaf_base.rgb,vec3<f32>(0.12));
-        rgba=vec4<f32>(min(rgba.rgb*seasonal_foliage(1.0-input.uv.y)/base,
-            vec3<f32>(1.0)),rgba.a);
+        let leaf_color=min(rgba.rgb*seasonal_foliage(1.0-input.uv.y)/base,
+            vec3<f32>(1.0));
+        let petal_color=vec3<f32>(1.0,0.71,0.81);
+        rgba=vec4<f32>(mix(leaf_color,petal_color,blossom),1.0);
     } else {
         rgba = vec4<f32>(1.0);
     }
