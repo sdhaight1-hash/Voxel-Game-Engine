@@ -652,6 +652,7 @@ impl Studio {
                 FontId::proportional(16.0),Color32::LIGHT_GRAY);
             return;
         };
+        let voxel_count=mesh.voxel_count();
         if mesh.triangles.is_empty() {
             painter.text(rect.center(),Align2::CENTER_CENTER,"Empty asset: add a block using the inspector",
                 FontId::proportional(16.0),Color32::LIGHT_GRAY);
@@ -751,8 +752,8 @@ impl Studio {
             }
         }
         painter.text(rect.left_top()+Vec2::new(10.0,10.0),Align2::LEFT_TOP,
-            format!("{} voxels • {} visible faces • {:?} tool",
-                mesh.voxel_count(),drawn/2,self.asset_tool as u8),
+            format!("{} voxels • {} displayed triangles",
+                voxel_count,drawn),
             FontId::proportional(13.0),Color32::LIGHT_GRAY);
         ui.small("Left-click a voxel face to edit. Right-drag to orbit. Select a block in the outliner.");
     }
