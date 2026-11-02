@@ -951,27 +951,53 @@ impl Studio {
         }
         ui.small("Leaf Pattern controls luminance/detail; species and seasonal palettes control the base color.");
         ui.small("Transparency keeps the selected base leaf silhouette; an opacity graph only removes coverage.");
-        if mat.leaf_species==PlantPreset::Oak {
-            ui.collapsing("Oak leaf-card silhouette",|ui| {
-                let mut vector=matches!(mat.leaf_silhouette,
-                    LeafSilhouetteSource::VectorOak{..});
-                if ui.checkbox(&mut vector,"Use vector Oak leaf silhouette").changed() {
-                    mat.leaf_silhouette=if vector {
-                        LeafSilhouetteSource::VectorOak{lobe_width:1.0}
-                    } else {
+        let silhouette_ui=match mat.leaf_species {
+            PlantPreset::Oak=>Some(("Oak leaf-card silhouette","Oak")),
+            PlantPreset::Willow=>Some(("Willow leaf-card silhouette","Willow")),
+            PlantPreset::EasternCottonwood|PlantPreset::FremontCottonwood
+                |PlantPreset::BlackCottonwood=>
+                Some(("Cottonwood leaf-card silhouette","Cottonwood")),
+            _=>None,
+        };
+        if let Some((title,name))=silhouette_ui {
+            ui.collapsing(title,|ui| {
+                let mut vector=!matches!(mat.leaf_silhouette,
+                    LeafSilhouetteSource::LegacySpecies);
+                if ui.checkbox(&mut vector,format!("Use vector {name} leaf silhouette"))
+                    .changed() {
+                    mat.leaf_silhouette=if !vector {
                         LeafSilhouetteSource::LegacySpecies
+                    } else {
+                        match mat.leaf_species {
+                            PlantPreset::Oak=>LeafSilhouetteSource::VectorOak{
+                                lobe_width:1.0,
+                            },
+                            PlantPreset::Willow=>LeafSilhouetteSource::VectorWillow{
+                                blade_width:1.0,
+                            },
+                            _=>LeafSilhouetteSource::VectorCottonwood{
+                                blade_width:1.0,
+                            },
+                        }
                     };
                     if for_asset {self.asset_mats_dirty=true;}
                     else {self.foliage_mats_dirty=true;}
                 }
-                if let LeafSilhouetteSource::VectorOak{lobe_width}=
-                    &mut mat.leaf_silhouette {
-                    if ui.add(egui::Slider::new(lobe_width,0.65..=1.45)
-                        .text("Lobe width")).changed() {
+                let width=match &mut mat.leaf_silhouette {
+                    LeafSilhouetteSource::VectorOak{lobe_width}=>
+                        Some(("Lobe width",lobe_width)),
+                    LeafSilhouetteSource::VectorWillow{blade_width}|
+                        LeafSilhouetteSource::VectorCottonwood{blade_width}=>
+                        Some(("Blade width",blade_width)),
+                    LeafSilhouetteSource::LegacySpecies=>None,
+                };
+                if let Some((label,width))=width {
+                    if ui.add(egui::Slider::new(width,0.65..=1.45)
+                        .text(label)).changed() {
                         if for_asset {self.asset_mats_dirty=true;}
                         else {self.foliage_mats_dirty=true;}
                     }
-                    ui.small("Replaces the base Oak silhouette; leaf pattern and season palettes remain separate.");
+                    ui.small("Replaces the base silhouette; leaf tint, seasonal palettes and tree geometry stay independent.");
                 }
             });
         }
