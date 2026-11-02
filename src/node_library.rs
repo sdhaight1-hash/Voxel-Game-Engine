@@ -341,7 +341,7 @@ impl LibraryNode {
             Dirt => {
                 let n=crate::periodic_noise(u,v,freq,seed);
                 let spots=crate::lattice((u*freq as f32*3.0) as i32,
-                    (v*freq as f32*3.0) as i32,(freq*3) as i32,seed+3);
+                    (v*freq as f32*3.0) as i32,(freq*3) as i32,seed.wrapping_add(3));
                 gray((n*0.7+spots*0.3).powf(2.0))
             }
             Beehive => {
@@ -643,6 +643,13 @@ mod tests {
         let added=LibraryNode::Add.evaluate(0.2,0.4,1.0,3,
             |index,_,_|if index==0 {[0.5;3]} else {[0.25;3]});
         assert_eq!(added,[0.75;3]);
+    }
+
+    #[test]
+    fn seeded_dirt_is_safe_at_maximum_seed() {
+        let c = LibraryNode::Dirt.evaluate(0.25, 0.75, 0.5, u32::MAX,
+            |_, _, _| [0.5; 3]);
+        assert!(c.iter().all(|x|x.is_finite() && (0.0..=1.0).contains(x)));
     }
 
     #[test]
