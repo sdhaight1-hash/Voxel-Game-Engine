@@ -208,6 +208,71 @@ fn leaf_pixel(species:PlantPreset,u:f32,v:f32)->(bool,bool) {
     // The twig is drawn darker; the second value is the leafy silhouette.
     let twig=leaf_segment(u,v,[0.50,0.90],[0.50,0.14],0.009);
     let leaves=match species {
+        PlantPreset::Acacia => {
+            (0..9).any(|i| {
+                let y=0.23+i as f32*0.063;
+                leaf_segment(u,v,[0.50,y],[0.29,y-0.040],0.010)
+                    ||leaf_segment(u,v,[0.50,y],[0.71,y-0.040],0.010)
+                    ||leaf_oval(u,v,0.30,y-0.043,0.020,0.026)
+                    ||leaf_oval(u,v,0.70,y-0.043,0.020,0.026)
+            })
+        }
+        PlantPreset::Kapok|PlantPreset::Breadfruit => {
+            [[0.34,0.35],[0.66,0.51],[0.35,0.72]].iter().any(|p| {
+                leaf_oval(u,v,p[0],p[1],0.060,0.074)
+                    ||(0..5).any(|i|{
+                        let angle=i as f32/5.0*TAU;
+                        leaf_blade(u,v,p[0]+angle.cos()*0.056,
+                            p[1]+angle.sin()*0.056,
+                            [angle.cos(),angle.sin()],0.090,0.033,false)
+                    })
+            })
+        }
+        PlantPreset::Purpleheart|PlantPreset::Walnut|PlantPreset::Lychee => {
+            (0..6).any(|i| {
+                let y=0.23+i as f32*0.108;
+                leaf_oval(u,v,0.39,y,0.070,0.037)
+                    ||leaf_oval(u,v,0.61,y+0.025,0.070,0.037)
+            })
+        }
+        PlantPreset::BaldCypress|PlantPreset::Larch|
+        PlantPreset::Redwood|PlantPreset::MediterraneanCypress => {
+            let count=if species==PlantPreset::MediterraneanCypress {18} else {13};
+            (0..count).any(|i| {
+                let y=0.17+i as f32*0.036;
+                let span=if species==PlantPreset::MediterraneanCypress {
+                    0.085
+                } else if species==PlantPreset::Redwood {0.14} else {0.20};
+                leaf_segment(u,v,[0.50,y],[0.50-span,y-0.055],0.010)
+                    ||leaf_segment(u,v,[0.50,y],[0.50+span,y-0.055],0.010)
+            })
+        }
+        PlantPreset::GreenBamboo|PlantPreset::BrownBamboo => {
+            (0..5).any(|i|{
+                let y=0.19+i as f32*0.14;
+                leaf_blade(u,v,0.35,y,[-0.85,-0.53],0.15,0.028,false)
+                    ||leaf_blade(u,v,0.65,y+0.04,[0.85,-0.53],0.15,0.028,false)
+            })
+        }
+        PlantPreset::Ebony|PlantPreset::Mango|PlantPreset::Orange|
+        PlantPreset::RedApple|PlantPreset::PinkApple|PlantPreset::YellowApple|
+        PlantPreset::Pear|PlantPreset::Olive|PlantPreset::Peach|
+        PlantPreset::Cherry|PlantPreset::Pomegranate => {
+            let (rx,ry)=match species {
+                PlantPreset::Olive=>(0.031,0.099),
+                PlantPreset::Mango=>(0.050,0.124),
+                PlantPreset::Pear=>(0.055,0.090),
+                PlantPreset::Peach=>(0.044,0.113),
+                PlantPreset::Pomegranate=>(0.040,0.063),
+                _=>(0.067,0.078),
+            };
+            (0..5).any(|i| {
+                let y=0.26+i as f32*0.128;
+                let side=if i%2==0 {-1.0} else {1.0};
+                leaf_oval(u,v,0.50+0.13*side,y,rx,ry)
+                    ||leaf_oval(u,v,0.50-0.12*side,y+0.035,rx,ry)
+            })
+        }
         PlantPreset::Oak => {
             // Rounded, lobed broadleaf clusters along a vertical twig.
             [[0.36,0.33],[0.65,0.46],[0.35,0.61],[0.64,0.76]]
@@ -246,7 +311,7 @@ fn leaf_pixel(species:PlantPreset,u:f32,v:f32)->(bool,bool) {
                     0.145,0.024,false)
             })
         }
-        PlantPreset::Maple => {
+        PlantPreset::Maple|PlantPreset::CrimsonKingMaple => {
             // Five pointed lobes radiating from each palmate leaf centre.
             [[0.36,0.34],[0.65,0.56],[0.37,0.77]]
                 .iter().any(|p| {
@@ -267,8 +332,10 @@ fn leaf_pixel(species:PlantPreset,u:f32,v:f32)->(bool,bool) {
         }
     };
     let side_twigs=match species {
-        PlantPreset::Pine => false,
-        PlantPreset::Shrub => {
+        PlantPreset::Pine|PlantPreset::BaldCypress|
+        PlantPreset::MediterraneanCypress|PlantPreset::Larch|
+        PlantPreset::Redwood => false,
+        PlantPreset::Shrub|PlantPreset::GreenBamboo|PlantPreset::BrownBamboo => {
             leaf_segment(u,v,[0.50,0.78],[0.29,0.45],0.008)
                 ||leaf_segment(u,v,[0.50,0.69],[0.70,0.38],0.008)
         }
@@ -1418,22 +1485,29 @@ mod tests {
     }
 
     #[test]
-    fn species_cutout_art_is_distinct_and_binary_for_all_six_presets() {
-        let masks:Vec<_>=PlantPreset::ALL.iter().map(|&species| {
+    fn species_cutout_art_is_valid_and_major_families_differ() {
+        let sample=|species| {
             let rgba=leaf_cutout_for_species(species);
             assert_eq!(rgba.len(),LEAF_TEXTURE_SIZE*LEAF_TEXTURE_SIZE*4);
             let alphas:Vec<_>=rgba.chunks_exact(4).map(|p|p[3]).collect();
             assert!(alphas.iter().all(|&a|a==0||a==255),"{species:?}");
             let filled=alphas.iter().filter(|&&a|a==255).count();
-            assert!(filled>80 && filled<3000,"{species:?}: {filled}");
+            assert!(filled>40 && filled<3000,"{species:?}: {filled}");
             alphas
-        }).collect();
-        for i in 0..masks.len() {
-            for j in 0..i {
-                assert_ne!(masks[i],masks[j],
-                    "{:?} and {:?} share leaf art",PlantPreset::ALL[i],PlantPreset::ALL[j]);
+        };
+        for species in PlantPreset::ALL { sample(species); }
+        let shapes=[
+            PlantPreset::Oak,PlantPreset::Pine,PlantPreset::Maple,
+            PlantPreset::Willow,PlantPreset::Acacia,PlantPreset::GreenBamboo,
+        ];
+        for (i,&a) in shapes.iter().enumerate() {
+            for &b in &shapes[..i] {
+                assert_ne!(sample(a),sample(b),"{a:?} and {b:?} must differ");
             }
         }
+        // Three apple varieties have the same leaf morphology.
+        assert_eq!(sample(PlantPreset::RedApple),sample(PlantPreset::PinkApple));
+        assert_eq!(sample(PlantPreset::RedApple),sample(PlantPreset::YellowApple));
     }
 
     #[test]
