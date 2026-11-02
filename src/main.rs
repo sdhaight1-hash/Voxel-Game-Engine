@@ -3106,6 +3106,26 @@ mod wire_interaction_tests {
     }
 
     #[test]
+    fn imported_function_frequency_defaults_to_authored_value() {
+        let mut graph=Graph::default();
+        if let NodeKind::Noise{scale,..}=&mut graph.node_mut(1).unwrap().kind {
+            *scale=23;
+        } else {panic!("default graph must expose Noise frequency");}
+        let function=MaterialFunction::from_graph("shared_bark".into(),1,graph)
+            .unwrap();
+        assert_eq!(authored_function_noise_scale(&function),Some(23));
+        let instance=MaterialFunctionInstance {
+            function_id:function.id.clone(),version:1,
+            overrides:vec![FunctionOverride{key:"frequency".into(),value:23}],
+        };
+        let mut library=MaterialFunctionLibrary::default();
+        library.insert(function.clone()).unwrap();
+        let resolved=library.resolve(&instance).unwrap();
+        assert_eq!(resolved.render_rgba(8,8).unwrap(),
+            function.graph.render_rgba(8,8).unwrap());
+    }
+
+    #[test]
     fn voxel_face_hit_test_accepts_inside_and_rejects_outside() {
         let a=Pos2::new(10.0,10.0);
         let b=Pos2::new(30.0,10.0);
