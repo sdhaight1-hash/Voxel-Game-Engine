@@ -139,7 +139,7 @@ mod tests {
             original.render_rgba(32,32).unwrap());
         assert_eq!(resolved.nodes.iter()
             .filter(|n|matches!(n.kind,NodeKind::Output)).count(),1);
-        assert_eq!(resolved.nodes.len(),4,
+        assert_eq!(resolved.nodes.len(),3,
             "parent Noise and Output plus remapped child Noise");
     }
 
