@@ -5,6 +5,7 @@ use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, Str
 use std::{collections::HashMap, path::{Path, PathBuf}, time::Instant};
 use texture_studio::{Graph, NodeKind, LibraryNode, VoxelShape, SideMapping};
 use texture_studio::node_definitions::{SocketType, ParameterControl};
+use texture_studio::render_cache::GraphRenderCache;
 use texture_studio::presets::{builtin_presets, Preset};
 use texture_studio::foliage::{FoliageProject, FoliageMesh, FoliageStage, PlantPreset, Material,
     BranchGrowth, LeafGeometry, sway_leaf_vertex};
@@ -252,6 +253,8 @@ struct Studio {
     foliage_gpu_scene: Option<Arc<GpuScene>>,
     asset_gpu_scene: Option<Arc<GpuScene>>,
     graph: Graph,
+    /// Bounded CPU RGBA cache for Nodes output, selected-node and thumbnail previews.
+    preview_render_cache: GraphRenderCache,
     foliage: FoliageProject,
     foliage_mesh: Option<FoliageMesh>,
     foliage_dirty: bool,
@@ -318,6 +321,7 @@ impl Default for Studio {
             foliage_gpu_scene: None,
             asset_gpu_scene: None,
             graph: Graph::demo_bricks(),
+            preview_render_cache: GraphRenderCache::new(64*1024*1024),
             foliage: FoliageProject::default(),
             foliage_mesh: None,
             foliage_dirty: true,
@@ -395,21 +399,24 @@ impl Studio {
             }
             1 => {
                 let rendered = if self.preview_channel == 4 {
-                    self.graph.render_normal_rgba(PREVIEW_SIZE, PREVIEW_SIZE)
+                    self.preview_render_cache.render_normal(
+                        &self.graph, PREVIEW_SIZE, PREVIEW_SIZE)
                 } else {
-                    self.graph.render_output_channel_rgba(self.preview_channel, PREVIEW_SIZE, PREVIEW_SIZE)
+                    self.preview_render_cache.render_channel(
+                        &self.graph,self.preview_channel, PREVIEW_SIZE, PREVIEW_SIZE)
                 };
                 match rendered {
                     Ok(pixels) => put_texture(ctx, &mut self.preview,
-                        "output-preview", pixels, PREVIEW_SIZE),
+                        "output-preview", pixels.as_ref().to_vec(), PREVIEW_SIZE),
                     Err(err) => self.status = format!("Preview error: {err}"),
                 }
             }
             2 => {
                 if let Some(id) = self.selected {
-                    if let Ok(pixels) = self.graph.render_node_rgba(id, PREVIEW_SIZE, PREVIEW_SIZE) {
+                    if let Ok(pixels) = self.preview_render_cache.render_node(
+                        &self.graph,id,PREVIEW_SIZE,PREVIEW_SIZE) {
                         put_texture(ctx, &mut self.selected_preview,
-                            "selected-preview", pixels, PREVIEW_SIZE);
+                            "selected-preview", pixels.as_ref().to_vec(), PREVIEW_SIZE);
                     }
                 } else {
                     self.selected_preview = None;
@@ -427,8 +434,9 @@ impl Studio {
         self.thumbs.retain(|id, _| self.graph.node(*id).is_some());
         for node in &self.graph.nodes {
             if matches!(node.kind, NodeKind::Output) { continue; }
-            if let Ok(pixels) = self.graph.render_node_rgba(node.id, 64, 64) {
-                let image = egui::ColorImage::from_rgba_unmultiplied([64, 64], &pixels);
+            if let Ok(pixels) = self.preview_render_cache.render_node(
+                &self.graph,node.id,64,64) {
+                let image = egui::ColorImage::from_rgba_unmultiplied([64, 64], pixels.as_ref());
                 if let Some(texture) = self.thumbs.get_mut(&node.id) {
                     texture.set(image, egui::TextureOptions::LINEAR);
                 } else {
@@ -437,6 +445,14 @@ impl Studio {
                     ));
                 }
             }
+        }
+        if std::env::var_os("VOXEL_PROFILE_MATERIALS").is_some() {
+            let stats=self.preview_render_cache.stats();
+            eprintln!(
+                "[material-profile] event=node_render_cache hits={} misses={} evictions={} entries={} resident_bytes={} peak_bytes={}",
+                stats.hits,stats.misses,stats.evictions,stats.entries,
+                stats.resident_bytes,stats.peak_resident_bytes,
+            );
         }
     }
 
