@@ -55,6 +55,10 @@ fn leaf_coverage_uniform(mode:LeafAaMode)->f32 {
     }
 }
 
+fn leaf_mipmap_uniform(enabled:bool)->f32 {
+    if enabled {1.0} else {0.0}
+}
+
 /// The palette is uploaded only when the authored scene changes. Per-frame
 /// season progress stays in the small camera uniform instead.
 #[repr(C)]
@@ -525,7 +529,7 @@ impl egui_wgpu::CallbackTrait for RenderScene {
             season:[self.season_progress.rem_euclid(4.0),
                 self.scene.flower_kind,
                 leaf_coverage_uniform(self.leaf_aa_mode),
-                if self.leaf_mipmaps {1.0} else {0.0}],
+                leaf_mipmap_uniform(self.leaf_mipmaps)],
             leaf_base:self.scene.leaf_base,
         };
         queue.write_buffer(&resources.uniform,0,bytemuck::bytes_of(&globals));
@@ -691,6 +695,23 @@ mod tests {
     use super::*;
     use texture_studio::foliage::{FoliageMesh,VoxelCell,Material};
     use texture_studio::VoxelShape;
+    #[test]
+    fn mipmap_preview_flag_changes_uniform_without_resource_uploads() {
+        assert_eq!(leaf_mipmap_uniform(false),0.0);
+        assert_eq!(leaf_mipmap_uniform(true),1.0);
+        let mesh=FoliageMesh::from_voxels(VoxelShape::Cube,0.5,vec![
+            VoxelCell{x:0,y:0,z:0,material:Material::Bark},
+            VoxelCell{x:0,y:0,z:1,material:Material::Leaf},
+        ]).unwrap();
+        let data=vec![120u8;TEX_SIZE as usize*TEX_SIZE as usize*4];
+        let palette=texture_studio::foliage_materials::SeasonalPalettes::default()
+            .gpu_stops();
+        let scene=Scene::from_mesh(&mesh,&data,&data,[50,135,75],palette,0.0);
+        assert_eq!(scene_uploads(Some(&scene),&scene),SceneUploads{
+            geometry:false,bark:false,leaf:false,palette:false,
+        });
+    }
+
     #[test]
     fn leaf_mip_chain_has_expected_levels_and_unchanged_base_pixels() {
         let input=(0..64*64).flat_map(|i| {
