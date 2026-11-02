@@ -1030,6 +1030,10 @@ impl FoliageProject {
             if let Some((end,id))=extra_fork {
                 leaf_sites.push((end,id));
             }
+            // Keep bamboo foliage above the lower clear-culm region.
+            if rules.foliage==LeafPlacement::CulmLeaves && height_fraction<0.38 {
+                leaf_sites.clear();
+            }
             for (cluster,(location,owner)) in leaf_sites.into_iter().enumerate() {
                 let base_radius=self.leaf_scale*self.overall_scale*2.3*
                     rules.foliage_factor;
