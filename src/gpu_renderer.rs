@@ -190,11 +190,11 @@ impl GpuViewport {
             layout:Some(&pipeline_layout),
             vertex:wgpu::VertexState{
                 module:&shader,entry_point:Some("vs_main"),
-                buffers:&[wgpu::VertexBufferLayout{
+                buffers:&[Some(wgpu::VertexBufferLayout{
                     array_stride:std::mem::size_of::<Vertex>() as u64,
                     step_mode:wgpu::VertexStepMode::Vertex,
                     attributes:&ATTRIBUTES,
-                }],
+                })],
                 compilation_options:wgpu::PipelineCompilationOptions::default(),
             },
             primitive:wgpu::PrimitiveState{
@@ -204,8 +204,8 @@ impl GpuViewport {
             },
             depth_stencil:Some(wgpu::DepthStencilState{
                 format:wgpu::TextureFormat::Depth24Plus,
-                depth_write_enabled:true,
-                depth_compare:wgpu::CompareFunction::Less,
+                depth_write_enabled:Some(true),
+                depth_compare:Some(wgpu::CompareFunction::Less),
                 stencil:wgpu::StencilState::default(),
                 bias:wgpu::DepthBiasState::default(),
             }),
