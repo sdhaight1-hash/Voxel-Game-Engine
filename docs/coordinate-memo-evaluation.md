@@ -24,9 +24,10 @@ regular pixel-center sampling.
 
 A short planning pass identifies nodes in the upstream dependency closure
 of more than one requested output channel. Only those nodes are memoized.
-The per-pixel storage is a compact linear array (not a hash map) cleared
-between pixels and capped at 64 entries; once full, new evaluations proceed
-uncached. This is an in-flight evaluation cache, not a persistent preview
+Each selected shared node keeps only its most recently evaluated
+exact-UV sample in a `Cell`. A fixed list of up to 64 shared nodes is
+cleared between pixels; additional shared nodes evaluate normally without
+caching. This avoids per-pixel hash maps, allocations and RefCell lookups. This is an in-flight evaluation cache, not a persistent preview
 cache; the
 existing `GraphRenderCache` remains responsible for complete rendered
 outputs and the `FoliageBakeCache` remains responsible for full bark/leaf
