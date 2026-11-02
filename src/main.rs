@@ -2,6 +2,7 @@ use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, Str
 use std::{collections::HashMap, path::{Path, PathBuf}};
 use texture_studio::{Graph, NodeKind, LibraryNode, VoxelShape, SideMapping};
 use texture_studio::presets::{builtin_presets, Preset};
+use texture_studio::foliage::{FoliageProject, FoliageMesh, FoliageStage, PlantPreset, Material};
 use texture_studio::voxel::{render_atlas, render_voxel_preview, export_obj};
 
 const NODE_W: f32 = 170.0;
@@ -24,6 +25,11 @@ struct WireGesture {
 
 struct Studio {
     graph: Graph,
+    foliage: FoliageProject,
+    foliage_mesh: Option<FoliageMesh>,
+    foliage_dirty: bool,
+    foliage_stage: FoliageStage,
+    foliage_yaw: f32,
     selected: Option<u64>,
     connecting: Option<u64>,
     wire_gesture: Option<WireGesture>,
@@ -54,6 +60,11 @@ impl Default for Studio {
     fn default() -> Self {
         Self {
             graph: Graph::demo_bricks(),
+            foliage: FoliageProject::default(),
+            foliage_mesh: None,
+            foliage_dirty: true,
+            foliage_stage: FoliageStage::PresetLoader,
+            foliage_yaw: 0.8,
             selected: Some(2),
             connecting: None,
             wire_gesture: None,
@@ -304,15 +315,250 @@ impl Studio {
         self.status = format!("Added {} node", kind.name());
     }
 
+    fn foliage_stage_list(&mut self, ui: &mut egui::Ui) {
+        ui.label(egui::RichText::new("PROCEDURAL VEGETATION").strong());
+        ui.small("Build actual 3D tree and leaf meshes; independent from texture nodes.");
+        ui.separator();
+        for stage in FoliageStage::ALL {
+            if stage == FoliageStage::PresetLoader ||
+                (stage == FoliageStage::MeshBuilder) ||
+                (stage == FoliageStage::FoliagePalette) ||
+                (stage == FoliageStage::Output) {
+                ui.small(stage.group());
+            }
+            if ui.selectable_label(self.foliage_stage == stage,stage.name()).clicked() {
+                self.foliage_stage = stage;
+            }
+        }
+        ui.separator();
+        ui.small("Select a stage to edit parameters on the right.");
+        ui.small("All stages affect one deterministic mesh. Export OBJ/MTL or JSON.");
+        ui.small("Not Unreal Nanite, skeleton animation or world scattering.");
+    }
+
+    fn save_foliage(&mut self) {
+        let Some(path) = rfd::FileDialog::new().add_filter("Foliage project",&["json"])
+            .set_file_name("tree.foliage.json").save_file() else { return; };
+        let result = self.foliage.validate()
+            .and_then(|_|serde_json::to_string_pretty(&self.foliage).map_err(|e|e.to_string()))
+            .and_then(|json|std::fs::write(&path,json).map_err(|e|e.to_string()));
+        self.status = match result {
+            Ok(()) => format!("Saved foliage settings: {}",path.display()),
+            Err(e) => format!("Save foliage failed: {e}"),
+        };
+    }
+
+    fn open_foliage(&mut self) {
+        let Some(path) = rfd::FileDialog::new().add_filter("Foliage project",&["json"])
+            .pick_file() else { return; };
+        let result = std::fs::read_to_string(&path).map_err(|e|e.to_string())
+            .and_then(|text|serde_json::from_str::<FoliageProject>(&text).map_err(|e|e.to_string()))
+            .and_then(|project| {project.validate()?; Ok(project)});
+        match result {
+            Ok(project) => {
+                self.foliage = project;
+                self.foliage_dirty = true;
+                self.status = format!("Opened foliage: {}",path.display());
+            }
+            Err(e) => self.status = format!("Open foliage failed: {e}"),
+        }
+    }
+
+    fn export_foliage(&mut self) {
+        let Some(folder) = rfd::FileDialog::new().pick_folder() else { return; };
+        let result: Result<(),String> = (||{
+            let names=["foliage.obj","foliage.mtl","foliage.json"];
+            for name in names {
+                if folder.join(name).exists() {
+                    return Err(format!("{name} already exists; choose an empty folder"));
+                }
+            }
+            let mesh = self.foliage.generate()?;
+            let project = serde_json::to_string_pretty(&self.foliage)
+                .map_err(|e|e.to_string())?;
+            let files=[
+                ("foliage.obj",mesh.obj()),
+                ("foliage.mtl",texture_studio::foliage::mtl(&self.foliage)),
+                ("foliage.json",project),
+            ];
+            for (name,contents) in files {
+                std::fs::write(folder.join(name),contents).map_err(|e|e.to_string())?;
+            }
+            Ok(())
+        })();
+        self.status = match result {
+            Ok(()) => format!("Exported procedural foliage mesh to {}",folder.display()),
+            Err(err) => format!("Foliage export failed: {err}"),
+        };
+    }
+
+    fn foliage_inspector(&mut self, ui: &mut egui::Ui) {
+        ui.heading("TREE DESIGNER");
+        ui.horizontal(|ui| {
+            ui.label("Plant");
+            egui::ComboBox::from_id_salt("foliage_species")
+                .selected_text(self.foliage.preset.name())
+                .show_ui(ui, |ui| {
+                    for species in PlantPreset::ALL {
+                        if ui.selectable_label(self.foliage.preset == species,species.name()).clicked() {
+                            self.foliage = FoliageProject::from_preset(species);
+                            self.foliage_dirty = true;
+                        }
+                    }
+                });
+        });
+        ui.separator();
+        ui.label(egui::RichText::new(self.foliage_stage.name()).strong());
+        let tree=&mut self.foliage;
+        let mut changed=false;
+        match self.foliage_stage {
+            FoliageStage::PresetLoader => {
+                changed |= ui.add(egui::DragValue::new(&mut tree.seed).prefix("Seed: ")).changed();
+                changed |= ui.add(egui::Slider::new(&mut tree.height,0.5..=30.0).text("Height")).changed();
+                changed |= ui.add(egui::Slider::new(&mut tree.branch_count,1..=90).text("Branch count")).changed();
+                changed |= ui.add(egui::Slider::new(&mut tree.branch_length,0.1..=1.5).text("Branch length")).changed();
+                ui.small("Choose a species, seed, height and skeletal branch density.");
+            }
+            FoliageStage::Carve => {
+                changed |= ui.add(egui::Slider::new(&mut tree.carve_bottom,0.0..=0.85).text("Clear lower canopy")).changed();
+                changed |= ui.add(egui::Slider::new(&mut tree.carve_top,0.0..=0.85).text("Trim upper canopy")).changed();
+                ui.small("Carve removes branch growing zones from the top and bottom.");
+            }
+            FoliageStage::Gravity => {
+                changed |= ui.add(egui::Slider::new(&mut tree.gravity,-1.0..=1.0).text("Gravity / droop")).changed();
+                changed |= ui.add(egui::Slider::new(&mut tree.phototropism,0.0..=1.0).text("Phototropism")).changed();
+                ui.small("Gravity bends branches down, phototropism raises them toward light.");
+            }
+            FoliageStage::Slope => {
+                changed |= ui.add(egui::Slider::new(&mut tree.slope,-0.8..=0.8).text("Trunk lean")).changed();
+                ui.small("Leans the trunk; useful for sloped terrain and windswept growth.");
+            }
+            FoliageStage::Scale => {
+                changed |= ui.add(egui::Slider::new(&mut tree.overall_scale,0.1..=5.0).text("Overall scale")).changed();
+            }
+            FoliageStage::RemoveBranches => {
+                changed |= ui.add(egui::Slider::new(&mut tree.prune,0.0..=1.0).text("Prune probability")).changed();
+                ui.small("Deterministic branch removal using the current seed.");
+            }
+            FoliageStage::MeshBuilder => {
+                changed |= ui.add(egui::Slider::new(&mut tree.trunk_radius,0.02..=2.0).text("Trunk thickness")).changed();
+                changed |= ui.add(egui::Slider::new(&mut tree.radial_segments,3..=12).text("Radial segments")).changed();
+                ui.small("Creates tapered polygonal trunk, branch and twig geometry.");
+                ui.small("Lower segments produce low-poly game-ready trees.");
+            }
+            FoliageStage::FoliagePalette => {
+                ui.label("Bark color");
+                changed |= ui.color_edit_button_srgb(&mut tree.bark_color).changed();
+                ui.label("Leaf color");
+                changed |= ui.color_edit_button_srgb(&mut tree.leaf_color).changed();
+                ui.small("Material slots: bark + dark, medium and light leaves.");
+            }
+            FoliageStage::FoliageDistributor => {
+                changed |= ui.add(egui::Slider::new(&mut tree.leaf_density,0.0..=1.0).text("Density")).changed();
+                changed |= ui.add(egui::Slider::new(&mut tree.leaf_scale,0.02..=1.5).text("Leaf size")).changed();
+                changed |= ui.add(egui::Slider::new(&mut tree.leaf_angle,-1.0..=1.0).text("Leaf orientation")).changed();
+                changed |= ui.add(egui::Slider::new(&mut tree.leaf_variation,0.0..=1.0).text("Size variation")).changed();
+                ui.small("Distributes real triangular leaf cards along the branching canopy.");
+            }
+            FoliageStage::Output => {
+                if let Some(mesh)=&self.foliage_mesh {
+                    ui.label(format!("{} triangles",mesh.triangle_count()));
+                    ui.label(format!("Nominal height: {:.1}",mesh.height));
+                }
+                ui.small("Export static OBJ with bark/leaf MTL, plus editable foliage JSON.");
+                if ui.button("Export foliage OBJ").clicked() { self.export_foliage(); }
+                if ui.button("Save foliage project").clicked() { self.save_foliage(); }
+                if ui.button("Open foliage project").clicked() { self.open_foliage(); }
+            }
+        }
+        if changed { self.foliage_dirty = true; }
+        if let Err(err)=self.foliage.validate() {
+            ui.colored_label(Color32::from_rgb(232,133,104),err);
+        }
+        ui.separator();
+        ui.small("This tree mesh is separate from the procedural 2D material graph.");
+    }
+
+    fn foliage_canvas(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            ui.heading("PROCEDURAL TREE PREVIEW");
+            ui.separator();
+            ui.small("Static triangular mesh • adjustable growth stages");
+        });
+        ui.add(egui::Slider::new(&mut self.foliage_yaw,
+            0.0..=std::f32::consts::TAU).text("Orbit"));
+        let available=ui.available_size();
+        let desired=Vec2::new(available.x.max(50.0),available.y.max(250.0));
+        let (rect,_) = ui.allocate_exact_size(desired,Sense::hover());
+        let painter=ui.painter_at(rect);
+        painter.rect_filled(rect,4.0,Color32::from_rgb(22,27,35));
+        let Some(mesh)=&self.foliage_mesh else {
+            painter.text(rect.center(),Align2::CENTER_CENTER,
+                "Invalid foliage settings — adjust parameters",
+                FontId::proportional(15.0),Color32::LIGHT_GRAY);
+            return;
+        };
+        let yaw=self.foliage_yaw;
+        let right=[yaw.cos(),yaw.sin(),0.0];
+        let elevation=0.35_f32;
+        let up=[-yaw.sin()*elevation.sin(),yaw.cos()*elevation.sin(),elevation.cos()];
+        let camera=[-yaw.sin()*elevation.cos(),yaw.cos()*elevation.cos(),elevation.sin()];
+        let dot=|p:[f32;3],axis:[f32;3]|p[0]*axis[0]+p[1]*axis[1]+p[2]*axis[2];
+        let h=mesh.height.max(0.1);
+        let scale=(rect.width()/(h*2.5)).min(rect.height()/(h*1.35));
+        let project=|p:[f32;3]| Pos2::new(
+            rect.center().x+dot(p,right)*scale,
+            rect.bottom()-rect.height()*0.14-dot(p,up)*scale
+        );
+        let origin=project([0.0,0.0,0.0]);
+        painter.line_segment([origin+Vec2::new(-rect.width()*0.2,0.0),
+            origin+Vec2::new(rect.width()*0.2,0.0)],
+            Stroke::new(1.0,Color32::from_gray(65)));
+        let mut faces:Vec<(f32,usize)> = mesh.triangles.iter().enumerate()
+            .map(|(i,t)|{
+                let center=std::array::from_fn(|c|
+                    (t.points[0][c]+t.points[1][c]+t.points[2][c])/3.0);
+                (dot(center,camera),i)
+            }).collect();
+        faces.sort_by(|a,b|a.0.total_cmp(&b.0));
+        let bark=self.foliage.bark_color;
+        let leaf=self.foliage.leaf_color;
+        for (_,index) in faces {
+            let tri=&mesh.triangles[index];
+            let base=match tri.material {
+                Material::Bark=>bark,
+                Material::LeafDark=>leaf.map(|c|(c as f32*0.72) as u8),
+                Material::Leaf=>leaf,
+                Material::LeafLight=>leaf.map(|c|((c as f32*1.22).min(255.0)) as u8),
+            };
+            let shade=0.75+0.25*(index as f32*0.017).sin().abs();
+            let color=Color32::from_rgb(
+                (base[0] as f32*shade) as u8,
+                (base[1] as f32*shade) as u8,
+                (base[2] as f32*shade) as u8);
+            painter.add(egui::Shape::convex_polygon(vec![
+                project(tri.points[0]),project(tri.points[1]),project(tri.points[2])],
+                color,Stroke::NONE));
+        }
+        painter.text(rect.left_top()+Vec2::new(12.0,12.0),Align2::LEFT_TOP,
+            format!("{}  •  {} triangles",self.foliage.preset.name(),mesh.triangle_count()),
+            FontId::proportional(14.0),Color32::LIGHT_GRAY);
+    }
+
     fn palette(&mut self, ui: &mut egui::Ui) {
         ui.heading("LIBRARY");
         ui.horizontal(|ui| {
             ui.selectable_value(&mut self.library_tab, 1, "Presets");
             ui.selectable_value(&mut self.library_tab, 0, "Nodes");
+            ui.selectable_value(&mut self.library_tab, 2, "Foliage");
         });
         ui.separator();
         if self.library_tab == 1 {
             self.preset_browser(ui);
+            return;
+        }
+        if self.library_tab == 2 {
+            self.foliage_stage_list(ui);
             return;
         }
         ui.add(egui::TextEdit::singleline(&mut self.library_search).hint_text("Search nodes..."));
@@ -895,11 +1141,32 @@ impl Studio {
 impl eframe::App for Studio {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
-        self.refresh_preview(&ctx);
+        if self.library_tab == 2 {
+            if self.foliage_dirty {
+                match self.foliage.generate() {
+                    Ok(mesh) => self.foliage_mesh = Some(mesh),
+                    Err(err) => { self.foliage_mesh = None; self.status = format!("Foliage error: {err}"); }
+                }
+                self.foliage_dirty = false;
+            }
+        } else {
+            self.refresh_preview(&ctx);
+        }
         egui::Panel::top("toolbar").show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
                 ui.heading("TEXTURE STUDIO");
                 ui.separator();
+                if self.library_tab == 2 {
+                    if ui.button("New Tree").clicked() {
+                        self.foliage = FoliageProject::default();
+                        self.foliage_dirty = true;
+                        self.status = "New procedural tree created".into();
+                    }
+                    if ui.button("Open Tree").clicked() { self.open_foliage(); }
+                    if ui.button("Save Tree").clicked() { self.save_foliage(); }
+                    if ui.button("Export Tree OBJ").clicked() { self.export_foliage(); }
+                    ui.separator();
+                } else {
                 if ui.button("New").clicked() { self.new_project(); }
                 if ui.button("Open").clicked() { self.open_project(); }
                 if ui.button("Save").clicked() { self.save_project(false); }
@@ -920,6 +1187,7 @@ impl eframe::App for Studio {
                 }
                 ui.separator();
                 if ui.button("Example").clicked() { self.demo_material(); }
+                }
             });
         });
         egui::Panel::bottom("status").show(ui, |ui| {
@@ -937,6 +1205,10 @@ impl eframe::App for Studio {
         });
         egui::Panel::right("previews").resizable(true).default_size(300.0).min_size(240.0).show(ui, |ui| {
             ui.add_space(6.0);
+            if self.library_tab == 2 {
+                self.foliage_inspector(ui);
+                return;
+            }
             ui.heading("MATERIAL GEOMETRY");
             ui.horizontal(|ui| {
                 ui.label("Mode");
@@ -1053,9 +1325,13 @@ impl eframe::App for Studio {
                 }
                 ui.small(format!("{:.0}%", self.zoom * 100.0));
             });
-            self.canvas(ui);
+            if self.library_tab == 2 {
+                self.foliage_canvas(ui);
+            } else {
+                self.canvas(ui);
+            }
         });
-        if self.dirty { ctx.request_repaint(); }
+        if self.dirty || self.foliage_dirty { ctx.request_repaint(); }
     }
 }
 
