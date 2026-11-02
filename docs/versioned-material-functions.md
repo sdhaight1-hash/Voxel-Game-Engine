@@ -17,8 +17,8 @@ Reusable material functions**:
 3. In another tree or asset, use **Import material function…** to load the
    JSON, select that ID/version, and choose **Apply to Bark/Leaf/Cutout**.
    When the template contains a Noise node, the inspector exposes the
-   **Instance noise frequency** slider (1..64) and applies its override
-   before baking. The first Noise node is exposed as `frequency` by
+   **Instance noise frequency** slider (1..64), initialized from the
+   template’s authored Noise scale, and applies its override before baking. The first Noise node is exposed as `frequency` by
    default; advanced library JSON supports multiple explicitly exposed
    Noise-scale targets with unique keys.
 4. Export a *new version number* when changing a shared function. Old
