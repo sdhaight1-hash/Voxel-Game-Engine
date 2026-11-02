@@ -1165,7 +1165,13 @@ impl Studio {
             egui::ComboBox::from_id_salt("foliage_species")
                 .selected_text(self.foliage.preset.name())
                 .show_ui(ui, |ui| {
+                    let mut group = "";
                     for species in PlantPreset::ALL {
+                        if group != species.group() {
+                            if !group.is_empty() { ui.separator(); }
+                            group = species.group();
+                            ui.strong(group);
+                        }
                         if ui.selectable_label(self.foliage.preset == species,species.name()).clicked() {
                             self.foliage = FoliageProject::from_preset(species);
                             self.foliage_dirty = true;
