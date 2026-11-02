@@ -21,6 +21,8 @@ An offline, standalone **Rust desktop application** for voxel asset creation, pr
 
 Texture Studio is now organized around **four linked workspaces**. **Assets** is the new primary editing workspace; **Foliage** supplies generated voxel-tree geometry; **Presets** and **Nodes** remain responsible for procedural surface materials. The design takes inspiration from Blockbench's viewport/outliner/modeling/texturing workflow while keeping our own native Rust code and cube/hex voxel representation.
 
+**Foliage mesh setting:** In the **Assets** inspector you can choose cutout crossed cards or classic solid leaf blocks, and adjust preview wind sway. Legacy asset JSON defaults to cutout cards when its new setting is absent.
+
 **Asset editing:** Open **Library → Assets** to create, save, load or export a standalone voxel model. The left panel is a scrollable voxel outliner with per-material counts and selectable occupied cells. The center panel shows a rotatable 3D viewport. The right inspector includes:
 
 - **Select**: click a visible voxel face or choose a cell in the outliner to edit its integer X/Y/Z position
@@ -33,13 +35,13 @@ Texture Studio is now organized around **four linked workspaces**. **Assets** is
 
 **Convert procedural growth to editable modeling:** Build a tree under **Foliage**, then click **Edit Tree as Asset**, or use **Import Procedural Tree** from the asset outliner. The tree's occupied cells become a separate editable model, preserving its cube/hex grid and material colors. Manual changes are not overwritten when its originating tree parameters change. You can also **Open Asset** on a previously exported `foliage.voxels.json` from the older tree workflow.
 
-**Asset files:** **Save Asset** stores `asset.voxelasset.json`, including name, cube/hex grid, cell size, each occupied voxel and material slot, palette, plus an optional embedded procedural node graph. **Export Asset** also writes `asset.obj` (only exposed cell faces) and `asset.mtl` (four palette colors). In the Assets inspector, **Capture current material nodes** attaches the active procedural graph; **Edit attached material in Nodes** loads it back to the node editor. Changes in Nodes must be captured again to update the saved asset.
+**Asset files:** **Save Asset** stores `asset.voxelasset.json`, including name, cube/hex grid, cell size, each occupied voxel and material slot, palette, leaf-card/wind settings and an optional embedded procedural node graph. **Export Asset** also writes `asset.obj` (UV-mapped, exposed bark faces and two-sided cutout foliage cards), `asset.mtl` (bark/foliage colors and cutout maps), and—in cutout mode—`foliage-leaves.png` and `foliage-leaves-alpha.png`. In the Assets inspector, **Capture current material nodes** attaches the active procedural graph; **Edit attached material in Nodes** loads it back to the node editor. Changes in Nodes must be captured again to update the saved asset.
 
 **Current boundaries:** This is a first usable voxel asset editor, **not full Blockbench feature parity**. It does not yet have per-pixel UV painting, automatic multi-part UV atlas baking, arbitrary hierarchies or named groups, rigging/animation timelines, skeletal binding, mesh sculpting, plug-ins, Blockbench project-file compatibility, or direct 3D surface painting from the procedural PBR graph. The viewport currently colors individual voxels through four material slots, with the procedural material graph stored alongside the asset for further integration. These are deliberate next stages, not implemented features.
 
 ## Native Voxel Tree Designer
 
-Use **Library → Foliage** to generate **actual voxel trees**—a saved set of occupied bark and leaf cells, not the earlier smooth tube/leaf-card polygon generator. This implements the block-world interpretation of the workflow shown in the supplied Unreal Engine 5.7 tutorial, while remaining native Rust.
+Use **Library → Foliage** to generate **grid-based trees with distinct geometry for bark and leaves**—a saved set of occupied bark and leaf cells; bark is a block mesh, while a leaf cell can render custom crossed polygon cards. This implements the block-world interpretation of the workflow shown in the supplied Unreal Engine 5.7 tutorial, while remaining native Rust.
 
 **Plant starters:** Oak, Pine, Birch, Willow, Maple, Shrub. They use seeded procedural trunks, branching and volumetric foliage clusters. Settings are editable and reproducible.
 
@@ -47,15 +49,16 @@ Use **Library → Foliage** to generate **actual voxel trees**—a saved set of 
 
 The ten editable stages are Tree Preset (species/seed/branches), Carve (top/bottom), Gravity / Phototropism (branch growth direction), Slope (trunk lean), Scale, Remove Branches, Voxel Builder (cube/hex and cell size), Block Palette (bark/leaf color), Leaf Voxel Distributor (volumetric foliage, density and variation), and Voxel Export.
 
-**Preview:** The central viewport orbits the discrete tree, displaying cube or hex-prism exterior surfaces. Only exposed faces are triangulated for display and interoperability; adjacent internal faces are culled. Very dense trees use reduced preview detail while **exports always include every occupied cell**.
+**Preview:** The central viewport orbits the tree. Bark displays as cube or hex-prism exterior surfaces, with internal bark faces culled. Leaf cells default to **two intersecting, double-sided, angled foliage planes**, with a generated binary-alpha leafy sprig texture, true gaps, and deterministic 90° cell rotation. Opaque bark fully surrounding a leaf cell causes that card mesh to be omitted; neighboring transparent leaves do not count as opaque. **Block Palette → Leaf cell geometry** can switch back to solid leaf voxels. Very dense trees use reduced preview detail while **exports always include every occupied cell**. **Wind sway** animates leaf-card vertices in the CPU-based preview while keeping their bases anchored; it never moves the occupied voxel grid. This is a preview approximation, *not GPU vertex-shader displacement*.
 
 **Exports:** **Export Voxel Tree** writes four files into an empty folder:
 - `foliage.voxels.json`: authoritative voxel asset: grid type, cell size, plant settings and an explicit list of occupied (x, y, z, bark/leaf-material) cells. Hex (x,y) represent axial (q,r).
-- `foliage.obj`: exterior voxel-face mesh, with invisible shared faces removed, for standard 3D applications.
-- `foliage.mtl`: four block material colors (bark, light/normal/dark foliage).
-- `foliage.json`: editable generation parameters. **Save Tree** and **Open Tree** use this same settings format.
+- `foliage.obj`: exposed bark surfaces **plus double-sided, UV-mapped cutout leaf-card meshes** (or solid leaf faces when selected).
+- `foliage.mtl`: bark/foliage material slots. In cutout mode its leaf materials reference the two PNGs listed below.
+- `foliage.json`: editable generation parameters including leaf mesh style and wind controls. **Save Tree** and **Open Tree** use this format.
+- `foliage-leaves.png`, `foliage-leaves-alpha.png` (cutout mode): an **original generated RGBA sprig texture** and a grayscale alpha mask. Both are referenced in MTL; texture importers vary in how they apply color tint and opacity.
 
-**Limitations:** This is a voxel-tree asset generator, not a full voxel terrain, forest scatterer, plant growth simulator, or wind/physics solver. It does not import Unreal Megaplants, support Nanite/PCG/skeletal animation, or yet paint individual tree cells. Smaller voxel sizes cost more CPU/memory and settings have bounds to protect the native editor. The foliage editor remains separate from the 2D surface-material node graph.
+**Limitations:** This is a voxel-tree asset generator with mesh-based leaf cards, not a full voxel terrain, forest scatterer, plant growth simulator, or GPU wind/physics solver. It does not import Unreal Megaplants, support Nanite/PCG/skeletal animation, or yet paint individual tree cells. Smaller voxel sizes cost more CPU/memory and settings have bounds to protect the native editor. The foliage editor remains separate from the 2D surface-material node graph.
 
 ## Expanded Material Maker-inspired Node Library
 
