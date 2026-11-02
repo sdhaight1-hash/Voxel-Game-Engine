@@ -1621,6 +1621,42 @@ mod tests {
     }
 
     #[test]
+    fn tapered_branch_mesh_keeps_solid_trunks_and_textured_leaves() {
+        for preset in [PlantPreset::Oak,PlantPreset::Pine,PlantPreset::Willow] {
+            let mesh=FoliageProject::from_preset(preset).generate().unwrap();
+            let tree=mesh.structure.as_ref().unwrap();
+            assert!(tree.spans.len() >= 3, "{preset:?}");
+            let branch_cells:BTreeSet<_>=tree.cells.iter()
+                .filter(|c|matches!(c.part,TreePart::MajorBranch|TreePart::SmallBranch))
+                .map(|c|c.cell).collect();
+            let trunk_cells:BTreeSet<_>=tree.cells.iter()
+                .filter(|c|c.part==TreePart::Trunk).map(|c|c.cell).collect();
+            assert!(mesh.triangles.iter().any(|t|
+                t.material.is_wood() && branch_cells.contains(&t.cell)),
+                "{preset:?}: branch tubes missing");
+            assert!(mesh.triangles.iter().any(|t|
+                t.material.is_wood() && trunk_cells.contains(&t.cell)),
+                "{preset:?}: solid trunk missing");
+            assert!(mesh.triangles.iter().any(|t|t.cutout &&
+                t.material.is_foliage()),"{preset:?}: leaf cards missing");
+            assert!(tree.spans.iter().all(|s|s.start_radius_mm<=420
+                && s.end_radius_mm<=420 && s.start_radius_mm>s.end_radius_mm),
+                "{preset:?}: branches must taper and fit within 1m cells");
+            let again=FoliageProject::from_preset(preset).generate().unwrap();
+            assert_eq!(mesh.triangles.len(),again.triangles.len());
+            assert_eq!(mesh.triangles[0].points,again.triangles[0].points);
+        }
+    }
+
+    #[test]
+    fn invalid_tapered_branch_path_is_rejected() {
+        let mesh=FoliageProject::from_preset(PlantPreset::Oak).generate().unwrap();
+        let mut structure=mesh.structure.unwrap();
+        structure.spans[0].branch_id=999_999;
+        assert!(structure.validate(&mesh.voxels).is_err());
+    }
+
+    #[test]
     fn all_species_generate_1m_hexel_wood_and_card_foliage() {
         for preset in PlantPreset::ALL {
             let tree = FoliageProject::from_preset(preset);
