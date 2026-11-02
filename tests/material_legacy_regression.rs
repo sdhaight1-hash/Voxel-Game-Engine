@@ -238,6 +238,52 @@ fn sdf_distance_to_mask_supports_legacy_pbr_and_foliage_cutout() {
     assert_eq!(baked.len(),64*64*4);
 }
 
+#[test]
+fn tapered_bezier_sdf_can_drive_warped_bark_and_leaf_mask_without_pixel_drift() {
+    use texture_studio::SdfBoolean;
+    let mut graph=Graph::default();
+    let path=graph.add_node(NodeKind::SdfBezierStroke{
+        points:[[0.88,0.48],[0.96,0.12],[0.04,0.85],[0.12,0.48]],
+        start_radius:0.08,end_radius:0.02,segments:16,tiled:true,
+    },[50.0,50.0]);
+    let circle=graph.add_node(NodeKind::SdfCircle{
+        center:[0.5,0.5],radius:0.1,
+    },[60.0,220.0]);
+    let union=graph.add_node(NodeKind::SdfCombine{
+        operation:SdfBoolean::Union,smoothing:0.02,
+    },[200.0,110.0]);
+    let mask=graph.add_node(NodeKind::SdfToMask{edge_width:0.012},
+        [340.0,110.0]);
+    let warp=graph.add_node(NodeKind::Library{
+        operation:LibraryNode::Warp,amount:0.1,seed:29,
+    },[480.0,110.0]);
+    graph.connect(path,union,0).unwrap();
+    graph.connect(circle,union,1).unwrap();
+    graph.connect(union,mask,0).unwrap();
+    graph.connect(mask,warp,0).unwrap();
+    graph.connect(warp,2,0).unwrap();
+    graph.connect(warp,2,3).unwrap();
+    graph.validate().unwrap();
+    let restored:Graph=serde_json::from_str(
+        &serde_json::to_string(&graph).unwrap()).unwrap();
+    for size in [64,128] {
+        let independent=graph.render_rgba(size,size).unwrap();
+        let (memo,_) =graph.render_channels_memoized_rgba(
+            &[0,3],size,size).unwrap();
+        assert_eq!(memo[0],independent);
+        assert_eq!(memo[1],independent);
+        assert_eq!(restored.render_rgba(size,size).unwrap(),independent);
+        assert_eq!(restored.render_normal_rgba(size,size).unwrap().len(),
+            independent.len());
+    }
+    let mut materials=FoliageMaterials::default();
+    let before=materials.bake_leaf(64,[74,133,65]).unwrap();
+    materials.leaf_opacity=Some(graph);
+    let after=materials.bake_leaf(64,[74,133,65]).unwrap();
+    assert!(before.chunks_exact(4).zip(after.chunks_exact(4))
+        .all(|(a,b)|b[3]<=a[3]));
+}
+
 /// The CI benchmark step runs this alongside the pre-optimization baseline.
 /// It measures repeat-output reuse (not GPU upload or intermediate graph caching).
 #[test]
