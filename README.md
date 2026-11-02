@@ -44,7 +44,16 @@ GitHub **Actions → Desktop builds → Run workflow** produces downloadable **u
 5. From the top bar choose an export resolution and **Export PBR maps**; select a destination folder.
 6. Save your editable project with **Save**.
 
-To connect nodes, click the blue right-side output socket and then a left-side input socket. Right-click an input to disconnect its cable. Cyclic connections are rejected.
+**Connecting and moving cables**
+
+- **New connection:** left-click and drag a blue output socket onto a yellow input socket, then release.
+- **Rewire a cable:** drag the *connected input socket* or grab the cable itself; drop on a different input to move its destination, or drop on a different output to change its source.
+- **Click mode:** click an output socket, then click the target input socket, if you prefer not to drag.
+- **Remove:** right-click an input socket or the wire between nodes.
+- **Cancel:** press Escape, or release on empty canvas during a drag; existing cables remain intact after invalid drops.
+- **Move nodes:** drag their top title bar. Middle mouse pans; mouse wheel zooms.
+
+A destination input supports only one incoming cable. Reconnecting replaces the prior cable at that input. Cyclic connections are rejected without deleting the original link.
 
 ## Current limitations
 
