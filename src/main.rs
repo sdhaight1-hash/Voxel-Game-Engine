@@ -760,6 +760,7 @@ impl eframe::App for Studio {
                     });
                 if ui.button("Export image").clicked() { self.export_png(); }
                 if ui.button("Export PBR maps").clicked() { self.export_material(); }
+                if ui.button("Export voxel OBJ + atlases").clicked() { self.export_voxel(); }
                 ui.separator();
                 if ui.button("Example").clicked() { self.demo_material(); }
             });
@@ -779,13 +780,46 @@ impl eframe::App for Studio {
         });
         egui::Panel::right("previews").resizable(true).default_size(300.0).min_size(240.0).show(ui, |ui| {
             ui.add_space(6.0);
+            ui.heading("VOXEL GEOMETRY");
+            ui.horizontal(|ui| {
+                ui.label("Shape");
+                egui::ComboBox::from_id_salt("voxel_shape")
+                    .selected_text(self.graph.voxel.shape.name())
+                    .show_ui(ui, |ui| {
+                        self.dirty |= ui.selectable_value(&mut self.graph.voxel.shape,
+                            VoxelShape::Cube, "Cube (6 faces)").changed();
+                        self.dirty |= ui.selectable_value(&mut self.graph.voxel.shape,
+                            VoxelShape::HexPrism, "Hexagonal prism (8 faces)").changed();
+                    });
+            });
+            ui.horizontal(|ui| {
+                ui.label("Side UV");
+                egui::ComboBox::from_id_salt("voxel_uv_mapping")
+                    .selected_text(match self.graph.voxel.side_mapping {
+                        SideMapping::Wrap => "Wrap around perimeter",
+                        SideMapping::Repeat => "Repeat per face",
+                    })
+                    .show_ui(ui, |ui| {
+                        self.dirty |= ui.selectable_value(&mut self.graph.voxel.side_mapping,
+                            SideMapping::Wrap, "Wrap around perimeter").changed();
+                        self.dirty |= ui.selectable_value(&mut self.graph.voxel.side_mapping,
+                            SideMapping::Repeat, "Repeat per face").changed();
+                    });
+            });
+            ui.small("This shape and UV mode are saved in your project.");
+            ui.separator();
             ui.heading("PREVIEW");
             ui.horizontal(|ui| {
-                ui.selectable_value(&mut self.view, 0, "3D");
+                ui.selectable_value(&mut self.view, 0, "Voxel 3D");
                 ui.selectable_value(&mut self.view, 1, "2D");
                 ui.selectable_value(&mut self.view, 2, "Node");
+                ui.selectable_value(&mut self.view, 3, "Atlas");
             });
-            if self.view == 1 {
+            if self.view == 0 {
+                self.dirty |= ui.add(egui::Slider::new(&mut self.voxel_yaw,
+                    0.0..=std::f32::consts::TAU).text("Orbit")).changed();
+            }
+            if self.view == 1 || self.view == 3 {
                 egui::ComboBox::from_id_salt("output_channel")
                     .selected_text(["Albedo", "Roughness", "Metallic", "Height", "Normal"][self.preview_channel])
                     .show_ui(ui, |ui| {
@@ -797,20 +831,24 @@ impl eframe::App for Studio {
                     });
             }
             let preview = match self.view {
-                0 => self.sphere.as_ref(),
+                0 => self.voxel_preview.as_ref(),
                 1 => self.preview.as_ref(),
-                _ => self.selected_preview.as_ref(),
+                2 => self.selected_preview.as_ref(),
+                _ => self.atlas_preview.as_ref(),
             };
             if let Some(texture) = preview {
-                let side = ui.available_width().min(272.0);
-                ui.add(egui::Image::new(texture).fit_to_exact_size(Vec2::splat(side)));
+                let width = ui.available_width().min(272.0);
+                let size = texture.size();
+                let height = width * size[1] as f32 / size[0].max(1) as f32;
+                ui.add(egui::Image::new(texture).fit_to_exact_size(Vec2::new(width, height)));
             } else {
-                ui.label("Select a node to preview.");
+                ui.label("No preview available.");
             }
-            ui.small(if self.view == 0 {
-                "Lit sphere simulation · not a full physically based renderer"
-            } else {
-                "Tileable 2D output"
+            ui.small(match self.view {
+                0 => "Actual cube/hex-prism faces with UV-mapped texture · approximate lighting",
+                1 => "Tileable 2D material channel",
+                2 => "Selected node image",
+                _ => "Face tiles: sides first, then top and bottom caps",
             });
             ui.separator();
             self.inspector(ui);
