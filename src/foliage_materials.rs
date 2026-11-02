@@ -2,6 +2,7 @@
 //! Both slots use the existing editable graph engine and bundled natural presets.
 
 use crate::foliage::{leaf_cutout_for_species, PlantPreset};
+use crate::leaf_vector::{LeafSilhouetteSource,vector_oak_cutout_rgba};
 use crate::presets::{builtin_presets, Preset};
 use crate::{Graph, VoxelSettings};
 use crate::material_functions::{MaterialFunctionInstance,MaterialFunctionLibrary};
@@ -145,6 +146,9 @@ pub struct FoliageMaterials {
     /// including if its material node graphs are edited independently.
     #[serde(default = "default_leaf_species")]
     pub leaf_species: PlantPreset,
+    /// Optional base leaf cutout replacement; legacy species art is default.
+    #[serde(default)]
+    pub leaf_silhouette: LeafSilhouetteSource,
     /// Ripe fruit colour for a small visual indication on foliage cards.
     /// Real fruit items, harvesting and seasonal ripening are world systems.
     pub fruit_color: Option<[u8;3]>,
@@ -161,7 +165,9 @@ impl Default for FoliageMaterials {
             bark_function:None,leaf_function:None,opacity_function:None,
             bark_tint_strength: 0.0,
             bark_preset: None, leaf_preset: None,
-            leaf_species: PlantPreset::Oak, fruit_color: None,
+            leaf_species: PlantPreset::Oak,
+            leaf_silhouette: LeafSilhouetteSource::LegacySpecies,
+            fruit_color: None,
             seasonal_palettes: None, cutout_threshold: 0.5 }
     }
 }
@@ -173,6 +179,7 @@ impl FoliageMaterials {
     }
 
     pub fn validate(&self) -> Result<(), String> {
+        self.leaf_silhouette.validate(self.leaf_species==PlantPreset::Oak)?;
         if !self.bark_tint_strength.is_finite()
             || !(0.0..=1.0).contains(&self.bark_tint_strength) {
             return Err("Bark tint strength must be 0..1".into());
@@ -306,7 +313,10 @@ impl FoliageMaterials {
     pub fn bake_leaf(&self, size:u32, leaf_tint:[u8;3]) -> Result<Vec<u8>,String> {
         self.validate()?;
         if size==0 || size>1024 {return Err("Foliage bake must be 1..1024 px".into());}
-        let base=leaf_cutout_for_species(self.leaf_species);
+        let base=match self.leaf_silhouette {
+            LeafSilhouetteSource::LegacySpecies=>leaf_cutout_for_species(self.leaf_species),
+            LeafSilhouetteSource::VectorOak{lobe_width}=>vector_oak_cutout_rgba(lobe_width),
+        };
         let graph=self.leaf.as_ref().map(|g|g.render_rgba(size,size)).transpose()?;
         let opacity=self.leaf_opacity.as_ref()
             .map(|g|g.render_rgba(size,size)).transpose()?;
@@ -429,6 +439,43 @@ mod tests {
             assert_eq!(mats.leaf_species,species);
             mats.validate().unwrap();
         }
+    }
+
+    #[test]
+    fn vector_oak_replaces_its_base_silhouette_but_masks_cannot_fill_outside() {
+        let mut materials=FoliageMaterials::for_species(PlantPreset::Oak);
+        let legacy=materials.bake_leaf(64,[65,145,68]).unwrap();
+        materials.leaf_silhouette=LeafSilhouetteSource::VectorOak{
+            lobe_width:1.1,
+        };
+        let vector=materials.bake_leaf(64,[65,145,68]).unwrap();
+        assert_ne!(vector,legacy);
+        assert!(legacy.chunks_exact(4).zip(vector.chunks_exact(4))
+            .any(|(a,b)|a[3]<b[3]),
+            "the optional vector source must actually replace, not intersect with, legacy shape");
+        let mut mask=Graph::default();
+        mask.node_mut(1).unwrap().kind=crate::NodeKind::Color{rgb:[0,0,0]};
+        materials.set_graph(MaterialRole::Opacity,mask);
+        let empty=materials.bake_leaf(64,[65,145,68]).unwrap();
+        assert!(empty.chunks_exact(4).all(|px|px[3]==0));
+        materials.leaf_opacity=None;
+        let restored=materials.bake_leaf(64,[65,145,68]).unwrap();
+        assert_eq!(restored,vector);
+        let saved=serde_json::to_string(&materials).unwrap();
+        let loaded:FoliageMaterials=serde_json::from_str(&saved).unwrap();
+        assert_eq!(loaded.bake_leaf(64,[65,145,68]).unwrap(),vector);
+    }
+
+    #[test]
+    fn old_materials_default_to_legacy_silhouette_and_non_oak_rejects_vector_oak() {
+        let legacy:FoliageMaterials=serde_json::from_str(
+            r#"{"leaf_species":"Oak"}"#).unwrap();
+        assert_eq!(legacy.leaf_silhouette,LeafSilhouetteSource::LegacySpecies);
+        assert_eq!(legacy.bake_leaf(64,[65,145,68]).unwrap(),
+            FoliageMaterials::default().bake_leaf(64,[65,145,68]).unwrap());
+        let mut willow=FoliageMaterials::for_species(PlantPreset::Willow);
+        willow.leaf_silhouette=LeafSilhouetteSource::VectorOak{lobe_width:1.0};
+        assert!(willow.validate().is_err());
     }
 
     #[test]

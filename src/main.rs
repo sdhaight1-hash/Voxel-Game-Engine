@@ -18,6 +18,7 @@ use texture_studio::material_functions::{MaterialFunction,MaterialFunctionLibrar
     FunctionParameterKind};
 use texture_studio::foliage_materials::{FoliageMaterials, MaterialRole,
     SeasonalPalettes, MATERIAL_SIZE};
+use texture_studio::leaf_vector::LeafSilhouetteSource;
 use texture_studio::voxel::{render_atlas, render_voxel_preview, export_obj};
 
 /// Use the function's authored Noise frequency as the initial override;
@@ -949,7 +950,31 @@ impl Studio {
             else {self.foliage_mats_dirty=true;}
         }
         ui.small("Leaf Pattern controls luminance/detail; species and seasonal palettes control the base color.");
-        ui.small("Transparency keeps the leaf silhouette; an opacity graph can add holes.");
+        ui.small("Transparency keeps the selected base leaf silhouette; an opacity graph only removes coverage.");
+        if mat.leaf_species==PlantPreset::Oak {
+            ui.collapsing("Oak leaf-card silhouette",|ui| {
+                let mut vector=matches!(mat.leaf_silhouette,
+                    LeafSilhouetteSource::VectorOak{..});
+                if ui.checkbox(&mut vector,"Use vector Oak leaf silhouette").changed() {
+                    mat.leaf_silhouette=if vector {
+                        LeafSilhouetteSource::VectorOak{lobe_width:1.0}
+                    } else {
+                        LeafSilhouetteSource::LegacySpecies
+                    };
+                    if for_asset {self.asset_mats_dirty=true;}
+                    else {self.foliage_mats_dirty=true;}
+                }
+                if let LeafSilhouetteSource::VectorOak{lobe_width}=
+                    &mut mat.leaf_silhouette {
+                    if ui.add(egui::Slider::new(lobe_width,0.65..=1.45)
+                        .text("Lobe width")).changed() {
+                        if for_asset {self.asset_mats_dirty=true;}
+                        else {self.foliage_mats_dirty=true;}
+                    }
+                    ui.small("Replaces the base Oak silhouette; leaf pattern and season palettes remain separate.");
+                }
+            });
+        }
         if slot==MaterialRole::Bark && mat.bark.is_some() {
             if ui.add(egui::Slider::new(&mut mat.bark_tint_strength,0.0..=1.0)
                 .text("Bark tint mix")).changed() {
