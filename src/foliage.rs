@@ -1698,6 +1698,10 @@ mod tests {
                 .map(|c|c.cell).collect();
             let trunk_cells:BTreeSet<_>=tree.cells.iter()
                 .filter(|c|c.part==TreePart::Trunk).map(|c|c.cell).collect();
+            let visible_branch_cells:BTreeSet<_>=mesh.triangles.iter()
+                .filter(|t|t.material.is_wood()).map(|t|t.cell).collect();
+            assert!(branch_cells.iter().all(|c|visible_branch_cells.contains(c)),
+                "{preset:?}: a harvestable branch cell is invisible");
             assert!(mesh.triangles.iter().any(|t|
                 t.material.is_wood() && branch_cells.contains(&t.cell)),
                 "{preset:?}: branch tubes missing");
