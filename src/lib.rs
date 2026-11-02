@@ -2,7 +2,7 @@
 //! No UI types are used here, so the graph and renderer can be tested independently.
 
 use serde::{Deserialize, Serialize};
-use std::{cell::{Cell,RefCell}, collections::{HashMap, HashSet}};
+use std::{cell::Cell, collections::{HashMap, HashSet}};
 
 pub mod voxel;
 pub mod foliage;
@@ -53,40 +53,55 @@ pub struct MultiChannelStats {
     pub peak_entries_per_pixel: usize,
 }
 
-// A small linear buffer is cheaper than hashing each inexpensive RGB node.
-// On overflow evaluation continues normally without storing new samples.
+// One most-recent exact-UV sample per shared node: no per-pixel hash maps,
+// allocations or dynamic borrow checks. Extra shared nodes remain uncached.
 const MAX_PIXEL_SAMPLE_ENTRIES: usize = 64;
 
+struct SampleSlot {
+    id: u64,
+    last: Cell<Option<(u32,u32,[f32;3])>>,
+}
+
 struct SampleMemo {
-    shared_nodes: Vec<u64>,
-    values: RefCell<Vec<((u64,u32,u32),[f32;3])>>,
+    slots: Vec<SampleSlot>,
     hits: Cell<u64>,
     evaluations: Cell<u64>,
+    active: Cell<usize>,
     peak: Cell<usize>,
 }
 
 impl SampleMemo {
-    fn new(shared_nodes:Vec<u64>)->Self {
-        Self{shared_nodes,values:RefCell::new(Vec::new()),
-            hits:Cell::new(0),evaluations:Cell::new(0),peak:Cell::new(0)}
+    fn new(mut shared_nodes:Vec<u64>)->Self {
+        shared_nodes.sort_unstable();
+        let slots=shared_nodes.into_iter().take(MAX_PIXEL_SAMPLE_ENTRIES)
+            .map(|id|SampleSlot{id,last:Cell::new(None)}).collect();
+        Self{slots,hits:Cell::new(0),evaluations:Cell::new(0),
+            active:Cell::new(0),peak:Cell::new(0)}
+    }
+
+    fn clear(&self) {
+        for slot in &self.slots {slot.last.set(None);}
+        self.active.set(0);
     }
 
     fn lookup(&self,id:u64,u:f32,v:f32)->Option<[f32;3]> {
-        if !self.shared_nodes.contains(&id) {return None;}
-        let key=(id,u.to_bits(),v.to_bits());
-        let result=self.values.borrow().iter().find(|(k,_)|*k==key)
-            .map(|(_,rgb)|*rgb);
-        if result.is_some() {self.hits.set(self.hits.get()+1);}
-        result
+        let slot=self.slots.iter().find(|slot|slot.id==id)?;
+        let (cached_u,cached_v,rgb)=slot.last.get()?;
+        if cached_u==u.to_bits() && cached_v==v.to_bits() {
+            self.hits.set(self.hits.get()+1);
+            Some(rgb)
+        } else {None}
     }
 
     fn record(&self,id:u64,u:f32,v:f32,value:[f32;3]) {
         self.evaluations.set(self.evaluations.get()+1);
-        if !self.shared_nodes.contains(&id) {return;}
-        let mut values=self.values.borrow_mut();
-        if values.len()<MAX_PIXEL_SAMPLE_ENTRIES {
-            values.push(((id,u.to_bits(),v.to_bits()),value));
-            self.peak.set(self.peak.get().max(values.len()));
+        if let Some(slot)=self.slots.iter().find(|slot|slot.id==id) {
+            if slot.last.get().is_none() {
+                let active=self.active.get()+1;
+                self.active.set(active);
+                self.peak.set(self.peak.get().max(active));
+            }
+            slot.last.set(Some((u.to_bits(),v.to_bits(),value)));
         }
     }
 
@@ -437,8 +452,8 @@ impl Graph {
     /// interpolation or u8 quantization occurs before the final output.
     ///
     /// The original one-channel API does not allocate a memo. The memo stores
-    /// only branches shared by the requested channels, with at most 64
-    /// node/coordinate values per pixel (falling back to evaluation on overflow).
+    /// only branches shared by the requested channels, with one exact-UV
+    /// sample slot per shared node and at most 64 slots per pixel.
     /// Compare byte-equivalence and CPU times before opting into this path.
     pub fn render_channels_memoized_rgba(&self, channels:&[usize], width:u32, height:u32)
         -> Result<(Vec<Vec<u8>>, MultiChannelStats),String> {
@@ -478,7 +493,7 @@ impl Graph {
         let memo=SampleMemo::new(shared);
         for y in 0..height {
             for x in 0..width {
-                memo.values.borrow_mut().clear();
+                memo.clear();
                 let u=x as f32/width as f32;
                 let v=y as f32/height as f32;
                 for (slot,&channel) in channels.iter().enumerate() {
