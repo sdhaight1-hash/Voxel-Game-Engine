@@ -1,0 +1,87 @@
+{
+  "format_version": 1,
+  "name": "Legacy test hexel asset",
+  "shape": "HexPrism",
+  "voxel_size": 1,
+  "voxels": [
+    {
+      "x": 0,
+      "y": 0,
+      "z": 0,
+      "material": "bark"
+    },
+    {
+      "x": 0,
+      "y": 0,
+      "z": 1,
+      "material": "leaf"
+    }
+  ],
+  "bark_color": [
+    125,
+    94,
+    68
+  ],
+  "leaf_color": [
+    77,
+    142,
+    65
+  ],
+  "material_graph": {
+    "nodes": [
+      {
+        "id": 1,
+        "position": [
+          0,
+          0
+        ],
+        "kind": {
+          "Color": {
+            "rgb": [
+              32,
+              96,
+              160
+            ]
+          }
+        }
+      },
+      {
+        "id": 2,
+        "position": [
+          0,
+          140
+        ],
+        "kind": {
+          "Checker": {
+            "tiles": 2
+          }
+        }
+      },
+      {
+        "id": 3,
+        "position": [
+          250,
+          65
+        ],
+        "kind": "Output"
+      }
+    ],
+    "links": [
+      {
+        "from": 1,
+        "to": 3,
+        "input": 0
+      },
+      {
+        "from": 2,
+        "to": 3,
+        "input": 1
+      },
+      {
+        "from": 2,
+        "to": 3,
+        "input": 3
+      }
+    ]
+  }
+}
