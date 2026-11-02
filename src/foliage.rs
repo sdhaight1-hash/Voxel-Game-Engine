@@ -176,6 +176,12 @@ impl FoliageProject {
         if self.branch_length * self.height * self.overall_scale / self.voxel_size > 70.0 {
             return Err("Branch reach exceeds 70 cells: increase voxel size or reduce branch length".into());
         }
+        if self.leaf_scale * self.overall_scale * 2.3 / self.voxel_size > 12.0 {
+            return Err("Leaf clusters exceed 12 cells in radius: increase voxel size or reduce leaf scale".into());
+        }
+        if self.trunk_radius * self.overall_scale / self.voxel_size > 8.0 {
+            return Err("Trunk exceeds 8 cells in radius: increase voxel size or reduce trunk width".into());
+        }
         Ok(())
     }
 
@@ -257,6 +263,9 @@ impl FoliageProject {
                 paint_leaf_cluster(&mut cells, self.shape, s, center, r, rz,
                     self.leaf_density, self.leaf_variation, self.leaf_angle,
                     self.seed, i * 2 + cluster as u32);
+            }
+            if cells.len() > 40_000 {
+                return Err("Voxel tree exceeds 40,000 blocks: increase voxel size or reduce canopy size".into());
             }
         }
         if cells.len() > 40_000 {
@@ -639,6 +648,11 @@ mod tests {
         tree.overall_scale = 5.0;
         assert!(tree.validate().is_err());
         tree.voxel_size = f32::NAN;
+        assert!(tree.validate().is_err());
+        tree.voxel_size = 0.4;
+        tree.overall_scale = 1.0;
+        tree.leaf_scale = 1.5;
+        tree.voxel_size = 0.1;
         assert!(tree.validate().is_err());
     }
 }
