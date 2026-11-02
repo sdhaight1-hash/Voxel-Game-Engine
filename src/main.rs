@@ -903,6 +903,41 @@ fn make_sphere_preview(graph: &Graph, size: u32) -> Result<Vec<u8>, String> {
     Ok(pixels)
 }
 
+#[cfg(test)]
+mod wire_interaction_tests {
+    use super::*;
+
+    fn canvas() -> Rect {
+        Rect::from_min_size(Pos2::ZERO, Vec2::new(1300.0, 900.0))
+    }
+
+    #[test]
+    fn sockets_can_be_hit_after_zoom_and_pan() {
+        let mut app = Studio::default();
+        app.pan = Vec2::new(83.0, -19.0);
+        app.zoom = 0.62;
+        let node = app.graph.node(2).unwrap();
+        let input = socket_input(canvas().min, app.pan, app.zoom, node.position, 0);
+        assert_eq!(app.port_at(canvas(), input), Some(Port::Input(2, 0)));
+        let source = app.graph.node(1).unwrap();
+        let output = socket_output(canvas().min, app.pan, app.zoom, source.position,
+            source.kind.input_count());
+        assert_eq!(app.port_at(canvas(), output), Some(Port::Output(1)));
+    }
+
+    #[test]
+    fn cables_can_be_selected_between_nodes() {
+        let app = Studio::default();
+        let source = app.graph.node(1).unwrap();
+        let target = app.graph.node(2).unwrap();
+        let start = socket_output(canvas().min, app.pan, app.zoom,
+            source.position, source.kind.input_count());
+        let end = socket_input(canvas().min, app.pan, app.zoom, target.position, 0);
+        let midpoint = wire_bezier(start, end, 0.5);
+        assert_eq!(app.cable_at(canvas(), midpoint), Some((2, 0, 1)));
+    }
+}
+
 fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
