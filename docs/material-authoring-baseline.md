@@ -29,6 +29,19 @@ at commit `3d5ad3f2f9a3ac04601c0273cf664e79b877a7f4`.
 | Warped seeded noise | 256 | 87.842 | 87.723 | `49b63f4a4bf09932` |
 | Warped seeded noise | 512 | 350.990 | 360.585 | `147c1e5d52f40f19` |
 
+### Patterned roughness baseline (correctly labeled follow-up)
+
+Source: [Rust CI run 41509233622](https://github.com/sdhaight1-hash/Voxel-Game-Engine/actions/runs/41509233622), commit `78f9a083e4a377b6ff9121a685b8645ba8ff3e11`. All engine/desktop/integration tests and the benchmark passed.
+
+| Graph output | px² | Run 0 (ms) | Run 1 (ms) | RGBA FNV-1a 64-bit |
+| --- | ---: | ---: | ---: | --- |
+| Legacy 2×2 checker **roughness** | 256 | 11.370 | 11.340 | `1ce3545ecc0e2325` |
+| Legacy 2×2 checker roughness | 512 | 45.142 | 45.014 | `b137934da3d22325` |
+| Legacy 2×2 checker roughness | 1024 | 179.647 | 179.658 | `6a57fe8902e22325` |
+| Legacy 2×2 checker roughness | 2048 | 718.495 | 719.191 | `00a0a3767f222325` |
+
+The same fixture now has frozen correctness hashes for both albedo and roughness at all four resolutions. Treat run-to-run timings as observations, **not a guaranteed speedup or benchmark target**.
+
 The first run's `legacy_checker` log label was incorrect: it measured **albedo**
 (channel 0), which is the constant-color input of the frozen legacy graph.
 Commit `4d6f1fe` corrects the name to `legacy_color` and separately measures
@@ -43,7 +56,7 @@ be confused with the reference table above.
 - `tests/fixtures/legacy_asset_v1.json`: frozen old-style editable Asset with
   independent `material_graph` (which must not be stripped during migration).
 - `tests/material_legacy_regression.rs`: fixed FNV-1a pixel snapshots
-  (4×4 across four channels; plus verified 256/512/1024/2048 albedo), legacy
+  (4×4 across four channels; plus verified 256/512/1024/2048 albedo and roughness), legacy
   Foliage/Flora loading, `hexel-game-tree-v1` occupied-cell ownership,
   serialization roundtrips and warp/coordinate sampling equivalence.
 - Existing engine tests still validate the 1,039 material presets and all 43 Flora
