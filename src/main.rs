@@ -2,7 +2,7 @@ mod gpu_renderer;
 use std::sync::Arc;
 use gpu_renderer::{GpuViewport, Scene as GpuScene};
 use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, TextureHandle, Vec2};
-use std::{collections::HashMap, path::{Path, PathBuf}};
+use std::{collections::HashMap, path::{Path, PathBuf}, time::Instant};
 use texture_studio::{Graph, NodeKind, LibraryNode, VoxelShape, SideMapping};
 use texture_studio::presets::{builtin_presets, Preset};
 use texture_studio::foliage::{FoliageProject, FoliageMesh, FoliageStage, PlantPreset, Material,
@@ -220,7 +220,33 @@ struct WireGesture {
     dragging: bool,
 }
 
+/// Counts actual editor preview operations, not export-time or background work.
+#[derive(Default)]
+struct AuthoringMetrics {
+    leaf_bake_attempts: u64,
+    bark_bake_attempts: u64,
+    foliage_generations: u64,
+    asset_mesh_builds: u64,
+    foliage_scene_builds: u64,
+    asset_scene_builds: u64,
+}
+
+impl AuthoringMetrics {
+    fn report(&self, event: &str, elapsed: std::time::Duration, ok: bool) {
+        if std::env::var_os("VOXEL_PROFILE_MATERIALS").is_some() {
+            eprintln!(
+                "[material-profile] event={event} ok={ok} cpu_ms={:.3} leaf_bakes={} bark_bakes={} foliage_generations={} asset_mesh_builds={} foliage_scene_builds={} asset_scene_builds={}",
+                elapsed.as_secs_f64() * 1000.0,
+                self.leaf_bake_attempts, self.bark_bake_attempts,
+                self.foliage_generations, self.asset_mesh_builds,
+                self.foliage_scene_builds, self.asset_scene_builds,
+            );
+        }
+    }
+}
+
 struct Studio {
+    metrics: AuthoringMetrics,
     gpu: Option<GpuViewport>,
     foliage_gpu_scene: Option<Arc<GpuScene>>,
     asset_gpu_scene: Option<Arc<GpuScene>>,
@@ -286,6 +312,7 @@ struct Studio {
 impl Default for Studio {
     fn default() -> Self {
         Self {
+            metrics: AuthoringMetrics::default(),
             gpu: None,
             foliage_gpu_scene: None,
             asset_gpu_scene: None,
@@ -2262,8 +2289,14 @@ impl eframe::App for Studio {
             self.foliage_mats_dirty=false;
             self.foliage_gpu_scene=None;
             let size=64;
-            match (self.foliage.materials.bake_leaf(size,self.foliage.leaf_color),
-                   self.foliage.materials.bake_bark(size,self.foliage.bark_color)) {
+            let started=Instant::now();
+            let baked=(self.foliage.materials.bake_leaf(size,self.foliage.leaf_color),
+                       self.foliage.materials.bake_bark(size,self.foliage.bark_color));
+            self.metrics.leaf_bake_attempts+=1;
+            self.metrics.bark_bake_attempts+=1;
+            self.metrics.report("foliage_material_bake",started.elapsed(),
+                baked.0.is_ok() && baked.1.is_ok());
+            match baked {
                 (Ok(leaves),Ok(bark))=>{
                     self.foliage_leaf_pixels=leaves.clone();
                     self.foliage_bark_pixels=bark.clone();
@@ -2278,8 +2311,14 @@ impl eframe::App for Studio {
             self.asset_mats_dirty=false;
             self.asset_gpu_scene=None;
             let size=64;
-            match (self.asset.materials.bake_leaf(size,self.asset.leaf_color),
-                   self.asset.materials.bake_bark(size,self.asset.bark_color)) {
+            let started=Instant::now();
+            let baked=(self.asset.materials.bake_leaf(size,self.asset.leaf_color),
+                       self.asset.materials.bake_bark(size,self.asset.bark_color));
+            self.metrics.leaf_bake_attempts+=1;
+            self.metrics.bark_bake_attempts+=1;
+            self.metrics.report("asset_material_bake",started.elapsed(),
+                baked.0.is_ok() && baked.1.is_ok());
+            match baked {
                 (Ok(leaves),Ok(bark))=>{
                     self.asset_leaf_pixels=leaves.clone();
                     self.asset_bark_pixels=bark.clone();
@@ -2293,7 +2332,11 @@ impl eframe::App for Studio {
         }
         if self.library_tab == 3 {
             if self.asset_dirty {
-                match self.asset.mesh() {
+                let started=Instant::now();
+                let result=self.asset.mesh();
+                self.metrics.asset_mesh_builds+=1;
+                self.metrics.report("asset_mesh_build",started.elapsed(),result.is_ok());
+                match result {
                     Ok(mesh) => self.asset_mesh = Some(mesh),
                     Err(e) => { self.asset_mesh = None; self.status = format!("Asset error: {e}"); }
                 }
@@ -2305,20 +2348,28 @@ impl eframe::App for Studio {
                     // Geometry and palette changes reuse the already baked textures.
                     if self.asset_leaf_pixels.len()==64*64*4
                         && self.asset_bark_pixels.len()==64*64*4 {
-                        self.asset_gpu_scene=Some(Arc::new(GpuScene::from_mesh(
+                        let started=Instant::now();
+                        let scene=GpuScene::from_mesh(
                             mesh,&self.asset_bark_pixels,&self.asset_leaf_pixels,
                             self.asset.leaf_color,
                             self.asset.materials.effective_palettes(self.asset.leaf_color)
                                 .gpu_stops(),
                             if self.asset.materials.leaf_species.is_coffee() {2.0}
                             else if self.asset.materials.leaf_species==PlantPreset::CherryBlossom {1.0}
-                            else {0.0})));
+                            else {0.0});
+                        self.metrics.asset_scene_builds+=1;
+                        self.metrics.report("asset_scene_build",started.elapsed(),true);
+                        self.asset_gpu_scene=Some(Arc::new(scene));
                     }
                 }
             }
         } else if self.library_tab == 2 {
             if self.foliage_dirty {
-                match self.foliage.generate() {
+                let started=Instant::now();
+                let result=self.foliage.generate();
+                self.metrics.foliage_generations+=1;
+                self.metrics.report("foliage_generate",started.elapsed(),result.is_ok());
+                match result {
                     Ok(mesh) => self.foliage_mesh = Some(mesh),
                     Err(err) => { self.foliage_mesh = None; self.status = format!("Foliage error: {err}"); }
                 }
@@ -2329,14 +2380,18 @@ impl eframe::App for Studio {
                 if let Some(mesh)=&self.foliage_mesh {
                     if self.foliage_leaf_pixels.len()==64*64*4
                         && self.foliage_bark_pixels.len()==64*64*4 {
-                        self.foliage_gpu_scene=Some(Arc::new(GpuScene::from_mesh(
+                        let started=Instant::now();
+                        let scene=GpuScene::from_mesh(
                             mesh,&self.foliage_bark_pixels,&self.foliage_leaf_pixels,
                             self.foliage.leaf_color,
                             self.foliage.materials.effective_palettes(self.foliage.leaf_color)
                                 .gpu_stops(),
                             if self.foliage.materials.leaf_species.is_coffee() {2.0}
                             else if self.foliage.materials.leaf_species==PlantPreset::CherryBlossom {1.0}
-                            else {0.0})));
+                            else {0.0});
+                        self.metrics.foliage_scene_builds+=1;
+                        self.metrics.report("foliage_scene_build",started.elapsed(),true);
+                        self.foliage_gpu_scene=Some(Arc::new(scene));
                     }
                 }
             }
