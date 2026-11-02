@@ -4,10 +4,16 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
+pub mod voxel;
+pub use voxel::{VoxelSettings, VoxelShape, SideMapping};
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Graph {
     pub nodes: Vec<Node>,
     pub links: Vec<Link>,
+    /// Additive setting: old JSON projects without voxel information still load.
+    #[serde(default)]
+    pub voxel: VoxelSettings,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -84,6 +90,7 @@ impl Default for Graph {
                 Node { id: 2, position: [445.0, 125.0], kind: NodeKind::Output },
             ],
             links: vec![Link { from: 1, to: 2, input: 0 }],
+            voxel: VoxelSettings::default(),
         }
     }
 }
@@ -104,6 +111,7 @@ impl Graph {
                 Link { from: 3, to: 4, input: 1 },
                 Link { from: 1, to: 4, input: 3 },
             ],
+            voxel: VoxelSettings::default(),
         }
     }
 
@@ -516,6 +524,28 @@ mod tests {
         assert!(graph.links.iter().any(|l| l.from == 1 && l.to == 2));
         assert!(graph.links.iter().any(|l| l.from == first && l.to == second));
         graph.validate().unwrap();
+    }
+
+    #[test]
+    fn voxel_shape_settings_survive_project_round_trip() {
+        let mut graph=Graph::default();
+        graph.voxel.shape=VoxelShape::HexPrism;
+        graph.voxel.side_mapping=SideMapping::Repeat;
+        let json=serde_json::to_string(&graph).unwrap();
+        let restored:Graph=serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.voxel.shape,VoxelShape::HexPrism);
+        assert_eq!(restored.voxel.side_mapping,SideMapping::Repeat);
+        restored.validate().unwrap();
+    }
+
+    #[test]
+    fn legacy_graphs_without_voxel_field_still_load() {
+        let graph=Graph::default();
+        let mut value=serde_json::to_value(&graph).unwrap();
+        value.as_object_mut().unwrap().remove("voxel");
+        let loaded:Graph=serde_json::from_value(value).unwrap();
+        assert_eq!(loaded.voxel.shape,VoxelShape::Cube);
+        loaded.validate().unwrap();
     }
 
     #[test]
