@@ -1,10 +1,33 @@
 # Voxel Game Engine — Procedural Voxel Asset Editor
 
-**World-design source of truth:** [Procedural World — Design Decisions v0.2](docs/procedural-world-design-decisions.md). Companion docs: [current synthetic world-generation direction](docs/world-generation-foundation.md) and [archived Tellus/real-Earth research](docs/real-earth-world-generation.md). **The world/gameplay architecture is proposed, not implemented in this repository.**
+**Engine design:** [Procedural World — Design Decisions v0.3](docs/procedural-world-design-decisions.md). See also [Asset-creation subsystems and game integration](docs/asset-creation-subsystems.md), [current synthetic world-generation direction](docs/world-generation-foundation.md) and [archived Tellus research](docs/real-earth-world-generation.md). **The planetary world/gameplay runtime is proposed, not implemented in this repository.**
 
-An offline, standalone **Rust desktop application** for voxel asset creation, procedural tree modeling, and editable PBR material maps. Material Maker inspired, but independently implemented — no Material Maker code is copied and Blender/Godot are not required.
+An offline **Rust desktop asset-authoring application** comprising dedicated subsystems for **Nodes, Presets, Foliage and Assets**. These are **permanent, reusable asset-creation subsystems of the planned greater game engine**, currently presented in one desktop tool—not independent game engines or throwaway prototypes. They create procedural voxel objects, trees and editable material maps. Material Maker inspired, but independently implemented; Blender/Godot are not required.
 
 > **Status: working procedural asset/material editor, planned world engine.** Node-graph materials are computed on CPU; the **Assets** and **Foliage** mesh viewports use the native wgpu renderer described below. The material-preview sphere remains an approximate lit preview, not a full physically based renderer. **No tectonic planet, Terrain Diffusion world, finite hydrology, reactive world runtime or multiplayer game is implemented yet.**
+
+## Asset-creation subsystems in the greater engine
+
+**Architectural direction:** Keep the existing four workspaces as **separate, specialized engine subsystems responsible for creating reusable content**. They remain useful and editable even after the playable world exists.
+
+| Existing subsystem | Authors | Intended game-runtime use |
+|---|---|---|
+| **Nodes** | Procedural materials, tileable surface detail and texture channels | Bake and share visual materials across terrain and objects |
+| **Presets** | Indexed natural-material/appearance recipes | Provide selectable materials; world geology and biomes decide their placement |
+| **Foliage** | Deterministic cube/hexel trees and plants with bark, leaves and wind settings | Produce reusable vegetation definitions; ecology/biome systems choose placement and manage life state |
+| **Assets** | Editable cube/hex-prism objects, models and structures | Publish prefabs/placeable geometry whose player modifications belong to world state |
+
+The **shared authoring preview** (current wgpu-backed Assets/Foliage viewports) is an asset-inspection/rendering facility. It is *not* yet a chunk-streaming game renderer. The underlying geometry, texture baking, UV rules and rendering techniques can be reused without making the authoring UI responsible for gameplay.
+
+**Proposed content handoff (not yet implemented):** editable **source** `Graph` / preset / `FoliageProject` / `VoxelAsset` → **validate, bake and publish** → **versioned, game-ready shared asset library** → world-generation placement, game renderer and authoritative runtime state.
+
+- Shared materials should be baked/cached **once per recipe/variant**, rather than running CPU procedural graphs for each terrain hexel.
+- Gameplay instances reference asset identifiers/versions; a harvested tree or edited structure keeps its **persistent world changes** even if its source is re-exported.
+- The published game data will need stable asset IDs, material bindings, geometry or pinned procedural recipes, and a defined import/versioning contract; these are **design proposals**, not current export features.
+- Existing source JSON, OBJ/MTL and PNG exports stay supported. **OBJ is an exchange mesh, not the authoritative editable hexel asset representation**.
+- The present editor supports **both cubes and hexagonal prisms**; choosing hex-prism geometry for the playable world must not break cube authoring.
+
+See [Asset-creation subsystems and game-runtime integration](docs/asset-creation-subsystems.md) for the current-code inventory, ownership boundaries and minimal integration tests.
 
 ## Planned playable world (design only)
 
@@ -17,7 +40,7 @@ Our current future-world architecture is a **finite, flat-coordinate torus with 
 - **Reactive state proposal:** SpaceTimeDB-inspired authoritative state, controlled/transaction-like mutations, selective region/field invalidations and dynamic spatial interests. **SpaceTimeDB itself is not required**.
 - **Provisional performance/storage plan:** ~31.25 m geographic elevation samples, 16-bit tiled heightmap, Zstd candidate compression and bounded runtime caches. Benchmarks, model conditioning, horizontal metre-per-hexel scale, and final fluid solver are open.
 
-**Important:** These are design decisions and candidates, **not currently shipping features**. See [the full decision register](docs/procedural-world-design-decisions.md) for agreed versus provisional choices, tests and unresolved issues. Existing material and foliage export workflows below remain unchanged.
+**Important:** The playable world features are design decisions and candidates, **not currently shipping features**. The **asset-creation subsystems above are already implemented** in the desktop editor, while their game-ready publishing pipeline is still proposed. See [the full decision register](docs/procedural-world-design-decisions.md) for agreed versus provisional choices, tests and unresolved issues. Existing material and foliage export workflows below remain unchanged.
 
 ## Screenshot-inspired workspace
 
