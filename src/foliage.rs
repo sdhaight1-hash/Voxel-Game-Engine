@@ -1410,12 +1410,13 @@ mod tests {
                 assert!(wood.contains(&b.root),"{preset:?}: missing branch root");
                 assert!(wood.contains(&b.tip),"{preset:?}: missing branch tip");
             }
+            let all:BTreeSet<_>=tree.cells.iter().map(|c|c.cell).collect();
             let mut reachable=wood.clone();
             let mut queue:VecDeque<_>=wood.into_iter().collect();
             while let Some(pos)=queue.pop_front() {
                 for d in NEIGHBORS {
                     let n=[pos[0]+d[0],pos[1]+d[1],pos[2]+d[2]];
-                    if tree.cells.iter().any(|c|c.cell==n) && reachable.insert(n) {
+                    if all.contains(&n) && reachable.insert(n) {
                         queue.push_back(n);
                     }
                 }
