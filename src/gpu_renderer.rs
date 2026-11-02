@@ -411,6 +411,19 @@ mod tests {
     use texture_studio::foliage::{FoliageMesh,VoxelCell,Material};
     use texture_studio::VoxelShape;
     #[test]
+    fn wgsl_shader_parses_and_passes_naga_validation() {
+        let source=include_str!("voxel_gpu.wgsl");
+        let module=naga::front::wgsl::parse_str(source)
+            .unwrap_or_else(|e|panic!("WGSL parse error: {}",e.emit_to_string(source)));
+        naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::all(),
+        ).validate(&module).expect("WGSL shader validation failed");
+        assert!(module.entry_points.iter().any(|e|e.name=="vs_main"));
+        assert!(module.entry_points.iter().any(|e|e.name=="fs_main"));
+    }
+
+    #[test]
     fn gpu_vertices_keep_uv_and_leaf_wind_weights() {
         let mesh=FoliageMesh::from_voxels(VoxelShape::Cube,0.5,vec![
             VoxelCell{x:0,y:0,z:0,material:Material::Bark},
