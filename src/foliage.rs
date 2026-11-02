@@ -138,17 +138,15 @@ pub fn sway_leaf_vertex(point:[f32;3], cell:[i32;3], weight:f32,
     let shift=(phase.sin()+0.3*(phase*0.6).cos())*settings.wind_strength*size*weight;
     [point[0]+shift,point[1]+shift*0.45,point[2]]
 }
-fn default_voxel_size() -> f32 { 0.4 }
-fn default_shape() -> VoxelShape { VoxelShape::Cube }
+/// Game foliage consists only of standard 1m hexagonal-prism cells:
+/// one metre across opposite flats, and one metre vertically.
+pub const self.voxel_size: f32 = 1.0;
 
-/// World hexels measure 1m across opposite flats and 1m vertically.
-pub const WORLD_HEXEL_SIZE_METRES: f32 = 1.0;
-
-/// Classic growth preserves older foliage-project appearances.
+/// Artist-selectable shape variation for standard-grid trees.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum BranchGrowth {
-    #[default]
     Classic,
+    #[default]
     /// Seeded canopy targets steer branch tips (limited space-colonization inspiration).
     CanopyGuided,
 }
@@ -177,10 +175,6 @@ pub struct FoliageProject {
     pub leaf_variation: f32,
     pub bark_color: [u8; 3],
     pub leaf_color: [u8; 3],
-    #[serde(default = "default_shape")]
-    pub shape: VoxelShape,
-    #[serde(default = "default_voxel_size")]
-    pub voxel_size: f32,
     #[serde(default)]
     pub leaf_render: LeafRenderSettings,
     #[serde(default)]
@@ -253,11 +247,10 @@ impl FoliageProject {
             };
         Self {
             preset, seed: 42, height, trunk_radius: radius, branch_count: branches,
-            branch_length, branch_growth: BranchGrowth::Classic, carve_bottom: 0.15, carve_top: 0.02,
+            branch_length, branch_growth: BranchGrowth::CanopyGuided, carve_bottom: 0.15, carve_top: 0.02,
             gravity, phototropism: 0.15, slope: 0.0, overall_scale: 1.0, prune: 0.0,
             leaf_density: density, leaf_scale, leaf_angle: 0.12, leaf_variation: 0.32,
             bark_color: bark, leaf_color: leaves,
-            shape: VoxelShape::Cube, voxel_size: default_voxel_size(),
             leaf_render: LeafRenderSettings::default(),
             materials: FoliageMaterials::for_species(preset),
         }
@@ -265,6 +258,9 @@ impl FoliageProject {
 
     pub fn validate(&self) -> Result<(), String> {
         self.leaf_render.validate()?;
+        if self.leaf_render.geometry != LeafGeometry::CrossedCutout {
+            return Err("Game foliage requires logical leaf cells with textured cutout cards".into());
+        }
         self.materials.validate()?;
         for (name, x, min, max) in [
             ("height", self.height, 0.5, 30.0),
@@ -281,7 +277,6 @@ impl FoliageProject {
             ("leaf scale", self.leaf_scale, 0.02, 1.5),
             ("leaf angle", self.leaf_angle, -1.0, 1.0),
             ("leaf variation", self.leaf_variation, 0.0, 1.0),
-            ("voxel size", self.voxel_size, 0.1, 1.5),
         ] {
             if !x.is_finite() || x < min || x > max {
                 return Err(format!("{name} must be between {min} and {max}"));
@@ -294,36 +289,29 @@ impl FoliageProject {
             return Err("Branch count must be 1..90".into());
         }
         // Bounded volume makes every change predictable in the immediate-mode UI.
-        if self.height * self.overall_scale / self.voxel_size > 96.0 {
-            return Err("Tree exceeds 96 voxel levels: increase voxel size or reduce height/scale".into());
+        if self.height * self.overall_scale / WORLD_HEXEL_SIZE_METRES > 96.0 {
+            return Err("Tree exceeds 96 voxel levels: reduce height or overall scale".into());
         }
-        if self.branch_length * self.height * self.overall_scale / self.voxel_size > 70.0 {
-            return Err("Branch reach exceeds 70 cells: increase voxel size or reduce branch length".into());
+        if self.branch_length * self.height * self.overall_scale / WORLD_HEXEL_SIZE_METRES > 70.0 {
+            return Err("Branch reach exceeds 70 cells: reduce branch length or overall scale".into());
         }
-        if self.leaf_scale * self.overall_scale * 2.3 / self.voxel_size > 12.0 {
-            return Err("Leaf clusters exceed 12 cells in radius: increase voxel size or reduce leaf scale".into());
+        if self.leaf_scale * self.overall_scale * 2.3 / WORLD_HEXEL_SIZE_METRES > 12.0 {
+            return Err("Leaf clusters exceed 12 cells in radius: reduce leaf scale or overall scale".into());
         }
-        if self.trunk_radius * self.overall_scale / self.voxel_size > 8.0 {
-            return Err("Trunk exceeds 8 cells in radius: increase voxel size or reduce trunk width".into());
+        if self.trunk_radius * self.overall_scale / WORLD_HEXEL_SIZE_METRES > 8.0 {
+            return Err("Trunk exceeds 8 cells in radius: reduce trunk width or overall scale".into());
         }
         Ok(())
     }
 
-    /// Generate 1m solid hexel wood plus textured-card foliage cells.
-    /// Does not alter the editable source project's grid or leaf settings.
-    pub fn generate_world_hexels(&self) -> Result<FoliageMesh, String> {
-        let mut world = self.clone();
-        world.shape = VoxelShape::HexPrism;
-        world.voxel_size = WORLD_HEXEL_SIZE_METRES;
-        world.leaf_render.geometry = LeafGeometry::CrossedCutout;
-        world.generate()
-    }
-
+    /// All foliage is directly authored on the game's 1m Q/R/Z hexel grid.
+    /// Each wood or leaf entry is a real removable world-cell definition.
     /// Generate discrete occupied cells, then surface-triangulate exposed faces only.
     pub fn generate(&self) -> Result<FoliageMesh, String> {
         self.validate()?;
         let mut cells: BTreeMap<[i32; 3], Material> = BTreeMap::new();
-        let s = self.voxel_size;
+        let s = WORLD_HEXEL_SIZE_METRES;
+        let shape = VoxelShape::HexPrism;
         let h = self.height * self.overall_scale;
         let trunk = |t: f32| -> [f32; 3] {
             [t * t * self.slope * h * 0.32,
@@ -336,7 +324,7 @@ impl FoliageProject {
             let p = trunk(t);
             let radius = (self.trunk_radius * self.overall_scale *
                 (1.0 - t * 0.80)).max(s * 0.20);
-            paint_sphere(&mut cells, self.shape, s, p, radius, Material::Bark);
+            paint_sphere(&mut cells, shape, s, p, radius, Material::Bark);
         }
         let mut targets = Vec::new();
         if self.branch_growth == BranchGrowth::CanopyGuided {
@@ -390,8 +378,8 @@ impl FoliageProject {
             let mid = lerp3(base, tip, 0.56);
             let thickness = (self.trunk_radius * self.overall_scale *
                 (0.28 + 0.25 * (1.0 - t))).max(s * 0.17);
-            paint_line(&mut cells, self.shape, s, base, mid, thickness, Material::Bark);
-            paint_line(&mut cells, self.shape, s, mid, tip, s * 0.18, Material::Bark);
+            paint_line(&mut cells, shape, s, base, mid, thickness, Material::Bark);
+            paint_line(&mut cells, shape, s, mid, tip, s * 0.18, Material::Bark);
             let fork_angle = angle + (rand(4) - 0.5) * 1.6;
             let fork_reach = reach * (0.28 + 0.2 * rand(5));
             let fork = [
@@ -400,7 +388,7 @@ impl FoliageProject {
                 (mid[2] + fork_reach *
                     (0.32 + self.phototropism * 0.26 - self.gravity * 0.65)).max(s * 0.5),
             ];
-            paint_line(&mut cells, self.shape, s, mid, fork, s * 0.17, Material::Bark);
+            paint_line(&mut cells, shape, s, mid, fork, s * 0.17, Material::Bark);
             if self.leaf_density == 0.0 { continue; }
             // Clusters are solid, jittered voxel ellipsoids. Pine uses narrower
             // growth, willow hangs down; each voxel stores its leaf variation.
@@ -421,7 +409,7 @@ impl FoliageProject {
                 };
                 let center = [location[0], location[1],
                     (location[2] + offset_z).max(s * 0.5)];
-                paint_leaf_cluster(&mut cells, self.shape, s, center, r, rz,
+                paint_leaf_cluster(&mut cells, shape, s, center, r, rz,
                     self.leaf_density, self.leaf_variation, self.leaf_angle,
                     self.seed, i * 2 + cluster as u32);
             }
@@ -435,8 +423,8 @@ impl FoliageProject {
         let voxels = cells.iter().map(|(pos, material)| VoxelCell {
             x: pos[0], y: pos[1], z: pos[2], material: *material,
         }).collect();
-        let triangles = surface_triangles(&cells, self.shape, s, self.leaf_render);
-        Ok(FoliageMesh { voxels, triangles, shape: self.shape,
+        let triangles = surface_triangles(&cells, shape, s, self.leaf_render);
+        Ok(FoliageMesh { voxels, triangles, shape: shape,
             voxel_size: s, height: h, leaf_render: self.leaf_render })
     }
 }
@@ -850,20 +838,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn all_six_species_create_bark_and_leaf_voxels() {
+    fn all_species_generate_1m_hexel_wood_and_card_foliage() {
         for preset in PlantPreset::ALL {
-            for shape in [VoxelShape::Cube, VoxelShape::HexPrism] {
-                let mut tree = FoliageProject::from_preset(preset);
-                tree.shape = shape;
-                let mesh = tree.generate().unwrap();
-                assert!(mesh.voxel_count() > 50, "{preset:?} {shape:?}");
-                assert!(mesh.voxels.iter().any(|c| c.material == Material::Bark));
-                assert!(mesh.voxels.iter().any(|c| c.material != Material::Bark));
-                let unique: std::collections::HashSet<_> =
-                    mesh.voxels.iter().map(|v| (v.x, v.y, v.z)).collect();
-                assert_eq!(unique.len(), mesh.voxel_count());
-                assert!(mesh.triangle_count() > 0);
-            }
+            let tree = FoliageProject::from_preset(preset);
+            let mesh = tree.generate().unwrap();
+            assert_eq!(mesh.shape, VoxelShape::HexPrism, "{preset:?}");
+            assert_eq!(mesh.voxel_size, WORLD_HEXEL_SIZE_METRES);
+            assert_eq!(mesh.leaf_render.geometry, LeafGeometry::CrossedCutout);
+            assert!(mesh.voxel_count() > 4, "{preset:?}");
+            assert!(mesh.voxels.iter().any(|c| c.material.is_wood()));
+            assert!(mesh.voxels.iter().any(|c| c.material.is_foliage()));
+            let unique: std::collections::HashSet<_> =
+                mesh.voxels.iter().map(|v| (v.x, v.y, v.z)).collect();
+            assert_eq!(unique.len(), mesh.voxel_count());
+            assert!(mesh.triangle_count() > 0);
         }
     }
 
@@ -1002,13 +990,9 @@ mod tests {
     }
 
     #[test]
-    fn world_hexels_are_one_metre_and_keep_harvestable_leaf_cards() {
-        let mut project = FoliageProject::from_preset(PlantPreset::Oak);
-        project.shape = VoxelShape::Cube;
-        project.voxel_size = 0.4;
-        project.leaf_render.geometry = LeafGeometry::SolidVoxel;
-        let world = project.generate_world_hexels().unwrap();
-        assert_eq!(project.shape, VoxelShape::Cube);
+    fn game_hexels_are_one_metre_with_textured_harvestable_leaf_cells() {
+        let project = FoliageProject::from_preset(PlantPreset::Oak);
+        let world = project.generate().unwrap();
         assert_eq!(world.shape, VoxelShape::HexPrism);
         assert_eq!(world.voxel_size, WORLD_HEXEL_SIZE_METRES);
         assert_eq!(world.leaf_render.geometry, LeafGeometry::CrossedCutout);
@@ -1021,16 +1005,17 @@ mod tests {
         let a = grid_position(VoxelShape::HexPrism, 1.0, [0, 0, 0]);
         let b = grid_position(VoxelShape::HexPrism, 1.0, [1, 0, 0]);
         assert!((b[0] - a[0] - 1.0).abs() < 1e-5);
-        assert_eq!(a[2], b[2]);
+        let above = grid_position(VoxelShape::HexPrism, 1.0, [0, 0, 1]);
+        assert!((above[2] - a[2] - 1.0).abs() < 1e-5);
     }
 
     #[test]
     fn canopy_guidance_changes_branches_but_remains_deterministic() {
         let mut project = FoliageProject::from_preset(PlantPreset::Oak);
-        let classic = project.generate_world_hexels().unwrap();
+        let classic = project.generate().unwrap();
         project.branch_growth = BranchGrowth::CanopyGuided;
-        let first = project.generate_world_hexels().unwrap();
-        let again = project.generate_world_hexels().unwrap();
+        let first = project.generate().unwrap();
+        let again = project.generate().unwrap();
         assert_eq!(first.voxels, again.voxels);
         assert_ne!(classic.voxels, first.voxels);
     }
@@ -1040,7 +1025,7 @@ mod tests {
         for growth in [BranchGrowth::Classic, BranchGrowth::CanopyGuided] {
             let mut project = FoliageProject::from_preset(PlantPreset::Oak);
             project.branch_growth = growth;
-            let tree = project.generate_world_hexels().unwrap();
+            let tree = project.generate().unwrap();
             let wood: std::collections::HashSet<_> = tree.voxels.iter()
                 .filter(|v| v.material.is_wood())
                 .map(|v| [v.x, v.y, v.z]).collect();
@@ -1067,32 +1052,25 @@ mod tests {
     }
 
     #[test]
-    fn old_foliage_projects_load_with_default_voxel_grid_settings() {
-        let mut old = serde_json::to_value(FoliageProject::default()).unwrap();
-        let value = old.as_object_mut().unwrap();
-        value.remove("shape");
-        value.remove("voxel_size");
-        value.remove("branch_growth");
-        value.insert("radial_segments".into(),serde_json::json!(6));
-        let loaded: FoliageProject = serde_json::from_value(old).unwrap();
-        assert_eq!(loaded.shape,VoxelShape::Cube);
-        assert_eq!(loaded.voxel_size,0.4);
-        assert_eq!(loaded.branch_growth, BranchGrowth::Classic);
-        loaded.generate().unwrap();
+    fn game_foliage_rejects_solid_leaf_meshes() {
+        let mut project = FoliageProject::default();
+        project.leaf_render.geometry = LeafGeometry::SolidVoxel;
+        assert!(project.validate().is_err());
     }
 
     #[test]
-    fn oversized_and_invalid_resolution_are_rejected() {
+    fn oversized_and_invalid_game_tree_settings_are_rejected() {
         let mut tree = FoliageProject::default();
-        tree.voxel_size = 0.1;
+        tree.height = f32::NAN;
+        assert!(tree.validate().is_err());
+        tree.height = 30.0;
         tree.overall_scale = 5.0;
         assert!(tree.validate().is_err());
-        tree.voxel_size = f32::NAN;
-        assert!(tree.validate().is_err());
-        tree.voxel_size = 0.4;
         tree.overall_scale = 1.0;
+        tree.height = 7.0;
         tree.leaf_scale = 1.5;
-        tree.voxel_size = 0.1;
+        tree.overall_scale = 5.0;
         assert!(tree.validate().is_err());
     }
+
 }
