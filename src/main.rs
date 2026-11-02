@@ -2,7 +2,8 @@ use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, Str
 use std::{collections::HashMap, path::{Path, PathBuf}};
 use texture_studio::{Graph, NodeKind, LibraryNode, VoxelShape, SideMapping};
 use texture_studio::presets::{builtin_presets, Preset};
-use texture_studio::foliage::{FoliageProject, FoliageMesh, FoliageStage, PlantPreset, Material};
+use texture_studio::foliage::{FoliageProject, FoliageMesh, FoliageStage, PlantPreset, Material,
+    LeafGeometry, leaf_cutout_rgba, leaf_opacity_rgba, sway_leaf_vertex, LEAF_TEXTURE_SIZE};
 use texture_studio::asset::VoxelAsset;
 use texture_studio::voxel::{render_atlas, render_voxel_preview, export_obj};
 
@@ -44,6 +45,7 @@ struct Studio {
     foliage_dirty: bool,
     foliage_stage: FoliageStage,
     foliage_yaw: f32,
+    leaf_texture: Option<TextureHandle>,
     asset: VoxelAsset,
     asset_mesh: Option<FoliageMesh>,
     asset_dirty: bool,
@@ -91,6 +93,7 @@ impl Default for Studio {
             foliage_dirty: true,
             foliage_stage: FoliageStage::PresetLoader,
             foliage_yaw: 0.8,
+            leaf_texture: None,
             asset: VoxelAsset::default(),
             asset_mesh: None,
             asset_dirty: true,
@@ -459,7 +462,8 @@ impl Studio {
     fn export_asset(&mut self) {
         let Some(folder) = rfd::FileDialog::new().pick_folder() else { return; };
         let result: Result<(),String> = (|| {
-            let names = ["asset.voxelasset.json", "asset.obj", "asset.mtl"];
+            let names = ["asset.voxelasset.json", "asset.obj", "asset.mtl",
+                "foliage-leaves.png", "foliage-leaves-alpha.png"];
             for name in names {
                 if folder.join(name).exists() {
                     return Err(format!("{name} already exists — choose an empty folder"));
@@ -472,6 +476,12 @@ impl Studio {
             ];
             for (name, contents) in files {
                 std::fs::write(folder.join(name), contents).map_err(|e|e.to_string())?;
+            }
+            if self.asset.leaf_render.geometry==LeafGeometry::CrossedCutout {
+                save_png_rect(&folder.join("foliage-leaves.png"),
+                    LEAF_TEXTURE_SIZE as u32, LEAF_TEXTURE_SIZE as u32, &leaf_cutout_rgba())?;
+                save_png_rect(&folder.join("foliage-leaves-alpha.png"),
+                    LEAF_TEXTURE_SIZE as u32, LEAF_TEXTURE_SIZE as u32, &leaf_opacity_rgba())?;
             }
             Ok(())
         })();
@@ -540,6 +550,28 @@ impl Studio {
         ] {
             ui.selectable_value(&mut self.asset_material,material,label);
         }
+        ui.separator();
+        ui.label("Foliage cell mesh");
+        let mut render=self.asset.leaf_render;
+        let mut render_changed=false;
+        egui::ComboBox::from_id_salt("asset_leaf_style")
+            .selected_text(match render.geometry {
+                LeafGeometry::CrossedCutout=>"Crossed cutout cards",
+                LeafGeometry::SolidVoxel=>"Solid leaf blocks",
+            }).show_ui(ui,|ui|{
+                render_changed |= ui.selectable_value(&mut render.geometry,
+                    LeafGeometry::CrossedCutout,"Crossed foliage cards").changed();
+                render_changed |= ui.selectable_value(&mut render.geometry,
+                    LeafGeometry::SolidVoxel,"Solid voxel leaves").changed();
+            });
+        render_changed |= ui.add(egui::Slider::new(&mut render.wind_strength,
+            0.0..=0.5).text("Wind sway")).changed();
+        render_changed |= ui.add(egui::Slider::new(&mut render.wind_speed,
+            0.0..=5.0).text("Wind speed")).changed();
+        if render_changed {
+            self.edit_asset(|asset|{asset.leaf_render=render;Ok(())});
+        }
+        ui.small("Wind animates the preview; OBJ exports its static base pose.");
         ui.horizontal(|ui| {
             ui.label("Bark"); ui.color_edit_button_srgb(&mut self.asset.bark_color);
         });
@@ -633,7 +665,9 @@ impl Studio {
                 self.status="Material graph loaded; capture it again to update the asset".into();
             }
         }
-        ui.small("The 3D asset preview uses palette colors; PBR texturing remains in Nodes.");
+        ui.small("Cutout foliage is rendered with original alpha-masked cards.");
+        ui.small("Wind sway is preview-only; OBJ is static, JSON retains wind settings.");
+        ui.small("Procedural material nodes remain available in the Nodes tab.");
         });
     }
 
@@ -822,7 +856,8 @@ impl Studio {
     fn export_foliage(&mut self) {
         let Some(folder) = rfd::FileDialog::new().pick_folder() else { return; };
         let result: Result<(),String> = (||{
-            let names=["foliage.voxels.json","foliage.obj","foliage.mtl","foliage.json"];
+            let names=["foliage.voxels.json","foliage.obj","foliage.mtl","foliage.json",
+                "foliage-leaves.png","foliage-leaves-alpha.png"];
             for name in names {
                 if folder.join(name).exists() {
                     return Err(format!("{name} already exists; choose an empty folder"));
@@ -839,6 +874,12 @@ impl Studio {
             ];
             for (name,contents) in files {
                 std::fs::write(folder.join(name),contents).map_err(|e|e.to_string())?;
+            }
+            if self.foliage.leaf_render.geometry==LeafGeometry::CrossedCutout {
+                save_png_rect(&folder.join("foliage-leaves.png"),
+                    LEAF_TEXTURE_SIZE as u32, LEAF_TEXTURE_SIZE as u32, &leaf_cutout_rgba())?;
+                save_png_rect(&folder.join("foliage-leaves-alpha.png"),
+                    LEAF_TEXTURE_SIZE as u32, LEAF_TEXTURE_SIZE as u32, &leaf_opacity_rgba())?;
             }
             Ok(())
         })();
@@ -914,6 +955,23 @@ impl Studio {
                 ui.small("Smaller cells = finer detail and more blocks; internal faces are culled.");
             }
             FoliageStage::FoliagePalette => {
+                ui.label("Leaf cell geometry");
+                egui::ComboBox::from_id_salt("foliage_leaf_mesh")
+                    .selected_text(match tree.leaf_render.geometry {
+                        LeafGeometry::CrossedCutout=>"Crossed cutout cards",
+                        LeafGeometry::SolidVoxel=>"Solid voxel leaves",
+                    })
+                    .show_ui(ui,|ui|{
+                        changed |= ui.selectable_value(&mut tree.leaf_render.geometry,
+                            LeafGeometry::CrossedCutout,"Crossed foliage cards").changed();
+                        changed |= ui.selectable_value(&mut tree.leaf_render.geometry,
+                            LeafGeometry::SolidVoxel,"Solid block leaves").changed();
+                    });
+                changed |= ui.add(egui::Slider::new(&mut tree.leaf_render.wind_strength,
+                    0.0..=0.5).text("Wind sway")).changed();
+                changed |= ui.add(egui::Slider::new(&mut tree.leaf_render.wind_speed,
+                    0.0..=5.0).text("Wind speed")).changed();
+                ui.small("Leaf cell positions remain voxel-anchored; only their visual mesh bends.");
                 ui.label("Bark color");
                 changed |= ui.color_edit_button_srgb(&mut tree.bark_color).changed();
                 ui.label("Leaf color");
@@ -925,7 +983,7 @@ impl Studio {
                 changed |= ui.add(egui::Slider::new(&mut tree.leaf_scale,0.02..=1.5).text("Leaf size")).changed();
                 changed |= ui.add(egui::Slider::new(&mut tree.leaf_angle,-1.0..=1.0).text("Leaf orientation")).changed();
                 changed |= ui.add(egui::Slider::new(&mut tree.leaf_variation,0.0..=1.0).text("Size variation")).changed();
-                ui.small("Grows volumetric leaf voxel clusters around branch tips.");
+                ui.small("Distributes foliage cells; each cell may display crossed, cutout leaf cards.");
             }
             FoliageStage::Output => {
                 if let Some(mesh)=&self.foliage_mesh {
@@ -935,7 +993,7 @@ impl Studio {
                     ui.label(format!("Cell size: {:.2}",mesh.voxel_size));
                     ui.label(format!("Nominal height: {:.1}",mesh.height));
                 }
-                ui.small("Exports each occupied block and material in foliage.voxels.json.");
+                ui.small("Exports occupied foliage cells plus cutout textures, UV OBJ and material masks.");
                 ui.small("Also exports the culled cube/hex surface as OBJ with MTL.");
                 if ui.button("Export voxel tree").clicked() { self.export_foliage(); }
                 if ui.button("Save foliage project").clicked() { self.save_foliage(); }
@@ -1622,6 +1680,13 @@ impl Studio {
 impl eframe::App for Studio {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        if self.leaf_texture.is_none() && (self.library_tab==2 || self.library_tab==3) {
+            let pixels=leaf_cutout_rgba();
+            let image=egui::ColorImage::from_rgba_unmultiplied(
+                [LEAF_TEXTURE_SIZE,LEAF_TEXTURE_SIZE],&pixels);
+            self.leaf_texture=Some(ctx.load_texture(
+                "leaf-cutout",image,egui::TextureOptions::NEAREST));
+        }
         if self.library_tab == 3 {
             if self.asset_dirty {
                 match self.asset.mesh() {
