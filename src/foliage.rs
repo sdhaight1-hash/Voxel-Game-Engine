@@ -935,23 +935,50 @@ impl FoliageProject {
                 }
             }
             if self.leaf_density == 0.0 { continue; }
-            // Foliage clusters are attached to their owning branch tips.
-            // Only card visibility changes; cells stay harvestable.
-            let leaf_tips = [tip, fork];
-            for (cluster, location) in leaf_tips.into_iter().enumerate() {
-                let r = ((self.leaf_scale * self.overall_scale * 2.3)
-                    * (0.75 + 0.5 * rand(6 + cluster as u32))).max(s * 0.82);
+            // Canopy occupancy is a union of overlapping lobes, not two
+            // isolated balls at the branch endpoints. Every new foliage cell
+            // still inherits the source branch's harvestable identity.
+            let broad_crown=matches!(self.preset,
+                PlantPreset::Oak|PlantPreset::Walnut|PlantPreset::Ebony|
+                PlantPreset::Maple|PlantPreset::CrimsonKingMaple|
+                PlantPreset::Mango|PlantPreset::Lychee|
+                PlantPreset::RedApple|PlantPreset::PinkApple|PlantPreset::YellowApple|
+                PlantPreset::Cherry|PlantPreset::Orange);
+            let mut leaf_sites=vec![(tip,major_id),(fork,fork_id)];
+            if broad_crown && i%3==0 {
+                // A second, staggered row of crown lobes fills the gaps
+                // between exposed scaffolding and outer branch tips.
+                leaf_sites.push((lerp3(mid,tip,0.68),major_id));
+                leaf_sites.push((lerp3(mid,fork,0.58),fork_id));
+            }
+            if self.preset==PlantPreset::Willow {
+                // Continuous leaves along the descending shoot give willow
+                // hanging curtains instead of isolated droplets at its tip.
+                for t in [0.26,0.50,0.74] {
+                    leaf_sites.push((lerp3(mid,fork,t),fork_id));
+                }
+            } else if self.preset.is_conifer() && i%2==0 {
+                // Needles also fill the middle of whorled limbs.
+                leaf_sites.push((lerp3(base,tip,0.72),major_id));
+            }
+            for (cluster,(location,owner)) in leaf_sites.into_iter().enumerate() {
+                let base_radius=self.leaf_scale*self.overall_scale*2.3;
+                let lobe_scale=if broad_crown && cluster>=2 {1.18}
+                    else if self.preset==PlantPreset::Willow {0.78}
+                    else {1.0};
+                let r=(base_radius*lobe_scale*
+                    (0.82+0.35*rand(6+cluster as u32))).max(s*0.82);
                 let rz=match self.preset {
                     PlantPreset::Pine|PlantPreset::Larch|PlantPreset::Redwood|
                     PlantPreset::BaldCypress|PlantPreset::MediterraneanCypress=>r*1.75,
-                    PlantPreset::Willow=>r*1.65,
+                    PlantPreset::Willow=>r*1.30,
                     PlantPreset::Birch|PlantPreset::Pear=>r*1.12,
                     PlantPreset::GreenBamboo|PlantPreset::BrownBamboo=>r*1.25,
                     PlantPreset::Shrub|PlantPreset::Pomegranate=>r*0.65,
                     _=>r*0.85,
                 };
                 let offset_z = match self.preset {
-                    PlantPreset::Willow => -0.58 * rz,
+                    PlantPreset::Willow => -0.28 * rz,
                     PlantPreset::Pine|PlantPreset::Larch|PlantPreset::Redwood|
                     PlantPreset::BaldCypress|PlantPreset::MediterraneanCypress =>
                         0.18 * rz,
@@ -962,8 +989,7 @@ impl FoliageProject {
                 let mut cluster_cells=BTreeMap::new();
                 paint_leaf_cluster(&mut cluster_cells,shape,s,center,r,rz,
                     self.leaf_density,self.leaf_variation,self.leaf_angle,
-                    self.seed,i*2+cluster as u32);
-                let owner=if cluster==0 {major_id} else {fork_id};
+                    self.seed,i*8+cluster as u32);
                 for (cell,material) in cluster_cells {
                     if let std::collections::btree_map::Entry::Vacant(entry)=cells.entry(cell) {
                         entry.insert(material);
@@ -973,6 +999,29 @@ impl FoliageProject {
             }
             if cells.len() > 40_000 {
                 return Err("Tree exceeds 40,000 game hexels: reduce size, branching or canopy density".into());
+            }
+        }
+        if cells.len() > 40_000 {
+            return Err("Tree exceeds 40,000 game hexels: reduce size, branching or canopy density".into());
+        }
+        if self.leaf_density>0.0 && matches!(self.preset,
+            PlantPreset::Oak|PlantPreset::Walnut|PlantPreset::Ebony|
+            PlantPreset::Maple|PlantPreset::CrimsonKingMaple|
+            PlantPreset::Mango|PlantPreset::Lychee|
+            PlantPreset::RedApple|PlantPreset::PinkApple|PlantPreset::YellowApple|
+            PlantPreset::Cherry|PlantPreset::Orange) {
+            // Hide the otherwise exposed top of the full-height trunk within
+            // a connected crown cap. No independent decorative leaf objects.
+            let mut crown_cap=BTreeMap::new();
+            let r=(self.leaf_scale*self.overall_scale*2.8).max(s*1.2);
+            paint_leaf_cluster(&mut crown_cap,shape,s,trunk(0.90),r,r*0.78,
+                self.leaf_density,self.leaf_variation,self.leaf_angle,
+                self.seed,self.branch_count*8+1);
+            for (cell,material) in crown_cap {
+                if let std::collections::btree_map::Entry::Vacant(entry)=cells.entry(cell) {
+                    entry.insert(material);
+                    ownership.insert(cell,(TreePart::Foliage,Some(0)));
+                }
             }
         }
         if cells.len() > 40_000 {
