@@ -135,7 +135,33 @@ impl VoxelAsset {
     }
 
     pub fn from_json(text: &str) -> Result<Self, String> {
-        let asset: Self = serde_json::from_str(text).map_err(|e| e.to_string())?;
+        let value: serde_json::Value =
+            serde_json::from_str(text).map_err(|e| e.to_string())?;
+        let asset = if value["format"].as_str() == Some("hexel-game-tree-v1") {
+            if value["shape"].as_str() != Some("HexPrism") ||
+                value["cell_dimensions_m"]["across_flats"].as_f64() != Some(1.0) ||
+                value["cell_dimensions_m"]["height"].as_f64() != Some(1.0) {
+                return Err("Tree asset must use standard 1m hexagonal-prism cells".into());
+            }
+            let project: FoliageProject = serde_json::from_value(value["settings"].clone())
+                .map_err(|e| format!("Tree settings: {e}"))?;
+            project.validate()?;
+            let voxels: Vec<VoxelCell> = serde_json::from_value(value["voxels"].clone())
+                .map_err(|e| format!("Tree cells: {e}"))?;
+            Self {
+                name: format!("{} voxel tree", project.preset.name()),
+                shape: VoxelShape::HexPrism,
+                voxel_size: 1.0,
+                voxels,
+                bark_color: project.bark_color,
+                leaf_color: project.leaf_color,
+                leaf_render: project.leaf_render,
+                materials: project.materials,
+                ..Self::default()
+            }
+        } else {
+            serde_json::from_value(value).map_err(|e| e.to_string())?
+        };
         asset.validate()?;
         Ok(asset)
     }
@@ -225,6 +251,20 @@ mod tests {
         asset.voxel_size = 0.5;
         asset.name = " ".into();
         assert!(asset.to_json().is_err());
+    }
+
+    #[test]
+    fn game_tree_export_imports_into_editable_hexel_asset() {
+        let project = FoliageProject::from_preset(PlantPreset::Oak);
+        let mesh = project.generate().unwrap();
+        let json = mesh.voxel_json(&project).unwrap();
+        let mut asset = VoxelAsset::from_json(&json).unwrap();
+        assert_eq!(asset.shape, VoxelShape::HexPrism);
+        assert_eq!(asset.voxel_size, 1.0);
+        assert_eq!(asset.voxels.len(), mesh.voxels.len());
+        let cell = asset.voxels[0];
+        assert_eq!(asset.harvest_cell([cell.x, cell.y, cell.z]), Some(cell.material));
+        assert!(VoxelAsset::from_json(&asset.to_json().unwrap()).is_ok());
     }
 
     #[test]
