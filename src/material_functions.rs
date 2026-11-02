@@ -57,7 +57,6 @@ impl MaterialFunctionInstance {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
 /// A nested versioned function replaces an unconnected-input Color
 /// placeholder in a parent graph. Its child Albedo source becomes the
 /// placeholder's outgoing signal when the parent is instantiated.
@@ -67,6 +66,7 @@ pub struct MaterialFunctionCall {
     pub reference:MaterialFunctionInstance,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MaterialFunction {
     pub id:String,
     pub version:u32,
