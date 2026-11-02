@@ -592,6 +592,42 @@ mod tests {
     }
 
     #[test]
+    fn vector_leaf_silhouette_edits_upload_only_leaf_texture_not_geometry_or_palette() {
+        use texture_studio::foliage::PlantPreset;
+        use texture_studio::foliage_materials::FoliageMaterials;
+        use texture_studio::leaf_vector::LeafSilhouetteSource;
+        let mesh=FoliageMesh::from_voxels(VoxelShape::Cube,0.5,vec![
+            VoxelCell{x:0,y:0,z:0,material:Material::Bark},
+        ]).unwrap();
+        let palette=texture_studio::foliage_materials::SeasonalPalettes::default()
+            .gpu_stops();
+        for (species,source) in [
+            (PlantPreset::Willow,LeafSilhouetteSource::VectorWillow{
+                blade_width:1.1,
+            }),
+            (PlantPreset::EasternCottonwood,
+                LeafSilhouetteSource::VectorCottonwood{blade_width:1.1}),
+            (PlantPreset::FremontCottonwood,
+                LeafSilhouetteSource::VectorCottonwood{blade_width:1.1}),
+            (PlantPreset::BlackCottonwood,
+                LeafSilhouetteSource::VectorCottonwood{blade_width:1.1}),
+        ] {
+            let mut materials=FoliageMaterials::for_species(species);
+            let tint=[75,135,65];
+            let bark=materials.bake_bark(64,[91,76,57]).unwrap();
+            let original=materials.bake_leaf(64,tint).unwrap();
+            let before=Scene::from_mesh(&mesh,&bark,&original,tint,palette,0.0);
+            materials.leaf_silhouette=source;
+            let changed=materials.bake_leaf(64,tint).unwrap();
+            assert_ne!(changed,original,"{species:?} needs a different leaf texture");
+            let after=Scene::from_mesh(&mesh,&bark,&changed,tint,palette,0.0);
+            assert_eq!(scene_uploads(Some(&before),&after),SceneUploads {
+                geometry:false,bark:false,leaf:true,palette:false,
+            },"{species:?} should only update leaf pixels");
+        }
+    }
+
+    #[test]
     fn gpu_vertices_keep_uv_and_leaf_wind_weights() {
         let mesh=FoliageMesh::from_voxels(VoxelShape::Cube,0.5,vec![
             VoxelCell{x:0,y:0,z:0,material:Material::Bark},
