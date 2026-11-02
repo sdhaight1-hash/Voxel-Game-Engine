@@ -189,6 +189,55 @@ fn color_ramp_bakes_into_tree_roles_without_replacing_species_palette() {
     assert_eq!(seasonal.bake_leaf(16,[75,138,77]).unwrap(),edited_leaf);
 }
 
+#[test]
+fn sdf_distance_to_mask_supports_legacy_pbr_and_foliage_cutout() {
+    use texture_studio::SdfBoolean;
+    let mut graph=Graph::default();
+    let circle=graph.add_node(NodeKind::SdfCircle{
+        center:[0.5,0.5],radius:0.29,
+    },[30.0,20.0]);
+    let ellipse=graph.add_node(NodeKind::SdfEllipse{
+        center:[0.6,0.5],radii:[0.09,0.12],
+    },[30.0,140.0]);
+    let combine=graph.add_node(NodeKind::SdfCombine{
+        operation:SdfBoolean::Subtract,smoothing:0.01,
+    },[160.0,75.0]);
+    let mask=graph.add_node(NodeKind::SdfToMask{
+        edge_width:0.012,
+    },[310.0,75.0]);
+    graph.connect(circle,combine,0).unwrap();
+    graph.connect(ellipse,combine,1).unwrap();
+    graph.connect(combine,mask,0).unwrap();
+    graph.connect(mask,2,0).unwrap();
+    graph.connect(mask,2,3).unwrap();
+    for size in [64,256,512] {
+        let legacy=graph.render_rgba(size,size).unwrap();
+        let decoded:Graph=serde_json::from_str(
+            &serde_json::to_string(&graph).unwrap()).unwrap();
+        assert_eq!(decoded.render_rgba(size,size).unwrap(),legacy);
+        let (memo,_) = graph.render_channels_memoized_rgba(
+            &[0,3],size,size).unwrap();
+        assert_eq!(memo[0],legacy);
+        assert_eq!(memo[1],legacy);
+        assert_eq!(graph.render_normal_rgba(size,size).unwrap().len(),legacy.len());
+    }
+    let mut materials=FoliageMaterials::default();
+    let baseline=materials.bake_leaf(64,[82,145,73]).unwrap();
+    materials.leaf_opacity=Some(graph.clone());
+    let cutout=materials.bake_leaf(64,[82,145,73]).unwrap();
+    assert!(baseline.chunks_exact(4)
+        .zip(cutout.chunks_exact(4))
+        .all(|(before,after)|after[3]<=before[3]),
+        "SDF opacity must never create new foliage outside species silhouette");
+    assert!(baseline.chunks_exact(4)
+        .zip(cutout.chunks_exact(4))
+        .any(|(before,after)|after[3]<before[3]),
+        "SDF opacity should remove part of the existing leaf card");
+    materials.bark=Some(graph);
+    let baked=materials.bake_bark(64,[100,70,55]).unwrap();
+    assert_eq!(baked.len(),64*64*4);
+}
+
 /// The CI benchmark step runs this alongside the pre-optimization baseline.
 /// It measures repeat-output reuse (not GPU upload or intermediate graph caching).
 #[test]
