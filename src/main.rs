@@ -13,9 +13,22 @@ use texture_studio::foliage::{FoliageProject, FoliageMesh, FoliageStage, PlantPr
     BranchGrowth, LeafGeometry, sway_leaf_vertex};
 use texture_studio::asset::VoxelAsset;
 use texture_studio::flora_prefab::FloraPrefab;
+use texture_studio::material_functions::{MaterialFunction,MaterialFunctionLibrary,
+    MaterialFunctionInstance,FunctionOverride,FunctionParameterKind};
 use texture_studio::foliage_materials::{FoliageMaterials, MaterialRole,
     SeasonalPalettes, MATERIAL_SIZE};
 use texture_studio::voxel::{render_atlas, render_voxel_preview, export_obj};
+
+/// Use the function's authored Noise frequency as the initial override;
+/// selecting or importing a template must not silently change its appearance.
+fn authored_function_noise_scale(function:&MaterialFunction)->Option<u32> {
+    let param=function.parameters.iter().find(|param|
+        param.kind==FunctionParameterKind::NoiseScale)?;
+    match function.graph.node(param.node_id)?.kind {
+        NodeKind::Noise{scale,..}=>Some(scale),
+        _=>None,
+    }
+}
 
 const NODE_W: f32 = 170.0;
 const PREVIEW_SIZE: u32 = 256;
@@ -278,6 +291,11 @@ struct Studio {
     asset_mats_dirty: bool,
     material_role: MaterialRole,
     material_search: String,
+    material_functions: MaterialFunctionLibrary,
+    function_id_input: String,
+    function_version_input: u32,
+    selected_material_function: Option<usize>,
+    function_noise_scale: u32,
     editing_material: Option<(bool,MaterialRole)>,
     asset: VoxelAsset,
     asset_mesh: Option<FoliageMesh>,
@@ -345,6 +363,11 @@ impl Default for Studio {
             asset_mats_dirty: true,
             material_role: MaterialRole::Leaf,
             material_search: String::new(),
+            material_functions: MaterialFunctionLibrary::default(),
+            function_id_input:"shared_bark".into(),
+            function_version_input:1,
+            selected_material_function:None,
+            function_noise_scale:6,
             editing_material: None,
             asset: VoxelAsset::default(),
             asset_mesh: None,
@@ -918,9 +941,11 @@ impl Studio {
             if slot==MaterialRole::Opacity && ui.button("Clear opacity graph").clicked() {
                 if for_asset {
                     self.asset.materials.leaf_opacity=None;
+                    self.asset.materials.opacity_function=None;
                     self.asset_mats_dirty=true;
                 } else {
                     self.foliage.materials.leaf_opacity=None;
+                    self.foliage.materials.opacity_function=None;
                     self.foliage_mats_dirty=true;
                 }
             }
@@ -929,6 +954,131 @@ impl Studio {
             self.foliage.materials=FoliageMaterials::for_species(self.foliage.preset);
             self.foliage_mats_dirty=true;
         }
+        self.material_function_controls(ui,for_asset,slot);
+    }
+
+    fn material_function_controls(&mut self,ui:&mut egui::Ui,
+        for_asset:bool,role:MaterialRole) {
+        ui.collapsing("Reusable material functions",|ui| {
+            ui.small("Save a graph template as JSON, then import and apply it to other species or assets.");
+            ui.small("Each instance stores a resolved graph; edits to a template do not silently rewrite saved trees.");
+            ui.horizontal(|ui| {
+                ui.label("Function ID");
+                ui.text_edit_singleline(&mut self.function_id_input);
+            });
+            ui.add(egui::DragValue::new(&mut self.function_version_input)
+                .range(1..=10000).prefix("Version "));
+            if ui.button("Export selected slot as function…").clicked() {
+                let mat=if for_asset {&self.asset.materials} else {&self.foliage.materials};
+                if let Some(graph)=mat.graph(role).cloned() {
+                    match MaterialFunction::from_graph(self.function_id_input.clone(),
+                        self.function_version_input,graph) {
+                        Err(err)=>self.status=format!("Function error: {err}"),
+                        Ok(function)=> {
+                            if self.material_functions.functions.iter().any(|f|
+                                f.id==function.id && f.version==function.version) {
+                                self.status="That function ID/version is already loaded; increase its version".into();
+                            } else if let Some(path)=rfd::FileDialog::new()
+                                .add_filter("Material function", &["json"])
+                                .set_file_name(format!("{}-v{}.json",
+                                    function.id,function.version)).save_file() {
+                                if path.exists() {
+                                    self.status="Function file exists; choose another filename to preserve old versions".into();
+                                } else {
+                                    let result=serde_json::to_string_pretty(&function)
+                                        .map_err(|e|e.to_string())
+                                        .and_then(|json|std::fs::write(&path,json)
+                                            .map_err(|e|e.to_string()));
+                                    match result {
+                                        Ok(())=>{
+                                            let default_scale=authored_function_noise_scale(&function);
+                                            let index=self.material_functions.insert(function)
+                                                .expect("validated and unique export");
+                                            self.selected_material_function=Some(index);
+                                            if let Some(scale)=default_scale {
+                                                self.function_noise_scale=scale;
+                                            }
+                                            self.status=format!("Saved material function {}",path.display());
+                                        }
+                                        Err(err)=>self.status=format!("Function save failed: {err}"),
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    self.status="Assign or edit a material graph before exporting a function".into();
+                }
+            }
+            if ui.button("Import material function…").clicked() {
+                if let Some(path)=rfd::FileDialog::new()
+                    .add_filter("Material function", &["json"]).pick_file() {
+                    let result=std::fs::read_to_string(&path).map_err(|e|e.to_string())
+                        .and_then(|json|serde_json::from_str::<MaterialFunction>(&json)
+                            .map_err(|e|e.to_string()))
+                        .and_then(|function|self.material_functions.insert(function));
+                    match result {
+                        Ok(index)=>{
+                            self.selected_material_function=Some(index);
+                            if let Some(scale)=self.material_functions.functions.get(index)
+                                .and_then(authored_function_noise_scale) {
+                                self.function_noise_scale=scale;
+                            }
+                            self.status=format!("Imported material function {}",path.display());
+                        }
+                        Err(err)=>self.status=format!("Function import failed: {err}"),
+                    }
+                }
+            }
+            let mut function_selection_changed=false;
+            egui::ComboBox::from_id_salt("material_function_selection")
+                .selected_text(self.selected_material_function
+                    .and_then(|i|self.material_functions.functions.get(i))
+                    .map_or("Select imported function".into(),
+                        |f|format!("{} v{}",f.name,f.version)))
+                .show_ui(ui,|ui|{
+                    for (index,f) in self.material_functions.functions.iter().enumerate() {
+                        function_selection_changed |= ui.selectable_value(
+                            &mut self.selected_material_function,
+                            Some(index),format!("{} v{}",f.name,f.version)).changed();
+                    }
+                });
+            if function_selection_changed {
+                if let Some(scale)=self.selected_material_function
+                    .and_then(|index|self.material_functions.functions.get(index))
+                    .and_then(authored_function_noise_scale) {
+                    self.function_noise_scale=scale;
+                }
+            }
+            if let Some(index)=self.selected_material_function {
+                if let Some(function)=self.material_functions.functions.get(index) {
+                    let frequency=function.parameters.iter().find(|p|
+                        p.kind==FunctionParameterKind::NoiseScale);
+                    if frequency.is_some() {
+                        ui.add(egui::Slider::new(&mut self.function_noise_scale,1..=64)
+                            .text("Instance noise frequency"));
+                    }
+                    if ui.button(format!("Apply to {}",role.name())).clicked() {
+                        let overrides=frequency.map(|p|vec![FunctionOverride{
+                            key:p.key.clone(),value:self.function_noise_scale,
+                        }]).unwrap_or_default();
+                        let reference=MaterialFunctionInstance{
+                            function_id:function.id.clone(),version:function.version,overrides,
+                        };
+                        let materials=if for_asset {&mut self.asset.materials}
+                            else {&mut self.foliage.materials};
+                        match materials.apply_function(role,&self.material_functions,reference) {
+                            Ok(())=>{
+                                if for_asset {self.asset_mats_dirty=true;}
+                                else {self.foliage_mats_dirty=true;}
+                                self.status=format!("Applied versioned function to {}",role.name());
+                            }
+                            Err(err)=>self.status=format!("Function apply failed: {err}"),
+                        }
+                    }
+                }
+            }
+        });
     }
 
     fn apply_edited_material(&mut self) {
@@ -2953,6 +3103,26 @@ mod wire_interaction_tests {
 
     fn canvas() -> Rect {
         Rect::from_min_size(Pos2::ZERO, Vec2::new(1300.0, 900.0))
+    }
+
+    #[test]
+    fn imported_function_frequency_defaults_to_authored_value() {
+        let mut graph=Graph::default();
+        if let NodeKind::Noise{scale,..}=&mut graph.node_mut(1).unwrap().kind {
+            *scale=23;
+        } else {panic!("default graph must expose Noise frequency");}
+        let function=MaterialFunction::from_graph("shared_bark".into(),1,graph)
+            .unwrap();
+        assert_eq!(authored_function_noise_scale(&function),Some(23));
+        let instance=MaterialFunctionInstance {
+            function_id:function.id.clone(),version:1,
+            overrides:vec![FunctionOverride{key:"frequency".into(),value:23}],
+        };
+        let mut library=MaterialFunctionLibrary::default();
+        library.insert(function.clone()).unwrap();
+        let resolved=library.resolve(&instance).unwrap();
+        assert_eq!(resolved.render_rgba(8,8).unwrap(),
+            function.graph.render_rgba(8,8).unwrap());
     }
 
     #[test]
