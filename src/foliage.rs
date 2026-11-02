@@ -13,36 +13,46 @@ use std::f32::consts::TAU;
 pub enum PlantPreset {
     Acacia, Birch, Ebony, Kapok, Maple, CrimsonKingMaple, Oak,
     Purpleheart, Walnut, Willow, CherryBlossom,
+    KentuckyCoffeetree, EasternCottonwood, FremontCottonwood, BlackCottonwood,
     BaldCypress, MediterraneanCypress, Larch, Pine, Redwood,
     RedApple, PinkApple, YellowApple, Pear, Olive, Peach, Cherry,
     Mango, Orange, Lychee, Breadfruit, Pomegranate,
+    ArabicaCoffee, CaturraCoffee, MaragogipeCoffee, CastilloCoffee, TabiCoffee,
     GreenBamboo, BrownBamboo,
     CoconutPalm, DatePalm, FanPalm,
     Shrub,
 }
 
 impl PlantPreset {
-    /// 31 tree varieties and 2 bamboo (original catalog plus Sakura and 3 palms).
-    pub const TREE_CATALOG: [Self; 33] = [
+    /// 40 tree/plant varieties and 2 bamboo, plus a separate shrub.
+    pub const TREE_CATALOG: [Self; 42] = [
         Self::Acacia, Self::Birch, Self::Ebony, Self::Kapok, Self::Maple,
         Self::CrimsonKingMaple, Self::Oak, Self::Purpleheart, Self::Walnut,
-        Self::Willow, Self::CherryBlossom, Self::BaldCypress, Self::MediterraneanCypress,
+        Self::Willow, Self::CherryBlossom, Self::KentuckyCoffeetree,
+        Self::EasternCottonwood, Self::FremontCottonwood, Self::BlackCottonwood,
+        Self::BaldCypress, Self::MediterraneanCypress,
         Self::Larch, Self::Pine, Self::Redwood,
         Self::RedApple, Self::PinkApple, Self::YellowApple, Self::Pear,
         Self::Olive, Self::Peach, Self::Cherry, Self::Mango, Self::Orange,
         Self::Lychee, Self::Breadfruit, Self::Pomegranate,
+        Self::ArabicaCoffee, Self::CaturraCoffee, Self::MaragogipeCoffee,
+        Self::CastilloCoffee, Self::TabiCoffee,
         Self::GreenBamboo, Self::BrownBamboo,
         Self::CoconutPalm, Self::DatePalm, Self::FanPalm,
     ];
     /// Shrub remains a separate non-tree authoring preset.
-    pub const ALL: [Self; 34] = [
+    pub const ALL: [Self; 43] = [
         Self::Acacia, Self::Birch, Self::Ebony, Self::Kapok, Self::Maple,
         Self::CrimsonKingMaple, Self::Oak, Self::Purpleheart, Self::Walnut,
-        Self::Willow, Self::CherryBlossom, Self::BaldCypress, Self::MediterraneanCypress,
+        Self::Willow, Self::CherryBlossom, Self::KentuckyCoffeetree,
+        Self::EasternCottonwood, Self::FremontCottonwood, Self::BlackCottonwood,
+        Self::BaldCypress, Self::MediterraneanCypress,
         Self::Larch, Self::Pine, Self::Redwood,
         Self::RedApple, Self::PinkApple, Self::YellowApple, Self::Pear,
         Self::Olive, Self::Peach, Self::Cherry, Self::Mango, Self::Orange,
         Self::Lychee, Self::Breadfruit, Self::Pomegranate,
+        Self::ArabicaCoffee, Self::CaturraCoffee, Self::MaragogipeCoffee,
+        Self::CastilloCoffee, Self::TabiCoffee,
         Self::GreenBamboo, Self::BrownBamboo,
         Self::CoconutPalm, Self::DatePalm, Self::FanPalm, Self::Shrub,
     ];
@@ -53,6 +63,10 @@ impl PlantPreset {
             Self::CrimsonKingMaple=>"Crimson King Maple", Self::Oak=>"Oak",
             Self::Purpleheart=>"Purpleheart", Self::Walnut=>"Walnut",
             Self::Willow=>"Willow", Self::CherryBlossom=>"Cherry Blossom",
+            Self::KentuckyCoffeetree=>"Kentucky Coffeetree",
+            Self::EasternCottonwood=>"Eastern Cottonwood",
+            Self::FremontCottonwood=>"Fremont Cottonwood",
+            Self::BlackCottonwood=>"Black Cottonwood",
             Self::BaldCypress=>"Bald Cypress",
             Self::MediterraneanCypress=>"Mediterranean Cypress",
             Self::Larch=>"Larch", Self::Pine=>"Pine", Self::Redwood=>"Redwood",
@@ -61,6 +75,9 @@ impl PlantPreset {
             Self::Olive=>"Olive", Self::Peach=>"Peach", Self::Cherry=>"Cherry",
             Self::Mango=>"Mango", Self::Orange=>"Orange", Self::Lychee=>"Lychee",
             Self::Breadfruit=>"Breadfruit", Self::Pomegranate=>"Pomegranate",
+            Self::ArabicaCoffee=>"Arabica Coffee", Self::CaturraCoffee=>"Caturra Coffee",
+            Self::MaragogipeCoffee=>"Maragogipe Coffee",
+            Self::CastilloCoffee=>"Castillo Coffee", Self::TabiCoffee=>"Tabi Coffee",
             Self::GreenBamboo=>"Green Bamboo", Self::BrownBamboo=>"Brown Bamboo",
             Self::CoconutPalm=>"Coconut Palm", Self::DatePalm=>"Date Palm",
             Self::FanPalm=>"Fan Palm",
@@ -71,11 +88,15 @@ impl PlantPreset {
         match self {
             Self::Acacia|Self::Birch|Self::Ebony|Self::Kapok|Self::Maple|
             Self::CrimsonKingMaple|Self::Oak|Self::Purpleheart|Self::Walnut|
-            Self::Willow|Self::CherryBlossom => "Hardwood & broadleaf",
+            Self::Willow|Self::CherryBlossom|Self::KentuckyCoffeetree|
+            Self::EasternCottonwood|Self::FremontCottonwood|
+            Self::BlackCottonwood => "Hardwood & broadleaf",
             Self::BaldCypress|Self::MediterraneanCypress|Self::Larch|
             Self::Pine|Self::Redwood => "Conifer & evergreen",
             Self::GreenBamboo|Self::BrownBamboo => "Bamboo",
             Self::CoconutPalm|Self::DatePalm|Self::FanPalm => "Palms",
+            Self::ArabicaCoffee|Self::CaturraCoffee|Self::MaragogipeCoffee|
+            Self::CastilloCoffee|Self::TabiCoffee => "Coffee plants",
             Self::Shrub => "Other foliage",
             _ => "Fruit trees",
         }
@@ -90,6 +111,11 @@ impl PlantPreset {
             Self::YellowApple=>"Yellow apple",
             Self::GreenBamboo=>"Green bamboo", Self::BrownBamboo=>"Brown bamboo",
             Self::CherryBlossom=>"Cherry", // Reuse the Cherry material recipes.
+            Self::KentuckyCoffeetree=>"Walnut",
+            Self::EasternCottonwood|Self::FremontCottonwood|
+            Self::BlackCottonwood=>"Birch",
+            Self::ArabicaCoffee|Self::CaturraCoffee|Self::MaragogipeCoffee|
+            Self::CastilloCoffee|Self::TabiCoffee=>"Orange",
             Self::CoconutPalm|Self::DatePalm|Self::FanPalm=>"Mango",
             // Reuse available tropical bark/leaf graphs; silhouettes are unique.
             Self::Shrub=>"Oak",
@@ -106,6 +132,14 @@ impl PlantPreset {
     pub fn is_palm(self) -> bool {
         matches!(self,Self::CoconutPalm|Self::DatePalm|Self::FanPalm)
     }
+    pub fn is_coffee(self) -> bool {
+        matches!(self,Self::ArabicaCoffee|Self::CaturraCoffee|
+            Self::MaragogipeCoffee|Self::CastilloCoffee|Self::TabiCoffee)
+    }
+    pub fn is_cottonwood(self) -> bool {
+        matches!(self,Self::EasternCottonwood|Self::FremontCottonwood|
+            Self::BlackCottonwood)
+    }
     /// Visual ripened-fruit color, not a spawned or harvestable fruit block.
     pub fn fruit_color(self) -> Option<[u8;3]> {
         match self {
@@ -116,6 +150,8 @@ impl PlantPreset {
             Self::Olive=>Some([86,99,64]),
             Self::Peach=>Some([245,145,83]),
             Self::Cherry=>Some([173,28,48]),
+            Self::ArabicaCoffee|Self::CaturraCoffee|Self::MaragogipeCoffee|
+            Self::CastilloCoffee|Self::TabiCoffee=>Some([173,35,42]),
             Self::Mango=>Some([238,177,49]),
             Self::Orange=>Some([243,140,31]),
             Self::Lychee=>Some([211,70,72]),
@@ -218,6 +254,19 @@ fn leaf_blade(u:f32,v:f32,cx:f32,cy:f32,dir:[f32;2],
     across.abs()<=width*taper*teeth
 }
 
+/// Broad deltoid Populus blades versus Black Cottonwood's ovate blades.
+fn cottonwood_blade(u:f32,v:f32,cx:f32,cy:f32,rx:f32,ry:f32,ovate:bool)->bool {
+    let dx=(u-cx)/rx;
+    let dy=(v-cy)/ry;
+    if dy.abs()>1.0 {return false;}
+    let width=if ovate {
+        (1.0-dy*dy).max(0.0).sqrt()*(1.0+0.11*dy)
+    } else {
+        (0.06+0.94*((dy+1.0)*0.5).powf(0.68)).min(1.0)
+    };
+    dx.abs()<=width*(1.0+0.06*(dy*29.0).sin().abs())
+}
+
 fn leaf_pixel(species:PlantPreset,u:f32,v:f32)->(bool,bool) {
     // The twig is drawn darker; the second value is the leafy silhouette.
     let twig=leaf_segment(u,v,[0.50,0.90],[0.50,0.14],0.009);
@@ -261,6 +310,22 @@ fn leaf_pixel(species:PlantPreset,u:f32,v:f32)->(bool,bool) {
                 ||leaf_segment(u,v,[0.50,0.55],[0.35,0.49],0.010)
                 ||leaf_segment(u,v,[0.50,0.55],[0.65,0.49],0.010)
         }
+        PlantPreset::KentuckyCoffeetree => {
+            // Twice-compound rachises with paired secondary leaflets.
+            (0..5).any(|i| {
+                let y=0.21+i as f32*0.135;
+                [-1.0_f32,1.0].iter().any(|&side| {
+                    let end=[0.50+side*0.25,y-0.032];
+                    leaf_segment(u,v,[0.50,y],end,0.008)
+                        ||(0..3).any(|j| {
+                            let t=0.27+j as f32*0.30;
+                            let x=0.50+side*0.25*t;
+                            leaf_oval(u,v,x,y-0.032*t-0.027,0.026,0.027)
+                                ||leaf_oval(u,v,x,y-0.032*t+0.025,0.027,0.026)
+                        })
+                })
+            })
+        }
         PlantPreset::Walnut|PlantPreset::Lychee => {
             (0..6).any(|i| {
                 let y=0.23+i as f32*0.108;
@@ -302,6 +367,34 @@ fn leaf_pixel(species:PlantPreset,u:f32,v:f32)->(bool,bool) {
                 leaf_blade(u,v,0.35,y,[-0.85,-0.53],0.15,0.028,false)
                     ||leaf_blade(u,v,0.65,y+0.04,[0.85,-0.53],0.15,0.028,false)
             })
+        }
+        PlantPreset::ArabicaCoffee|PlantPreset::CaturraCoffee|
+        PlantPreset::MaragogipeCoffee|PlantPreset::CastilloCoffee|
+        PlantPreset::TabiCoffee => {
+            // Glossy opposite elliptical Coffea leaves with pointed tips.
+            let large=species==PlantPreset::MaragogipeCoffee;
+            let (length,width)=if large {(0.135,0.067)} else {(0.105,0.050)};
+            (0..4).any(|i| {
+                let y=0.23+i as f32*0.175;
+                leaf_blade(u,v,0.36,y,[-0.62,-0.78],
+                    length,width,false)
+                    ||leaf_blade(u,v,0.64,y,[0.62,-0.78],
+                        length,width,false)
+                    ||leaf_segment(u,v,[0.50,y],[0.36,y],0.006)
+                    ||leaf_segment(u,v,[0.50,y],[0.64,y],0.006)
+            })
+        }
+        PlantPreset::EasternCottonwood|PlantPreset::FremontCottonwood|
+        PlantPreset::BlackCottonwood => {
+            // Eastern/Fremont deltoid blades; Western black cottonwood ovate.
+            let black=species==PlantPreset::BlackCottonwood;
+            let fremont=species==PlantPreset::FremontCottonwood;
+            [[0.35,0.30],[0.67,0.47],[0.34,0.63],[0.66,0.77]]
+                .iter().any(|p| {
+                    cottonwood_blade(u,v,p[0],p[1],
+                        if fremont {0.105} else if black {0.080} else {0.095},
+                        if black {0.125} else {0.099},black)
+                })
         }
         PlantPreset::Ebony|PlantPreset::Mango|PlantPreset::Orange|
         PlantPreset::RedApple|PlantPreset::PinkApple|PlantPreset::YellowApple|
@@ -721,6 +814,10 @@ impl FoliageProject {
                 PlantPreset::Walnut => (15.0,0.77,42,0.57,0.11,0.80,0.77,[94,76,58],[79,125,61]),
                 PlantPreset::Willow => (12.0,0.72,38,0.61,0.80,0.93,0.70,[91,86,61],[91,156,65]),
                 PlantPreset::CherryBlossom => (9.5,0.48,36,0.58,0.05,0.90,0.74,[107,73,65],[91,147,74]),
+                PlantPreset::KentuckyCoffeetree => (23.0,0.91,40,0.55,0.06,0.74,0.78,[91,84,75],[79,139,67]),
+                PlantPreset::EasternCottonwood => (26.0,1.00,54,0.49,0.04,0.84,0.78,[117,108,94],[75,150,67]),
+                PlantPreset::FremontCottonwood => (23.0,0.93,50,0.53,0.05,0.81,0.75,[132,115,96],[99,167,72]),
+                PlantPreset::BlackCottonwood => (28.0,1.08,55,0.41,0.04,0.78,0.70,[104,99,94],[72,127,79]),
                 PlantPreset::BaldCypress => (19.0,0.75,42,0.39,0.05,0.74,0.47,[119,88,64],[90,128,70]),
                 PlantPreset::MediterraneanCypress => (17.0,0.53,42,0.19,0.02,0.91,0.37,[88,71,52],[39,86,58]),
                 PlantPreset::Larch => (17.0,0.55,42,0.44,0.03,0.69,0.42,[112,90,61],[126,157,70]),
@@ -738,6 +835,11 @@ impl FoliageProject {
                 PlantPreset::Lychee => (11.0,0.62,36,0.58,0.04,0.86,0.72,[103,75,58],[65,131,65]),
                 PlantPreset::Breadfruit => (16.0,0.79,40,0.56,0.08,0.85,0.85,[113,80,59],[79,149,71]),
                 PlantPreset::Pomegranate => (6.5,0.36,30,0.62,0.11,0.78,0.57,[100,83,57],[67,139,65]),
+                PlantPreset::ArabicaCoffee => (5.8,0.27,29,0.43,0.02,0.87,0.55,[101,91,75],[42,108,60]),
+                PlantPreset::CaturraCoffee => (3.5,0.21,27,0.43,0.02,0.91,0.54,[104,93,77],[48,119,63]),
+                PlantPreset::MaragogipeCoffee => (7.5,0.35,30,0.47,0.02,0.86,0.74,[107,94,79],[46,114,65]),
+                PlantPreset::CastilloCoffee => (4.3,0.24,30,0.43,0.02,0.92,0.57,[103,91,75],[47,117,63]),
+                PlantPreset::TabiCoffee => (6.8,0.32,32,0.44,0.02,0.87,0.61,[101,89,71],[44,111,62]),
                 PlantPreset::GreenBamboo => (11.0,0.23,15,0.20,0.03,0.72,0.43,[74,151,64],[86,159,63]),
                 PlantPreset::BrownBamboo => (11.0,0.23,15,0.20,0.03,0.72,0.43,[152,121,69],[113,133,65]),
                 PlantPreset::CoconutPalm => (17.0,0.44,18,0.34,0.08,0.88,0.48,[127,107,77],[64,139,69]),
@@ -769,11 +871,19 @@ impl FoliageProject {
                 PlantPreset::Peach=>(0.19,0.08,0.18,0.13,0.27,BranchGrowth::CanopyGuided),
                 PlantPreset::Cherry=>(0.27,0.05,0.20,0.12,0.30,BranchGrowth::CanopyGuided),
                 PlantPreset::CherryBlossom=>(0.39,0.05,0.21,0.13,0.29,BranchGrowth::CanopyGuided),
+                PlantPreset::KentuckyCoffeetree=>(0.38,0.08,0.16,0.12,0.31,BranchGrowth::Classic),
+                PlantPreset::EasternCottonwood=>(0.29,0.06,0.19,0.12,0.31,BranchGrowth::CanopyGuided),
+                PlantPreset::FremontCottonwood=>(0.32,0.07,0.17,0.12,0.29,BranchGrowth::CanopyGuided),
+                PlantPreset::BlackCottonwood=>(0.42,0.06,0.23,0.11,0.29,BranchGrowth::CanopyGuided),
                 PlantPreset::Mango=>(0.32,0.04,0.15,0.12,0.23,BranchGrowth::CanopyGuided),
                 PlantPreset::Orange=>(0.21,0.06,0.12,0.11,0.27,BranchGrowth::CanopyGuided),
                 PlantPreset::Lychee=>(0.30,0.05,0.16,0.11,0.28,BranchGrowth::CanopyGuided),
                 PlantPreset::Breadfruit=>(0.42,0.06,0.21,0.12,0.28,BranchGrowth::CanopyGuided),
                 PlantPreset::Pomegranate=>(0.06,0.07,0.12,0.13,0.30,BranchGrowth::Classic),
+                PlantPreset::ArabicaCoffee|PlantPreset::CaturraCoffee|
+                PlantPreset::MaragogipeCoffee|PlantPreset::CastilloCoffee|
+                PlantPreset::TabiCoffee=>
+                    (0.12,0.08,0.14,0.10,0.22,BranchGrowth::Classic),
                 PlantPreset::GreenBamboo|PlantPreset::BrownBamboo=>
                     (0.53,0.04,0.10,0.08,0.25,BranchGrowth::Classic),
                 PlantPreset::CoconutPalm|PlantPreset::DatePalm|PlantPreset::FanPalm=>
@@ -787,7 +897,12 @@ impl FoliageProject {
             gravity, phototropism, slope: 0.0, overall_scale: 1.0, prune: 0.0,
             leaf_density: density, leaf_scale, leaf_angle, leaf_variation,
             bark_color: bark, leaf_color: leaves,
-            leaf_render: LeafRenderSettings::default(),
+            leaf_render: if preset.is_cottonwood() {
+                // Flattened Populus petioles flutter in wind; visual sway
+                // approximates this without changing the harvestable cells.
+                LeafRenderSettings{wind_strength:0.18,wind_speed:2.0,
+                    ..LeafRenderSettings::default()}
+            } else {LeafRenderSettings::default()},
             materials: FoliageMaterials::for_species(preset),
         }
     }
@@ -893,12 +1008,19 @@ impl FoliageProject {
             PlantPreset::MediterraneanCypress => 0.20+0.24*(1.0-crown_t),
             PlantPreset::Birch|PlantPreset::Pear => 0.66+0.24*(1.0-crown_t),
             PlantPreset::CherryBlossom => 0.63+0.80*crown_t,
+            PlantPreset::KentuckyCoffeetree => 0.73+0.48*(1.0-center*center),
+            PlantPreset::EasternCottonwood => 0.62+0.75*(1.0-center*center),
+            PlantPreset::FremontCottonwood => 0.75+0.65*(1.0-center*center),
+            PlantPreset::BlackCottonwood => 0.44+0.69*(1.0-center*center),
             PlantPreset::Willow => 1.22-0.16*crown_t,
             PlantPreset::Purpleheart|PlantPreset::Mango|PlantPreset::Breadfruit =>
                 0.80+0.46*(1.0-center*center),
             PlantPreset::RedApple|PlantPreset::PinkApple|PlantPreset::YellowApple|
             PlantPreset::Peach|PlantPreset::Cherry|PlantPreset::Orange|
             PlantPreset::Lychee => 0.88+0.31*(1.0-center*center),
+            PlantPreset::ArabicaCoffee|PlantPreset::CaturraCoffee|
+            PlantPreset::MaragogipeCoffee|PlantPreset::CastilloCoffee|
+            PlantPreset::TabiCoffee => 0.73+0.26*(1.0-center*center),
             PlantPreset::Olive|PlantPreset::Pomegranate|PlantPreset::Shrub =>
                 1.14-0.18*crown_t,
             PlantPreset::GreenBamboo|PlantPreset::BrownBamboo =>
@@ -1252,7 +1374,9 @@ impl FoliageProject {
                 PlantPreset::Maple|PlantPreset::CrimsonKingMaple|
                 PlantPreset::Mango|PlantPreset::Lychee|
                 PlantPreset::RedApple|PlantPreset::PinkApple|PlantPreset::YellowApple|
-                PlantPreset::Cherry|PlantPreset::CherryBlossom|PlantPreset::Orange);
+                PlantPreset::Cherry|PlantPreset::CherryBlossom|PlantPreset::Orange|
+                PlantPreset::EasternCottonwood|PlantPreset::FremontCottonwood|
+                PlantPreset::BlackCottonwood);
             let mut leaf_sites=vec![(tip,major_id),(fork,fork_id)];
             if broad_crown && i%3==0 {
                 leaf_sites.push((lerp3(mid,tip,0.68),major_id));
@@ -1344,7 +1468,9 @@ impl FoliageProject {
             PlantPreset::Maple|PlantPreset::CrimsonKingMaple|
             PlantPreset::Mango|PlantPreset::Lychee|
             PlantPreset::RedApple|PlantPreset::PinkApple|PlantPreset::YellowApple|
-            PlantPreset::Cherry|PlantPreset::CherryBlossom|PlantPreset::Orange) {
+            PlantPreset::Cherry|PlantPreset::CherryBlossom|PlantPreset::Orange|
+            PlantPreset::EasternCottonwood|PlantPreset::FremontCottonwood|
+            PlantPreset::BlackCottonwood) {
             // Hide the otherwise exposed top of the full-height trunk within
             // a connected crown cap. No independent decorative leaf objects.
             let mut crown_cap=BTreeMap::new();
@@ -2113,22 +2239,26 @@ mod tests {
     }
 
     #[test]
-    fn tree_catalog_contains_33_entries_including_palm_family() {
+    fn tree_catalog_contains_42_entries_including_coffee_and_cottonwoods() {
         let expected=[
             "Acacia","Birch","Ebony","Kapok","Maple","Crimson King Maple",
             "Oak","Purpleheart","Walnut","Willow","Cherry Blossom",
+            "Kentucky Coffeetree","Eastern Cottonwood","Fremont Cottonwood",
+            "Black Cottonwood",
             "Bald Cypress","Mediterranean Cypress","Larch","Pine","Redwood",
             "Red Apple","Pink Apple","Yellow Apple","Pear","Olive","Peach",
             "Cherry","Mango","Orange","Lychee","Breadfruit","Pomegranate",
+            "Arabica Coffee","Caturra Coffee","Maragogipe Coffee",
+            "Castillo Coffee","Tabi Coffee",
             "Green Bamboo","Brown Bamboo",
             "Coconut Palm","Date Palm","Fan Palm",
         ];
         let actual:Vec<_>=PlantPreset::TREE_CATALOG.iter()
             .map(|p|p.name()).collect();
         assert_eq!(actual,expected);
-        assert_eq!(PlantPreset::ALL.len(),34); // Shrub is not a tree entry
+        assert_eq!(PlantPreset::ALL.len(),43); // Shrub is not a tree entry
         assert_eq!(PlantPreset::TREE_CATALOG.iter()
-            .filter(|p|p.group()=="Hardwood & broadleaf").count(),11);
+            .filter(|p|p.group()=="Hardwood & broadleaf").count(),15);
         assert_eq!(PlantPreset::TREE_CATALOG.iter()
             .filter(|p|p.group()=="Conifer & evergreen").count(),5);
         assert_eq!(PlantPreset::TREE_CATALOG.iter()
@@ -2137,6 +2267,8 @@ mod tests {
             .filter(|p|p.group()=="Bamboo").count(),2);
         assert_eq!(PlantPreset::TREE_CATALOG.iter()
             .filter(|p|p.group()=="Palms").count(),3);
+        assert_eq!(PlantPreset::TREE_CATALOG.iter()
+            .filter(|p|p.group()=="Coffee plants").count(),5);
         for preset in PlantPreset::ALL {
             let json=serde_json::to_string(&preset).unwrap();
             assert_eq!(serde_json::from_str::<PlantPreset>(&json).unwrap(),preset);
@@ -2145,6 +2277,51 @@ mod tests {
         assert_eq!(PlantPreset::PinkApple.fruit_color(),Some([244,123,151]));
         assert_eq!(PlantPreset::YellowApple.fruit_color(),Some([237,198,45]));
         assert_eq!(PlantPreset::CherryBlossom.fruit_color(),None);
+        assert!(PlantPreset::ArabicaCoffee.is_coffee());
+        assert!(!PlantPreset::KentuckyCoffeetree.is_coffee());
+        assert_eq!(PlantPreset::KentuckyCoffeetree.fruit_color(),None);
+        assert!(PlantPreset::FremontCottonwood.is_cottonwood());
+    }
+
+    #[test]
+    fn coffee_cultivars_and_cottonwood_are_distinct_seeded_trees() {
+        let presets=[
+            PlantPreset::ArabicaCoffee,PlantPreset::CaturraCoffee,
+            PlantPreset::MaragogipeCoffee,PlantPreset::CastilloCoffee,
+            PlantPreset::TabiCoffee,PlantPreset::KentuckyCoffeetree,
+            PlantPreset::EasternCottonwood,PlantPreset::FremontCottonwood,
+            PlantPreset::BlackCottonwood,
+        ];
+        for preset in presets {
+            let project=FoliageProject::from_preset(preset);
+            let mesh=project.generate().unwrap();
+            let structure=mesh.structure.as_ref().unwrap();
+            structure.validate(&mesh.voxels).unwrap();
+            assert!(mesh.voxels.iter().any(|v|v.material.is_wood()));
+            assert!(mesh.voxels.iter().any(|v|v.material.is_foliage()));
+            assert_eq!(mesh.voxels,project.generate().unwrap().voxels);
+            let json=serde_json::to_string(&project).unwrap();
+            let loaded: FoliageProject=serde_json::from_str(&json).unwrap();
+            assert_eq!(loaded.generate().unwrap().voxels,mesh.voxels);
+        }
+        let h=|p|FoliageProject::from_preset(p).height;
+        assert!(h(PlantPreset::CaturraCoffee)<h(PlantPreset::ArabicaCoffee));
+        assert!(h(PlantPreset::CastilloCoffee)<h(PlantPreset::TabiCoffee));
+        assert!(h(PlantPreset::MaragogipeCoffee)>h(PlantPreset::ArabicaCoffee));
+        let cutout=|p|leaf_cutout_for_species(p).chunks_exact(4)
+            .map(|px|px[3]).collect::<Vec<_>>();
+        assert_ne!(cutout(PlantPreset::MaragogipeCoffee),
+            cutout(PlantPreset::CaturraCoffee));
+        assert_ne!(cutout(PlantPreset::KentuckyCoffeetree),
+            cutout(PlantPreset::Walnut));
+        assert_ne!(cutout(PlantPreset::EasternCottonwood),
+            cutout(PlantPreset::BlackCottonwood));
+        assert_ne!(cutout(PlantPreset::EasternCottonwood),
+            cutout(PlantPreset::FremontCottonwood));
+        assert!(FoliageProject::from_preset(PlantPreset::EasternCottonwood)
+            .leaf_render.wind_strength>
+                FoliageProject::from_preset(PlantPreset::Oak)
+                    .leaf_render.wind_strength);
     }
 
     #[test]

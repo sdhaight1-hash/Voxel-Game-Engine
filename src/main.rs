@@ -1298,7 +1298,7 @@ impl Studio {
                         }
                         if ui.selectable_label(self.foliage.preset == species,species.name()).clicked() {
                             self.foliage = FoliageProject::from_preset(species);
-                            if species==PlantPreset::CherryBlossom {
+                            if species==PlantPreset::CherryBlossom || species.is_coffee() {
                                 // Show the signature pink flowers immediately.
                                 self.season_preview=0.0;
                             }
@@ -1353,6 +1353,18 @@ impl Studio {
                     ui.small("Ornamental sakura: short pink spring bloom, green summer leaves.");
                     ui.small("Select Spring (0) in the season preview to see flowers.");
                 }
+                if tree.preset.is_coffee() {
+                    ui.small("Evergreen Coffea: opposite glossy leaves, ripe coffee cherries and seasonal white flowers.");
+                    ui.small("Cherries are non-harvestable texture accents; cultivars differ mainly in size and crown habit.");
+                }
+                if tree.preset==PlantPreset::KentuckyCoffeetree {
+                    ui.small("Kentucky Coffeetree is NOT a coffee crop. Its pods and raw seeds are toxic.");
+                    ui.small("Coarse branches and doubly compound deciduous leaves; seed pods not modeled.");
+                }
+                if tree.preset.is_cottonwood() {
+                    ui.small("Riparian Populus: fast-growing crown, yellow autumn leaves, stronger default leaf sway.");
+                    ui.small("Female cottony seed release and falling fluff are not yet simulated.");
+                }
                 if tree.preset.is_palm() {
                     ui.small("Pinnate palms have feather fronds; fan palms have radial blades.");
                 }
@@ -1406,6 +1418,9 @@ impl Studio {
                 ui.small("Seasonal gradients affect color, not occupancy or falling leaves.");
                 if tree.preset==PlantPreset::CherryBlossom {
                     ui.small("Spring blossoms are a temporary GPU petal overlay; leaf palettes remain independent.");
+                }
+                if tree.preset.is_coffee() {
+                    ui.small("Coffee's white spring-preview flowers are cosmetic WGSL overlays; ripeness is static.");
                 }
                 ui.small("Material slots: bark + dark, medium and light leaves.");
             }
@@ -2212,7 +2227,9 @@ impl eframe::App for Studio {
                                 mesh,&bark,&self.asset_leaf_pixels,self.asset.leaf_color,
                                 self.asset.materials.effective_palettes(self.asset.leaf_color)
                                     .gpu_stops(),
-                                self.asset.materials.leaf_species==PlantPreset::CherryBlossom)));
+                                if self.asset.materials.leaf_species.is_coffee() {2.0}
+                                else if self.asset.materials.leaf_species==PlantPreset::CherryBlossom {1.0}
+                                else {0.0})));
                         }
                     }
                 }
@@ -2235,7 +2252,9 @@ impl eframe::App for Studio {
                                 mesh,&bark,&self.foliage_leaf_pixels,self.foliage.leaf_color,
                                 self.foliage.materials.effective_palettes(self.foliage.leaf_color)
                                     .gpu_stops(),
-                                self.foliage.materials.leaf_species==PlantPreset::CherryBlossom)));
+                                if self.foliage.materials.leaf_species.is_coffee() {2.0}
+                                else if self.foliage.materials.leaf_species==PlantPreset::CherryBlossom {1.0}
+                                else {0.0})));
                         }
                     }
                 }

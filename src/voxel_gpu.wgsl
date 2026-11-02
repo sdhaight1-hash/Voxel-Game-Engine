@@ -51,6 +51,31 @@ fn cherry_blossom_mask(uv:vec2<f32>)->f32 {
     return mask;
 }
 
+// Small five-rayed, white Coffea flowers. This is a temporary material
+// overlay on existing leaf cards, not independent flower geometry.
+fn coffee_flower_mask(uv:vec2<f32>)->f32 {
+    let centers=array<vec2<f32>,3>(
+        vec2<f32>(0.39,0.38),
+        vec2<f32>(0.59,0.57),
+        vec2<f32>(0.40,0.72),
+    );
+    var mask=0.0;
+    for (var i=0u;i<3u;i=i+1u) {
+        for (var j=0u;j<5u;j=j+1u) {
+            let angle=f32(j)*1.25663706;
+            let axis=vec2<f32>(cos(angle),sin(angle));
+            let center=centers[i]+axis*0.025;
+            let p=uv-center;
+            let along=dot(p,axis)/0.036;
+            let across=dot(p,vec2<f32>(-axis.y,axis.x))/0.013;
+            mask=max(mask,1.0-smoothstep(0.72,1.0,
+                length(vec2<f32>(along,across))));
+        }
+        mask=max(mask,1.0-smoothstep(0.008,0.016,length(uv-centers[i])));
+    }
+    return mask;
+}
+
 fn spring_bloom_amount()->f32 {
     if (globals.season.y<0.5) {return 0.0;}
     let progress=fract(globals.season.x/4.0)*4.0;
@@ -118,7 +143,11 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         // Do not evaluate the procedural flower mask for any other species
         // or outside the brief early-spring bloom window.
         if (bloom>0.05) {
-            blossom=bloom*cherry_blossom_mask(input.uv);
+            if (globals.season.y>1.5) {
+                blossom=bloom*coffee_flower_mask(input.uv);
+            } else {
+                blossom=bloom*cherry_blossom_mask(input.uv);
+            }
         }
         // Petals can extend outside the permanent green-leaf silhouette.
         // When bloom fades, the original cutout remains unchanged.
@@ -126,7 +155,8 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         let base=max(globals.leaf_base.rgb,vec3<f32>(0.12));
         let leaf_color=min(rgba.rgb*seasonal_foliage(1.0-input.uv.y)/base,
             vec3<f32>(1.0));
-        let petal_color=vec3<f32>(1.0,0.71,0.81);
+        let petal_color=select(vec3<f32>(1.0,0.71,0.81),
+            vec3<f32>(0.99,0.98,0.91),globals.season.y>1.5);
         rgba=vec4<f32>(mix(leaf_color,petal_color,blossom),1.0);
     } else {
         rgba = vec4<f32>(1.0);

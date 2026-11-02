@@ -1,4 +1,4 @@
-//! Bounded architectural growth rules for the 33 authored tree/bamboo types.
+//! Bounded architectural growth rules for the 42 authored tree/bamboo types.
 //! These are stylized visual rules at the editor's 1m hexel resolution, not
 //! measured botanical growth simulations. Author-edited slider values still
 //! apply, but the seed cannot turn one species into a different silhouette.
@@ -112,6 +112,11 @@ impl PlantPreset {
             Self::Birch|Self::Larch|Self::Pine => (0.70,0.08),
             Self::Willow => (0.65,0.24),
             Self::Oak|Self::Walnut => (0.75,0.22),
+            Self::KentuckyCoffeetree => (0.73,0.18),
+            Self::EasternCottonwood|Self::FremontCottonwood|
+            Self::BlackCottonwood => (0.70,0.24),
+            Self::ArabicaCoffee|Self::CaturraCoffee|Self::MaragogipeCoffee|
+            Self::CastilloCoffee|Self::TabiCoffee => (0.53,0.07),
             Self::Acacia => (0.68,0.20),
             _ => (0.72,0.12),
         };
@@ -143,6 +148,10 @@ impl PlantPreset {
                 Self::Purpleheart => (Spiral, AlongTwigs, [0.00,0.48],[-0.10,0.53],1.04,0.64,0.025,0.94),
                 Self::Walnut => (Spiral, AlongTwigs, [-0.08,0.43],[-0.16,0.48],1.10,0.78,0.039,1.03),
                 Self::Willow => (Spiral, WeepingCurtain, [-1.10,-0.10],[-1.30,-0.36],1.15,0.93,0.032,0.78),
+                Self::KentuckyCoffeetree => (Spiral, AlongTwigs, [0.03,0.54],[-0.08,0.48],1.15,0.46,0.025,0.75),
+                Self::EasternCottonwood => (Spiral, OuterCrown, [0.14,0.66],[0.04,0.63],1.10,0.72,0.028,0.87),
+                Self::FremontCottonwood => (Spiral, OuterCrown, [0.09,0.61],[0.01,0.57],1.16,0.73,0.036,0.90),
+                Self::BlackCottonwood => (Spiral, OuterCrown, [0.19,0.75],[0.11,0.66],0.92,0.60,0.022,0.80),
                 Self::BaldCypress => (Spiral, FeatherSprays, [0.00,0.40],[-0.09,0.31],0.94,0.55,0.019,0.79),
                 Self::MediterraneanCypress => (Whorled, NeedleSprays, [0.25,0.92],[0.18,0.81],0.58,0.22,0.009,0.66),
                 Self::Larch => (Whorled, SpurNeedles, [-0.03,0.33],[-0.11,0.26],1.02,0.66,0.020,0.74),
@@ -160,6 +169,13 @@ impl PlantPreset {
                 Self::Lychee => (Spiral, OuterCrown, [-0.02,0.46],[-0.08,0.48],1.04,0.69,0.027,0.93),
                 Self::Breadfruit => (Spiral, AlongTwigs, [-0.08,0.47],[-0.09,0.54],1.07,0.70,0.029,1.08),
                 Self::Pomegranate => (Opposite, AlongTwigs, [-0.04,0.55],[-0.10,0.62],1.12,0.90,0.044,0.78),
+                // Coffea grows opposite leaves on compact, layered lateral shoots.
+                // Cultivars share that architecture; differences are bounded habit.
+                Self::ArabicaCoffee => (Opposite, AlongTwigs, [0.01,0.43],[-0.10,0.40],0.85,0.62,0.021,0.95),
+                Self::CaturraCoffee => (Opposite, AlongTwigs, [0.06,0.51],[-0.08,0.44],0.75,0.73,0.017,0.97),
+                Self::MaragogipeCoffee => (Opposite, AlongTwigs, [0.04,0.47],[-0.12,0.43],1.00,0.54,0.023,1.20),
+                Self::CastilloCoffee => (Opposite, AlongTwigs, [0.02,0.46],[-0.10,0.44],0.81,0.70,0.018,0.98),
+                Self::TabiCoffee => (Opposite, AlongTwigs, [0.04,0.55],[-0.10,0.48],0.95,0.58,0.022,1.05),
                 Self::GreenBamboo|Self::BrownBamboo =>
                     (CulmNodes, CulmLeaves, [0.12,0.82],[0.04,0.64],0.62,0.15,0.007,0.55),
                 Self::CoconutPalm => (CrownFronds, PinnateFronds, [-0.56,0.37],[-0.25,0.22],1.12,0.0,0.045,0.89),
@@ -248,5 +264,11 @@ mod tests {
             LeafPlacement::FanFronds);
         assert_eq!(PlantPreset::DatePalm.growth_rules().foliage,
             LeafPlacement::PinnateFronds);
+        assert_eq!(PlantPreset::ArabicaCoffee.growth_rules().phyllotaxy,
+            Phyllotaxy::Opposite);
+        assert_eq!(PlantPreset::KentuckyCoffeetree.growth_rules().foliage,
+            LeafPlacement::AlongTwigs);
+        assert_eq!(PlantPreset::FremontCottonwood.growth_rules().phyllotaxy,
+            Phyllotaxy::Spiral);
     }
 }

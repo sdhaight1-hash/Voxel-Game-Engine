@@ -1,10 +1,10 @@
 # Tree growth rules V4 — Foliage generator integration
 
-**Scope:** All 29 tree/bamboo catalog entries, plus the existing independent Shrub preset.
+**Scope:** The 42 current tree/bamboo catalog entries, plus the independent Shrub preset. The original 29 entries remain compatible.
 
 ## Implemented
 - The existing `FoliageProject::generate()` is still the entry point and produces the same 1m axial Q/R/Z hexel occupancy, tapered wood branch spans, species-specific leaf cutouts, source project JSON, and OBJ/MTL exports.
-- `src/tree_growth_rules.rs` defines 30 (29 catalog + Shrub) per-preset bounded growth profiles: spiral/opposite/whorled/node branching arrangements; limb pitch and horizontal reach; extra lateral twig probability; trunk seed lean; foliage sites and cluster scaling.
+- `src/tree_growth_rules.rs` defines 43 (42 catalog + Shrub) per-preset bounded growth profiles: spiral/opposite/whorled/node branching arrangements; limb pitch and horizontal reach; extra lateral twig probability; trunk seed lean; foliage sites and cluster scaling.
 - Seeded foliage sites distinguish broadleaf crown tips, compound-leaf twig distributions, Willow curtains, Pine/Redwood needle sprays, Larch spur shoots, Bald Cypress feather sprays and Bamboo upper node branching. Lower bamboo nodes remain comparatively clear of leaves.
 - Species trunk taper and base flare are combined with seed-specific height and radius variation. Kapok and Redwood have broader base profiles; Bamboo is nearly cylindrical. These are still solid hexel approximations.
 - Existing branch IDs remain stable for a given seed and project, with child branches assigned deterministic IDs.
@@ -14,7 +14,7 @@
 
 ## Tree Designer preset editing
 
-The `Foliage → Preset Loader` inspector exposes a collapsible **Species growth rules** editor. Selecting any of the 29 built-in tree/bamboo presets loads its own growth profile, including trunk taper and base flare, primary and secondary pitch ranges, lateral twig chance, and leaf-cluster size. The branching pattern and leaf arrangement are fixed to the species.
+The `Foliage → Preset Loader` inspector exposes a collapsible **Species growth rules** editor. Selecting any of the 42 built-in tree/bamboo presets loads its own growth profile, including trunk taper and base flare, primary and secondary pitch ranges, lateral twig chance, and leaf-cluster size. The branching pattern and leaf arrangement are fixed to the species.
 
 - **Seed / Next seed** create deterministic individuals of the selected type.
 - Numeric growth controls can be tuned only within the current species' authored bounds. These controls are applied by `FoliageProject::generate()`, not just displayed.
@@ -23,6 +23,12 @@ The `Foliage → Preset Loader` inspector exposes a collapsible **Species growth
 - Selecting another tree type loads that species' canonical preset and colors as before.
 
 The separate **Presets** workspace remains the procedural material library; tree growth profiles belong to **Foliage / Tree Designer**, not the material graph presets.
+
+## Added botanical families
+
+- **Five coffee variants:** shared opposite-leaf `Coffea` architecture with compact Caturra/Castillo, tall Tabi and large-leaved Maragogipe; configurable seed variation and evergreen palettes. Decorative mixed-color coffee cherry accents and temporary white flowers appear on leaf cards. Fruit physiology, harvest and climate effects are not simulated.
+- **Kentucky Coffeetree:** independent `Gymnocladus` deciduous growth profile with visually double-compound leaf masks. This is not a coffee crop, and toxic seeds/woody pods are not harvestable items.
+- **Cottonwoods:** Eastern/Fremont triangular leaf masks, Black ovate leaf masks, large-crown growth and golden fall gradients. Wind sway approximates Populus leaf motion, but cottony female seed release, physical leaf fall, and wet-biome placement are not generated.
 
 ## Compatibility boundaries
 - No change to serialized `FoliageProject` fields or authored material graph format.
@@ -34,7 +40,7 @@ The separate **Presets** workspace remains the procedural material library; tree
 - Tree morphology values are artist-designed visual bounds; Acacia, Ebony and several other labels represent broad botanical groups without a selected single species.
 
 ## Validation
-`cargo test --all-targets` via GitHub Actions pull-request CI. Tests must also confirm existing 29-preset catalog, foliage exports and material/season JSON compatibility. 
+`cargo test --all-targets` via GitHub Actions pull-request CI. Tests must also confirm the expanded 42-preset catalog, foliage exports and material/season JSON compatibility. 
 
 ## Follow-on work (not claimed as implemented)
 - True segmented bamboo and multiple rhizome-connected culms; buttress roots for mature Kapok.
