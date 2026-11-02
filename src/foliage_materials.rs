@@ -2,7 +2,8 @@
 //! Both slots use the existing editable graph engine and bundled natural presets.
 
 use crate::foliage::{leaf_cutout_for_species, PlantPreset};
-use crate::leaf_vector::{LeafSilhouetteSource,vector_oak_cutout_rgba};
+use crate::leaf_vector::{LeafSilhouetteSource,vector_oak_cutout_rgba,
+    vector_willow_cutout_rgba,vector_cottonwood_cutout_rgba};
 use crate::presets::{builtin_presets, Preset};
 use crate::{Graph, VoxelSettings};
 use crate::material_functions::{MaterialFunctionInstance,MaterialFunctionLibrary};
@@ -179,7 +180,7 @@ impl FoliageMaterials {
     }
 
     pub fn validate(&self) -> Result<(), String> {
-        self.leaf_silhouette.validate(self.leaf_species==PlantPreset::Oak)?;
+        self.leaf_silhouette.validate(self.leaf_species)?;
         if !self.bark_tint_strength.is_finite()
             || !(0.0..=1.0).contains(&self.bark_tint_strength) {
             return Err("Bark tint strength must be 0..1".into());
@@ -316,6 +317,10 @@ impl FoliageMaterials {
         let base=match self.leaf_silhouette {
             LeafSilhouetteSource::LegacySpecies=>leaf_cutout_for_species(self.leaf_species),
             LeafSilhouetteSource::VectorOak{lobe_width}=>vector_oak_cutout_rgba(lobe_width),
+            LeafSilhouetteSource::VectorWillow{blade_width}=>
+                vector_willow_cutout_rgba(blade_width),
+            LeafSilhouetteSource::VectorCottonwood{blade_width}=>
+                vector_cottonwood_cutout_rgba(self.leaf_species,blade_width),
         };
         let graph=self.leaf.as_ref().map(|g|g.render_rgba(size,size)).transpose()?;
         let opacity=self.leaf_opacity.as_ref()
@@ -464,6 +469,39 @@ mod tests {
         let saved=serde_json::to_string(&materials).unwrap();
         let loaded:FoliageMaterials=serde_json::from_str(&saved).unwrap();
         assert_eq!(loaded.bake_leaf(64,[65,145,68]).unwrap(),vector);
+    }
+
+    #[test]
+    fn willow_and_cottonwood_vector_cutouts_preserve_silhouette_owner_and_saved_json() {
+        for (species,source) in [
+            (PlantPreset::Willow,LeafSilhouetteSource::VectorWillow{blade_width:1.1}),
+            (PlantPreset::EasternCottonwood,
+                LeafSilhouetteSource::VectorCottonwood{blade_width:1.0}),
+            (PlantPreset::FremontCottonwood,
+                LeafSilhouetteSource::VectorCottonwood{blade_width:1.1}),
+            (PlantPreset::BlackCottonwood,
+                LeafSilhouetteSource::VectorCottonwood{blade_width:0.9}),
+        ] {
+            let mut materials=FoliageMaterials::for_species(species);
+            let old=materials.bake_leaf(64,[76,141,63]).unwrap();
+            materials.leaf_silhouette=source;
+            let vector=materials.bake_leaf(64,[76,141,63]).unwrap();
+            assert_ne!(old,vector,"{species:?} vector option must be effective");
+            let mut blackout=Graph::default();
+            blackout.node_mut(1).unwrap().kind=crate::NodeKind::Color{rgb:[0,0,0]};
+            materials.set_graph(MaterialRole::Opacity,blackout);
+            let cut=materials.bake_leaf(64,[76,141,63]).unwrap();
+            assert!(cut.chunks_exact(4).all(|p|p[3]==0),
+                "{species:?} opacity must remove all alpha");
+            materials.leaf_opacity=None;
+            assert_eq!(materials.bake_leaf(64,[76,141,63]).unwrap(),vector);
+            let saved=serde_json::to_string(&materials).unwrap();
+            let loaded:FoliageMaterials=serde_json::from_str(&saved).unwrap();
+            loaded.validate().unwrap();
+            assert_eq!(loaded.bake_leaf(64,[76,141,63]).unwrap(),vector);
+            materials.leaf_silhouette=LeafSilhouetteSource::LegacySpecies;
+            assert_eq!(materials.bake_leaf(64,[76,141,63]).unwrap(),old);
+        }
     }
 
     #[test]
