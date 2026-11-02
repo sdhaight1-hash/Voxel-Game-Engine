@@ -16,6 +16,8 @@ pub mod presets;
 pub mod node_library;
 pub mod node_definitions;
 pub mod color_ramp;
+pub mod curve_remap;
+pub use curve_remap::{CurveRemap, CurvePoint, MAX_CURVE_POINTS};
 pub mod render_cache;
 pub use color_ramp::{ColorRamp, ColorStop, MAX_COLOR_STOPS};
 pub mod foliage_bake_cache;
@@ -129,6 +131,8 @@ pub enum NodeKind {
     ThresholdMask { threshold: f32, softness: f32 },
     /// Editable scalar-to-RGB ramp with two to eight sorted color stops.
     ColorRamp { ramp: ColorRamp },
+    /// Editable bounded scalar transfer curve with monotone-segment cubic sampling.
+    CurveRemap { curve: CurveRemap },
     Invert,
     Blend { factor: f32 },
     Bricks { columns: u32, rows: u32, mortar: f32 },
@@ -150,6 +154,7 @@ impl NodeKind {
             Self::Levels { .. } => "Levels",
             Self::ThresholdMask { .. } => "Threshold Mask",
             Self::ColorRamp { .. } => "Color Ramp",
+            Self::CurveRemap { .. } => "Curve Remap",
             Self::Invert => "Invert",
             Self::Blend { .. } => "Blend",
             Self::Bricks { .. } => "Bricks",
@@ -168,7 +173,7 @@ impl NodeKind {
                 | Self::Strata { .. } => 0,
             Self::Invert | Self::Colorize { .. } | Self::Luminance
                 | Self::Levels { .. } | Self::ThresholdMask { .. }
-                | Self::ColorRamp { .. } => 1,
+                | Self::ColorRamp { .. } | Self::CurveRemap { .. } => 1,
             Self::Blend { .. } => 2,
             Self::Library { operation, .. } => operation.input_count(),
             Self::Output => 4,
@@ -183,7 +188,8 @@ impl NodeKind {
             (Self::Output, 1) => "Roughness",
             (Self::Output, 2) => "Metallic",
             (Self::Output, 3) => "Height",
-            (Self::Levels { .. } | Self::ThresholdMask { .. } | Self::ColorRamp { .. }, 0) => "Scalar",
+            (Self::Levels { .. } | Self::ThresholdMask { .. } | Self::ColorRamp { .. }
+                | Self::CurveRemap { .. }, 0) => "Scalar",
             (Self::Luminance,0) => "Color",
             (Self::Invert | Self::Colorize { .. }, 0) => "Image",
             (Self::Library { operation, .. }, i) => operation.input_name(i),
@@ -203,6 +209,7 @@ impl NodeKind {
             Self::Levels{..}=>"levels".into(),
             Self::ThresholdMask{..}=>"threshold_mask".into(),
             Self::ColorRamp{..}=>"color_ramp".into(),
+            Self::CurveRemap{..}=>"curve_remap".into(),
             Self::Invert=>"invert".into(),
             Self::Blend{..}=>"blend".into(),
             Self::Bricks{..}=>"bricks".into(),
@@ -216,7 +223,8 @@ impl NodeKind {
 
     pub fn output_type(&self) -> SocketType {
         match self {
-            Self::Scalar{..}|Self::Luminance|Self::Levels{..}=>SocketType::Scalar,
+            Self::Scalar{..}|Self::Luminance|Self::Levels{..}
+                |Self::CurveRemap{..}=>SocketType::Scalar,
             Self::ThresholdMask{..}=>SocketType::Mask,
             _=>SocketType::Color, // Existing RGB evaluation semantics.
         }
@@ -224,7 +232,8 @@ impl NodeKind {
 
     pub fn input_type(&self, index:usize) -> Option<SocketType> {
         if index>=self.input_count() {return None;}
-        Some(if matches!(self,Self::Levels{..}|Self::ThresholdMask{..}|Self::ColorRamp{..}) {
+        Some(if matches!(self,Self::Levels{..}|Self::ThresholdMask{..}
+            |Self::ColorRamp{..}|Self::CurveRemap{..}) {
             SocketType::Scalar
         } else {
             SocketType::Color
@@ -403,6 +412,7 @@ impl Graph {
                     !(0.0..=1.0).contains(&softness)
                     => return Err("Threshold Mask requires threshold and softness in 0..1".into()),
                 NodeKind::ColorRamp { ramp } => ramp.validate()?,
+                NodeKind::CurveRemap { curve } => curve.validate()?,
                 _ => {}
             }
         }
@@ -631,6 +641,10 @@ impl Graph {
             NodeKind::ColorRamp { ramp } => {
                 let value=self.sample_input_memo(id,0,u,v,memo)[0];
                 ramp.sample(value)
+            }
+            NodeKind::CurveRemap { curve } => {
+                let value=self.sample_input_memo(id,0,u,v,memo)[0];
+                [curve.sample(value);3]
             }
             NodeKind::Invert => self.sample_input_memo(id, 0, u, v,memo).map(|c| 1.0 - c),
             NodeKind::Blend { factor } => {
@@ -972,6 +986,33 @@ mod tests {
         assert_ne!(graph.render_rgba(64,64).unwrap(),expected);
         let (memo,_)=graph.render_channels_memoized_rgba(&[0,1,2,3],64,64).unwrap();
         assert_eq!(memo[0],graph.render_rgba(64,64).unwrap());
+    }
+
+    #[test]
+    fn editable_curve_accepts_scalar_and_preserves_memoized_render_bytes() {
+        let mut graph=Graph::default();
+        let scalar=graph.add_node(NodeKind::Scalar{value:0.37},[0.0,0.0]);
+        let curve=graph.add_node(NodeKind::CurveRemap{
+            curve:CurveRemap::default()
+        },[160.0,0.0]);
+        assert!(graph.connect(1,curve,0).is_err(),"RGB must not feed Scalar implicitly");
+        graph.connect(scalar,curve,0).unwrap();
+        graph.connect(curve,2,0).unwrap();
+        graph.connect(curve,2,1).unwrap();
+        let original=graph.render_rgba(32,32).unwrap();
+        let (images,stats)=graph.render_channels_memoized_rgba(
+            &[0,1,2,3],32,32).unwrap();
+        assert_eq!(images[0],original);
+        assert_eq!(images[1],original);
+        assert!(stats.reused_samples>0);
+        let restored:Graph=serde_json::from_str(
+            &serde_json::to_string(&graph).unwrap()).unwrap();
+        assert_eq!(restored.render_rgba(32,32).unwrap(),original);
+        if let NodeKind::CurveRemap{curve:points}=
+            &mut graph.node_mut(curve).unwrap().kind {
+            points.points[1].value=0.9;
+        } else {panic!("must be Curve Remap");}
+        assert_ne!(graph.render_rgba(32,32).unwrap(),original);
     }
 
     #[test]
