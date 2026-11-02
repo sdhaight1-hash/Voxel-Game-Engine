@@ -1940,6 +1940,42 @@ mod wire_interaction_tests {
     }
 
     #[test]
+    fn voxel_face_hit_test_accepts_inside_and_rejects_outside() {
+        let a=Pos2::new(10.0,10.0);
+        let b=Pos2::new(30.0,10.0);
+        let c=Pos2::new(10.0,30.0);
+        assert!(hit_triangle(Pos2::new(16.0,16.0),a,b,c));
+        assert!(!hit_triangle(Pos2::new(40.0,40.0),a,b,c));
+    }
+
+    #[test]
+    fn voxel_asset_edits_have_undo_and_redo() {
+        let mut app=Studio::default();
+        assert_eq!(app.library_tab,3);
+        let original=app.asset.voxels.len();
+        app.edit_asset(|asset|asset.add([0,1,0],Material::Leaf));
+        assert_eq!(app.asset.voxels.len(),original+1);
+        app.undo_asset();
+        assert_eq!(app.asset.voxels.len(),original);
+        app.redo_asset();
+        assert_eq!(app.asset.voxels.len(),original+1);
+        app.edit_asset(|asset|asset.add([0,1,0],Material::Bark));
+        assert_eq!(app.asset.voxels.len(),original+1);
+    }
+
+    #[test]
+    fn generated_tree_converts_into_independently_editable_asset() {
+        let mut app=Studio::default();
+        app.library_tab=2;
+        app.import_tree_as_asset();
+        assert_eq!(app.library_tab,3);
+        assert_eq!(app.asset.shape,app.foliage.shape);
+        assert!(app.asset.voxels.len()>100);
+        assert!(app.asset.material_graph.is_some());
+        assert!(app.asset.mesh().is_ok());
+    }
+
+    #[test]
     fn sockets_can_be_hit_after_zoom_and_pan() {
         let mut app = Studio::default();
         app.pan = Vec2::new(83.0, -19.0);
