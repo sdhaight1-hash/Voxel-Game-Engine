@@ -584,6 +584,11 @@ pub struct FoliageProject {
     pub branch_length: f32,
     #[serde(default)]
     pub branch_growth: BranchGrowth,
+    /// Pipe-model influence on authored woody branch radii; palms and bamboo
+    /// use their anatomical stem/frond rules instead.
+    pub wood_pipe_blend: f32,
+    /// Area/pipe conservation exponent (2 = cross-sectional area).
+    pub wood_pipe_exponent: f32,
     /// Optional artist overrides. Absent in older saved foliage projects.
     /// Values are constrained around the currently selected species.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -893,7 +898,9 @@ impl FoliageProject {
             };
         Self {
             preset, seed: 42, height, trunk_radius: radius, branch_count: branches,
-            branch_length, branch_growth, carve_bottom, carve_top,
+            branch_length, branch_growth,
+            wood_pipe_blend:0.35, wood_pipe_exponent:2.3,
+            carve_bottom, carve_top,
             growth_rules_override: None, trunk_rules_override: None,
             gravity, phototropism, slope: 0.0, overall_scale: 1.0, prune: 0.0,
             leaf_density: density, leaf_scale, leaf_angle, leaf_variation,
@@ -953,6 +960,8 @@ impl FoliageProject {
             ("height", self.height, 0.5, 30.0),
             ("trunk radius", self.trunk_radius, 0.02, 2.0),
             ("branch length", self.branch_length, 0.1, 1.5),
+            ("pipe-model blend", self.wood_pipe_blend, 0.0, 1.0),
+            ("pipe-model exponent", self.wood_pipe_exponent, 1.5, 3.0),
             ("carve bottom", self.carve_bottom, 0.0, 0.85),
             ("carve top", self.carve_top, 0.0, 0.85),
             ("gravity", self.gravity, -1.0, 1.0),
@@ -1520,6 +1529,12 @@ impl FoliageProject {
                 }
             }
         }
+        if !matches!(self.preset,
+            PlantPreset::CoconutPalm|PlantPreset::DatePalm|PlantPreset::FanPalm|
+            PlantPreset::GreenBamboo|PlantPreset::BrownBamboo) {
+            apply_pipe_model(&mut spans,&branches,&mut cells,&mut ownership,
+                trunk_radius,self.wood_pipe_exponent,self.wood_pipe_blend);
+        }
         if cells.len() > 40_000 {
             return Err("Tree exceeds 40,000 game hexels: reduce size, branching or canopy density".into());
         }
@@ -1544,6 +1559,62 @@ impl FoliageProject {
         Ok(FoliageMesh { voxels, triangles, shape,
             voxel_size: s, height: h, leaf_render: self.leaf_render,
             structure:Some(structure) })
+    }
+}
+
+/// A bottom-up pipe-model radius pass using the *actual occupied foliage
+/// hexels* as support demand. Decorative card count never enters the model.
+/// Existing species thickness is the authored baseline: blend and bounded
+/// 0.65–1.35 scaling prevent this appearance pass from erasing silhouettes.
+/// Any additional wood volume is claimed into the authoritative grid.
+fn apply_pipe_model(
+    spans:&mut [BranchSpan], branches:&[TreeBranch],
+    cells:&mut BTreeMap<[i32;3],Material>,
+    owners:&mut BTreeMap<[i32;3],(TreePart,Option<u32>)>,
+    base_radius:f32, exponent:f32, blend:f32,
+) {
+    if blend<=0.0 || branches.len()<=1 {return;}
+    let mut load:BTreeMap<u32,f32>=branches.iter().map(|b|(b.id,1.0)).collect();
+    for (part,owner) in owners.values() {
+        if *part==TreePart::Foliage {
+            if let Some(id)=owner {
+                if let Some(weight)=load.get_mut(id) {*weight+=1.0;}
+            }
+        }
+    }
+    // Parent IDs always precede children, including optional extra twigs.
+    for branch in branches.iter().rev() {
+        if let Some(parent)=branch.parent {
+            let child=load.get(&branch.id).copied().unwrap_or(1.0);
+            *load.entry(parent).or_default()+=child;
+        }
+    }
+    let root_load=load.get(&0).copied().unwrap_or(1.0).max(1.0);
+    let parts:BTreeMap<_,_>=branches.iter().map(|b|(b.id,b.part)).collect();
+    for span in spans.iter_mut().filter(|s|s.branch_id!=0) {
+        let support=load.get(&span.branch_id).copied().unwrap_or(1.0);
+        let target=base_radius*0.85*(support/root_load).powf(1.0/exponent);
+        let old=span.start_radius_mm as f32/1000.0;
+        let wanted=old*(1.0-blend)+target*blend;
+        let factor=(wanted/old).clamp(0.65,1.35);
+        let start=(old*factor).clamp(0.026,0.5);
+        let end=(span.end_radius_mm as f32/1000.0*factor).clamp(0.026,0.5);
+        let grew=start>old+0.001 || end>span.end_radius_mm as f32/1000.0+0.001;
+        span.start_radius_mm=(start*1000.0).round() as u16;
+        span.end_radius_mm=(end*1000.0).round() as u16;
+        if grew {
+            let a=span.from_mm.map(|v|v as f32/1000.0);
+            let b=span.to_mm.map(|v|v as f32/1000.0);
+            let mut new_wood=BTreeMap::new();
+            paint_line(&mut new_wood,VoxelShape::HexPrism,WORLD_HEXEL_SIZE_METRES,
+                a,b,start.max(end),Material::Bark);
+            for (cell,material) in new_wood {
+                let old=cells.insert(cell,material);
+                if old.is_none() || old.is_some_and(Material::is_foliage) {
+                    owners.insert(cell,(parts[&span.branch_id],Some(span.branch_id)));
+                }
+            }
+        }
     }
 }
 
