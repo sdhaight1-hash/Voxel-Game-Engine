@@ -1389,6 +1389,37 @@ mod tests {
     use super::*;
 
     #[test]
+    fn tree_catalog_contains_all_29_requested_entries_in_order() {
+        let expected=[
+            "Acacia","Birch","Ebony","Kapok","Maple","Crimson King Maple",
+            "Oak","Purpleheart","Walnut","Willow",
+            "Bald Cypress","Mediterranean Cypress","Larch","Pine","Redwood",
+            "Red Apple","Pink Apple","Yellow Apple","Pear","Olive","Peach",
+            "Cherry","Mango","Orange","Lychee","Breadfruit","Pomegranate",
+            "Green Bamboo","Brown Bamboo",
+        ];
+        let actual:Vec<_>=PlantPreset::TREE_CATALOG.iter()
+            .map(|p|p.name()).collect();
+        assert_eq!(actual,expected);
+        assert_eq!(PlantPreset::ALL.len(),30); // Shrub is not a tree entry
+        assert_eq!(PlantPreset::TREE_CATALOG.iter()
+            .filter(|p|p.group()=="Hardwood & broadleaf").count(),10);
+        assert_eq!(PlantPreset::TREE_CATALOG.iter()
+            .filter(|p|p.group()=="Conifer & evergreen").count(),5);
+        assert_eq!(PlantPreset::TREE_CATALOG.iter()
+            .filter(|p|p.group()=="Fruit trees").count(),12);
+        assert_eq!(PlantPreset::TREE_CATALOG.iter()
+            .filter(|p|p.group()=="Bamboo").count(),2);
+        for preset in PlantPreset::ALL {
+            let json=serde_json::to_string(&preset).unwrap();
+            assert_eq!(serde_json::from_str::<PlantPreset>(&json).unwrap(),preset);
+        }
+        assert_eq!(PlantPreset::RedApple.fruit_color(),Some([193,42,38]));
+        assert_eq!(PlantPreset::PinkApple.fruit_color(),Some([244,123,151]));
+        assert_eq!(PlantPreset::YellowApple.fruit_color(),Some([237,198,45]));
+    }
+
+    #[test]
     fn all_species_generate_1m_hexel_wood_and_card_foliage() {
         for preset in PlantPreset::ALL {
             let tree = FoliageProject::from_preset(preset);
