@@ -218,32 +218,67 @@ fn leaf_pixel(species:PlantPreset,u:f32,v:f32)->(bool,bool) {
                     ||leaf_oval(u,v,0.70,y-0.043,0.020,0.026)
             })
         }
-        PlantPreset::Kapok|PlantPreset::Breadfruit => {
-            [[0.34,0.35],[0.66,0.51],[0.35,0.72]].iter().any(|p| {
-                leaf_oval(u,v,p[0],p[1],0.060,0.074)
-                    ||(0..5).any(|i|{
-                        let angle=i as f32/5.0*TAU;
-                        leaf_blade(u,v,p[0]+angle.cos()*0.056,
-                            p[1]+angle.sin()*0.056,
-                            [angle.cos(),angle.sin()],0.090,0.033,false)
+        PlantPreset::Kapok => {
+            // Palmately compound leaves: leaflets radiate from one petiole.
+            [[0.37,0.35],[0.64,0.61]].iter().any(|p| {
+                (0..7).any(|i| {
+                    let a=i as f32/7.0*TAU;
+                    leaf_blade(u,v,p[0]+a.cos()*0.062,
+                        p[1]+a.sin()*0.062,[a.cos(),a.sin()],
+                        0.120,0.031,false)
+                })
+            })
+        }
+        PlantPreset::Breadfruit => {
+            // One large, deeply lobed simple leaf, not Kapok leaflets.
+            [[0.35,0.35],[0.66,0.61]].iter().any(|p| {
+                leaf_oval(u,v,p[0],p[1],0.085,0.13)
+                    ||(0..5).any(|i| {
+                        let side=if i%2==0 {-1.0} else {1.0};
+                        let y=p[1]-0.085+i as f32*0.037;
+                        leaf_blade(u,v,p[0]+side*0.065,y,
+                            [side,0.05],0.088,0.028,false)
                     })
             })
         }
-        PlantPreset::Purpleheart|PlantPreset::Walnut|PlantPreset::Lychee => {
+        PlantPreset::Purpleheart => {
+            // Peltogyne leaves typically have one paired set of leaflets.
+            leaf_oval(u,v,0.36,0.49,0.12,0.074)
+                ||leaf_oval(u,v,0.64,0.49,0.12,0.074)
+                ||leaf_segment(u,v,[0.50,0.55],[0.35,0.49],0.010)
+                ||leaf_segment(u,v,[0.50,0.55],[0.65,0.49],0.010)
+        }
+        PlantPreset::Walnut|PlantPreset::Lychee => {
             (0..6).any(|i| {
                 let y=0.23+i as f32*0.108;
                 leaf_oval(u,v,0.39,y,0.070,0.037)
                     ||leaf_oval(u,v,0.61,y+0.025,0.070,0.037)
             })
         }
-        PlantPreset::BaldCypress|PlantPreset::Larch|
-        PlantPreset::Redwood|PlantPreset::MediterraneanCypress => {
-            let count=if species==PlantPreset::MediterraneanCypress {18} else {13};
-            (0..count).any(|i| {
+        PlantPreset::Larch => {
+            // Tufts of needles on short spur shoots, unlike flat cypress sprays.
+            (0..5).any(|i| {
+                let y=0.25+i as f32*0.13;
+                (0..9).any(|j| {
+                    let a=TAU*j as f32/9.0;
+                    leaf_segment(u,v,[0.50,y],
+                        [0.50+a.cos()*0.16,y+a.sin()*0.10],0.009)
+                })
+            })
+        }
+        PlantPreset::MediterraneanCypress => {
+            // Dense, fine scale-leaf spray: narrow, upright outer silhouette.
+            (0..21).any(|i| {
+                let y=0.16+i as f32*0.031;
+                let span=0.036+0.032*((i%4) as f32/3.0);
+                leaf_segment(u,v,[0.50,y],[0.50-span,y-0.020],0.012)
+                    ||leaf_segment(u,v,[0.50,y],[0.50+span,y-0.020],0.012)
+            })
+        }
+        PlantPreset::BaldCypress|PlantPreset::Redwood => {
+            (0..13).any(|i| {
                 let y=0.17+i as f32*0.036;
-                let span=if species==PlantPreset::MediterraneanCypress {
-                    0.085
-                } else if species==PlantPreset::Redwood {0.14} else {0.20};
+                let span=if species==PlantPreset::Redwood {0.14} else {0.20};
                 leaf_segment(u,v,[0.50,y],[0.50-span,y-0.055],0.010)
                     ||leaf_segment(u,v,[0.50,y],[0.50+span,y-0.055],0.010)
             })
@@ -1866,6 +1901,17 @@ mod tests {
             geometry(PlantPreset::YellowApple));
         assert_eq!(geometry(PlantPreset::GreenBamboo),
             geometry(PlantPreset::BrownBamboo));
+    }
+
+    #[test]
+    fn botanically_distinct_leaf_architectures_have_distinct_cutouts() {
+        let alpha=|species| leaf_cutout_for_species(species)
+            .chunks_exact(4).map(|pixel|pixel[3]).collect::<Vec<_>>();
+        assert_ne!(alpha(PlantPreset::Purpleheart),alpha(PlantPreset::Walnut));
+        assert_ne!(alpha(PlantPreset::Kapok),alpha(PlantPreset::Breadfruit));
+        assert_ne!(alpha(PlantPreset::Larch),alpha(PlantPreset::BaldCypress));
+        assert_ne!(alpha(PlantPreset::Larch),
+            alpha(PlantPreset::MediterraneanCypress));
     }
 
     #[test]
