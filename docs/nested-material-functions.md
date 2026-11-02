@@ -24,7 +24,10 @@ from Phase 4c and retains all previous material/asset export formats.
 5. Import the parent JSON and its dependencies into the authoring session,
    then apply the parent version as an ordinary material function.
    The compiler expands the call into a standalone `Graph` before
-   writing it to Bark, Leaf or Leaf Cutout.
+   writing it to Bark, Leaf or Leaf Cutout. **Instance noise frequency**
+   is forwarded to the chosen child function, including across multiple
+   nested levels. Changing that slider changes the child's sampled pixels,
+   not an unused Noise node left in the parent template.
 
 The parent and its child versions are independently pinned. A dependency's
 source file or later edits never silently replace a saved tree or asset's
