@@ -447,6 +447,7 @@ impl Studio {
         self.asset_undo.clear();
         self.asset_redo.clear();
         self.asset_dirty = true;
+        self.asset_mats_dirty = true;
         self.status = "New editable cube voxel asset".into();
     }
 
@@ -459,6 +460,7 @@ impl Studio {
                 self.asset_redo.clear();
                 self.asset_path = None;
                 self.asset_dirty = true;
+                self.asset_mats_dirty = true;
                 self.library_tab = 3;
                 self.status = format!("Converted {} into {} editable voxels",
                     self.foliage.preset.name(), mesh.voxel_count());
@@ -494,6 +496,7 @@ impl Studio {
         if let Some(previous) = self.asset_undo.pop() {
             self.asset_redo.push(std::mem::replace(&mut self.asset, previous));
             self.asset_dirty = true;
+            self.asset_mats_dirty = true;
             self.status = "Undid voxel edit".into();
         }
     }
@@ -502,6 +505,7 @@ impl Studio {
         if let Some(next) = self.asset_redo.pop() {
             self.asset_undo.push(std::mem::replace(&mut self.asset, next));
             self.asset_dirty = true;
+            self.asset_mats_dirty = true;
             self.status = "Redid voxel edit".into();
         }
     }
@@ -536,6 +540,7 @@ impl Studio {
                 self.asset_undo.clear();
                 self.asset_redo.clear();
                 self.asset_dirty = true;
+                self.asset_mats_dirty = true;
                 self.status = "Loaded editable voxel asset".into();
             }
             Err(e) => self.status = format!("Could not open asset: {e}"),
@@ -760,10 +765,16 @@ impl Studio {
         }
         ui.small("Wind animates the preview; OBJ exports its static base pose.");
         ui.horizontal(|ui| {
-            ui.label("Bark"); ui.color_edit_button_srgb(&mut self.asset.bark_color);
+            ui.label("Bark");
+            if ui.color_edit_button_srgb(&mut self.asset.bark_color).changed() {
+                self.asset_mats_dirty=true;
+            }
         });
         ui.horizontal(|ui| {
-            ui.label("Leaf"); ui.color_edit_button_srgb(&mut self.asset.leaf_color);
+            ui.label("Leaf");
+            if ui.color_edit_button_srgb(&mut self.asset.leaf_color).changed() {
+                self.asset_mats_dirty=true;
+            }
         });
         ui.separator();
         ui.heading("SELECTED CELL");
@@ -1045,6 +1056,7 @@ impl Studio {
             Ok(project) => {
                 self.foliage = project;
                 self.foliage_dirty = true;
+                self.foliage_mats_dirty = true;
                 self.status = format!("Opened foliage: {}",path.display());
             }
             Err(e) => self.status = format!("Open foliage failed: {e}"),
@@ -1097,6 +1109,7 @@ impl Studio {
                         if ui.selectable_label(self.foliage.preset == species,species.name()).clicked() {
                             self.foliage = FoliageProject::from_preset(species);
                             self.foliage_dirty = true;
+                            self.foliage_mats_dirty = true;
                         }
                     }
                 });
@@ -1197,7 +1210,7 @@ impl Studio {
                 if ui.button("Open foliage project").clicked() { self.open_foliage(); }
             }
         }
-        if changed { self.foliage_dirty = true; }
+        if changed { self.foliage_dirty = true; self.foliage_mats_dirty = true; }
         if let Err(err)=self.foliage.validate() {
             ui.colored_label(Color32::from_rgb(232,133,104),err);
         }
@@ -1955,6 +1968,7 @@ impl eframe::App for Studio {
                     if ui.button("New Tree").clicked() {
                         self.foliage = FoliageProject::default();
                         self.foliage_dirty = true;
+                        self.foliage_mats_dirty = true;
                         self.status = "New procedural tree created".into();
                     }
                     if ui.button("Open Tree").clicked() { self.open_foliage(); }
@@ -2318,10 +2332,10 @@ mod wire_interaction_tests {
 fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title("Texture Studio — Voxel Asset Editor")
+            .with_title("Voxel Game Engine — Voxel Asset Editor")
             .with_inner_size([1330.0, 780.0])
             .with_min_inner_size([940.0, 550.0]),
         ..Default::default()
     };
-    eframe::run_native("texture-studio", options, Box::new(|_| Ok(Box::new(Studio::default()))))
+    eframe::run_native("voxel-game-engine", options, Box::new(|_| Ok(Box::new(Studio::default()))))
 }
