@@ -267,6 +267,49 @@ mod tests {
     }
 
     #[test]
+    fn equivalent_function_instances_share_existing_foliage_bake_cache_entries() {
+        use crate::foliage_bake_cache::FoliageBakeCache;
+        let mut library=MaterialFunctionLibrary::default();
+        library.insert(MaterialFunction::from_graph("oak_bark".into(),1,
+            Graph::default()).unwrap()).unwrap();
+        library.insert(MaterialFunction::from_graph("willow_bark".into(),1,
+            Graph::default()).unwrap()).unwrap();
+        let mut oak=crate::foliage_materials::FoliageMaterials::default();
+        let mut willow=oak.clone();
+        oak.apply_function(MaterialRole::Bark,&library,reference("oak_bark",1,12)).unwrap();
+        willow.apply_function(MaterialRole::Bark,&library,
+            reference("willow_bark",1,12)).unwrap();
+        let mut cache=FoliageBakeCache::new(1024*1024);
+        let first=cache.bake_bark(&oak,32,[90,80,70]).unwrap();
+        let shared=cache.bake_bark(&willow,32,[90,80,70]).unwrap();
+        assert!(std::sync::Arc::ptr_eq(&first,&shared));
+        assert_eq!(cache.stats().hits,1);
+        willow.apply_function(MaterialRole::Bark,&library,
+            reference("willow_bark",1,20)).unwrap();
+        let changed=cache.bake_bark(&willow,32,[90,80,70]).unwrap();
+        assert_ne!(first.as_ref(),changed.as_ref());
+        assert_eq!(cache.stats().misses,2);
+    }
+
+    #[test]
+    fn missing_template_after_import_does_not_break_existing_asset_snapshot() {
+        use crate::asset::VoxelAsset;
+        let mut library=MaterialFunctionLibrary::default();
+        library.insert(MaterialFunction::from_graph(
+            "shared_bark".into(),1,Graph::default()).unwrap()).unwrap();
+        let mut asset=VoxelAsset::default();
+        asset.materials.apply_function(MaterialRole::Bark,&library,
+            reference("shared_bark",1,9)).unwrap();
+        let before=asset.materials.bake_bark(32,[90,80,70]).unwrap();
+        let text=asset.to_json().unwrap();
+        drop(library);
+        let after=VoxelAsset::from_json(&text).unwrap();
+        assert_eq!(after.materials.bake_bark(32,[90,80,70]).unwrap(),before);
+        assert_eq!(after.materials.bark_function,
+            asset.materials.bark_function);
+    }
+
+    #[test]
     fn assigned_function_is_detached_by_direct_manual_slot_edit() {
         let mut library=MaterialFunctionLibrary::default();
         library.insert(MaterialFunction::from_graph(
