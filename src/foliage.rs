@@ -591,7 +591,8 @@ fn surface_triangles(
         for face in 0..n {
             let d = neighbor(shape, face);
             let adjacent = [cell[0] + d[0], cell[1] + d[1], cell[2]];
-            if cells.contains_key(&adjacent) { continue; }
+            if cells.get(&adjacent)==Some(&Material::Bark) ||
+                (render.geometry==LeafGeometry::SolidVoxel && cells.contains_key(&adjacent)) { continue; }
             let next = (face + 1) % n;
             // Footprints are CCW; side quad normal points outward.
             push_triangle(&mut triangles, bottom[face], bottom[next],
@@ -599,13 +600,17 @@ fn surface_triangles(
             push_triangle(&mut triangles, bottom[face], top[next],
                 top[face], *material, *cell, d);
         }
-        if !cells.contains_key(&[cell[0], cell[1], cell[2] + 1]) {
+        if cells.get(&[cell[0],cell[1],cell[2]+1])!=Some(&Material::Bark) &&
+            (render.geometry!=LeafGeometry::SolidVoxel ||
+             !cells.contains_key(&[cell[0],cell[1],cell[2]+1])) {
             for i in 1..n-1 {
                 push_triangle(&mut triangles, top[0], top[i], top[i+1],
                     *material, *cell, [0, 0, 1]);
             }
         }
-        if !cells.contains_key(&[cell[0], cell[1], cell[2] - 1]) {
+        if cells.get(&[cell[0],cell[1],cell[2]-1])!=Some(&Material::Bark) &&
+            (render.geometry!=LeafGeometry::SolidVoxel ||
+             !cells.contains_key(&[cell[0],cell[1],cell[2]-1])) {
             for i in 1..n-1 {
                 push_triangle(&mut triangles, bottom[0], bottom[i+1],
                     bottom[i], *material, *cell, [0, 0, -1]);
@@ -753,13 +758,82 @@ mod tests {
         for shape in [VoxelShape::Cube, VoxelShape::HexPrism] {
             let mut cells = BTreeMap::new();
             cells.insert([0, 0, 0], Material::Bark);
-            let faces = surface_triangles(&cells, shape, 1.0);
+            let faces = surface_triangles(&cells, shape, 1.0, LeafRenderSettings::default());
             let expected = if shape == VoxelShape::Cube { 12 } else { 20 };
             assert_eq!(faces.len(), expected);
             cells.insert([0, 0, 1], Material::Leaf);
-            let faces = surface_triangles(&cells, shape, 1.0);
-            assert_eq!(faces.len(), expected*2 - if shape == VoxelShape::Cube { 4 } else { 8 });
+            let faces = surface_triangles(&cells, shape, 1.0, LeafRenderSettings::default());
+            assert_eq!(faces.len(), expected+8, "leaf is four 2-sided triangles per plane");
+            assert_eq!(faces.iter().filter(|t|t.cutout).count(),8);
+            let solid=LeafRenderSettings {
+                geometry:LeafGeometry::SolidVoxel,..Default::default() };
+            let legacy = surface_triangles(&cells,shape,1.0,solid);
+            assert_eq!(legacy.len(),expected*2-if shape==VoxelShape::Cube {4} else {8});
+
         }
+    }
+
+    #[test]
+    fn cutout_texture_is_binary_with_real_air_gaps() {
+        let tex=leaf_cutout_rgba();
+        assert_eq!(tex.len(),LEAF_TEXTURE_SIZE*LEAF_TEXTURE_SIZE*4);
+        assert!(tex.chunks_exact(4).any(|p|p[3]==0));
+        assert!(tex.chunks_exact(4).any(|p|p[3]==255));
+        assert!(tex.chunks_exact(4).all(|p|p[3]==0 || p[3]==255));
+        let mask=leaf_opacity_rgba();
+        assert_eq!(mask.len(),tex.len());
+        assert!(mask.chunks_exact(4).all(|p|p[3]==255));
+    }
+
+    #[test]
+    fn leaves_are_crossed_cutout_meshes_with_uvs_and_static_wind_anchor() {
+        for shape in [VoxelShape::Cube,VoxelShape::HexPrism] {
+            let model=FoliageMesh::from_voxels(shape,1.0,vec![
+                VoxelCell{x:0,y:0,z:0,material:Material::Leaf}]).unwrap();
+            assert_eq!(model.triangle_count(),8);
+            assert!(model.triangles.iter().all(|t|t.cutout));
+            assert!(model.triangles.iter().any(|t|t.wind_weight.contains(&1.0)));
+            assert!(model.triangles.iter().any(|t|t.wind_weight.contains(&0.0)));
+            assert!(model.obj().contains("vt 0.000000"));
+            assert!(model.obj().contains("f 1/1"));
+            let first=model.triangles[0];
+            let changed=sway_leaf_vertex(first.points[2],first.cell,
+                1.0,0.37,model.leaf_render,model.voxel_size);
+            assert_ne!(changed,first.points[2]);
+            assert_eq!(sway_leaf_vertex(first.points[0],first.cell,
+                0.0,0.37,model.leaf_render,model.voxel_size),first.points[0]);
+        }
+    }
+
+    #[test]
+    fn leaf_surrounded_by_opaque_bark_is_removed_but_surrounded_by_leaves_remains() {
+        for surroundings in [Material::Bark, Material::Leaf] {
+            let mut cells=BTreeMap::new();
+            cells.insert([0,0,0],Material::Leaf);
+            for face in 0..4 {
+                let d=neighbor(VoxelShape::Cube,face);
+                cells.insert(d,surroundings);
+            }
+            cells.insert([0,0,1],surroundings);
+            cells.insert([0,0,-1],surroundings);
+            let result=surface_triangles(&cells,VoxelShape::Cube,1.0,LeafRenderSettings::default());
+            let center=result.iter().filter(|t|t.cell==[0,0,0]).count();
+            assert_eq!(center, if surroundings==Material::Bark {0} else {8});
+        }
+    }
+
+    #[test]
+    fn cutout_export_materials_reference_both_pngs() {
+        let project=FoliageProject::default();
+        let obj=project.generate().unwrap().obj();
+        assert!(obj.contains("vt "));
+        assert!(obj.contains("f 1/1"));
+        let mat=mtl(&project);
+        assert!(mat.contains("map_Kd foliage-leaves.png"));
+        assert!(mat.contains("map_d foliage-leaves-alpha.png"));
+        let mut solid=project;
+        solid.leaf_render.geometry=LeafGeometry::SolidVoxel;
+        assert!(!mtl(&solid).contains("map_d"));
     }
 
     #[test]
