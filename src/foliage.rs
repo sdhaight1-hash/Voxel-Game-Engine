@@ -290,6 +290,10 @@ impl FoliageMesh {
             }
             let p=i*3+1;
             output.push_str(&format!("f {p} {} {}\n",p+1,p+2));
+            // Two-sided leaf cards survive back-face culling in OBJ importers.
+            if tri.material != Material::Bark {
+                output.push_str(&format!("f {p} {} {}\n",p+2,p+1));
+            }
         }
         output
     }
@@ -346,7 +350,8 @@ mod tests {
         let b=p.generate().unwrap();
         assert_eq!(a.obj(),b.obj());
         let obj=a.obj();
-        assert_eq!(obj.lines().filter(|l|l.starts_with("f ")).count(),a.triangle_count());
+        let leaf_faces=a.triangles.iter().filter(|t|t.material!=Material::Bark).count();
+        assert_eq!(obj.lines().filter(|l|l.starts_with("f ")).count(),a.triangle_count()+leaf_faces);
         assert_eq!(obj.lines().filter(|l|l.starts_with("v ")).count(),a.triangle_count()*3);
         assert!(obj.contains("usemtl leaf"));
         assert!(mtl(&p).contains("newmtl bark"));
