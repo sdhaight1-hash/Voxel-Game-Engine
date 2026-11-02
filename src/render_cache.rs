@@ -188,7 +188,7 @@ mod tests {
         assert_eq!(cache.stats().entries,1);
         assert_eq!(cache.stats().resident_bytes,256);
         // The caller's external Arc remains readable after eviction.
-        assert_eq!(&*a,graph.render_rgba(8,8).unwrap().as_slice());
+        assert_eq!(a.as_ref(),graph.render_rgba(8,8).unwrap().as_slice());
         cache.render_channel(&graph,0,16,16).unwrap();
         assert_eq!(cache.stats().entries,1);
         assert_eq!(cache.stats().resident_bytes,256);
