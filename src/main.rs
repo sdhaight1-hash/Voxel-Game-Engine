@@ -14,7 +14,8 @@ use texture_studio::foliage::{FoliageProject, FoliageMesh, FoliageStage, PlantPr
 use texture_studio::asset::VoxelAsset;
 use texture_studio::flora_prefab::FloraPrefab;
 use texture_studio::material_functions::{MaterialFunction,MaterialFunctionLibrary,
-    MaterialFunctionInstance,MaterialFunctionCall,FunctionOverride,FunctionParameterKind};
+    MaterialFunctionInstance,MaterialFunctionCall,FunctionOverride,FunctionParameter,
+    FunctionParameterKind};
 use texture_studio::foliage_materials::{FoliageMaterials, MaterialRole,
     SeasonalPalettes, MATERIAL_SIZE};
 use texture_studio::voxel::{render_atlas, render_voxel_preview, export_obj};
@@ -23,10 +24,18 @@ use texture_studio::voxel::{render_atlas, render_voxel_preview, export_obj};
 /// selecting or importing a template must not silently change its appearance.
 fn authored_function_noise_scale(function:&MaterialFunction)->Option<u32> {
     let param=function.parameters.iter().find(|param|
-        param.kind==FunctionParameterKind::NoiseScale)?;
-    match function.graph.node(param.node_id)?.kind {
-        NodeKind::Noise{scale,..}=>Some(scale),
-        _=>None,
+        matches!(param.kind,FunctionParameterKind::NoiseScale
+            | FunctionParameterKind::NestedNoiseScale))?;
+    match param.kind {
+        FunctionParameterKind::NoiseScale =>
+            match function.graph.node(param.node_id)?.kind {
+                NodeKind::Noise{scale,..}=>Some(scale),
+                _=>None,
+            },
+        FunctionParameterKind::NestedNoiseScale => function.calls.iter()
+            .find(|call|call.placeholder_node_id==param.node_id)?
+            .reference.overrides.iter()
+            .find(|item|item.key==param.key).map(|item|item.value),
     }
 }
 
@@ -1055,7 +1064,8 @@ impl Studio {
             if let Some(index)=self.selected_material_function {
                 if let Some(function)=self.material_functions.functions.get(index) {
                     let frequency=function.parameters.iter().find(|p|
-                        p.kind==FunctionParameterKind::NoiseScale);
+                        matches!(p.kind,FunctionParameterKind::NoiseScale
+                            |FunctionParameterKind::NestedNoiseScale));
                     if frequency.is_some() {
                         ui.add(egui::Slider::new(&mut self.function_noise_scale,1..=64)
                             .text("Instance noise frequency"));
@@ -1116,7 +1126,8 @@ impl Studio {
                                 self.function_id_input.clone(),
                                 self.function_version_input,parent_graph)?;
                             let overrides=child.parameters.iter().find(|param|
-                                param.kind==FunctionParameterKind::NoiseScale)
+                                matches!(param.kind,FunctionParameterKind::NoiseScale
+                                    |FunctionParameterKind::NestedNoiseScale))
                                 .map(|param|vec![FunctionOverride{
                                     key:param.key.clone(),
                                     value:self.function_noise_scale,
@@ -1124,11 +1135,22 @@ impl Studio {
                             let reference=MaterialFunctionInstance{
                                 function_id:child.id,version:child.version,overrides,
                             };
+                            let placeholder_node_id=self.function_placeholder_node
+                                .ok_or("Select a Color placeholder node")?;
+                            let forwarded=child.parameters.iter()
+                                .find(|param|matches!(param.kind,
+                                    FunctionParameterKind::NoiseScale
+                                    |FunctionParameterKind::NestedNoiseScale))
+                                .map(|param|FunctionParameter{
+                                    key:param.key.clone(),node_id:placeholder_node_id,
+                                    kind:FunctionParameterKind::NestedNoiseScale,
+                                });
                             parent.calls.push(MaterialFunctionCall{
-                                placeholder_node_id:self.function_placeholder_node
-                                    .ok_or("Select a Color placeholder node")?,
-                                reference,
+                                placeholder_node_id,reference,
                             });
+                            // A parent function's override must alter the
+                            // nested child, never an unused local Noise node.
+                            parent.parameters=forwarded.into_iter().collect();
                             parent.validate()?;
                             // Resolve and validate before showing the save dialog.
                             // Failed references/cycles never produce a file.
