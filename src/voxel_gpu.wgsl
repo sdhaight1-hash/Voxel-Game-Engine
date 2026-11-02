@@ -131,6 +131,22 @@ fn vs_main(input: VertexInput) -> VertexOutput {
     return output;
 }
 
+// Experimental single-sample screen-door alpha coverage for leaf cards.
+// A 4x4 Bayer threshold distributes sampled (linearly filtered) fractional
+// alpha spatially. Screen-space coordinates prevent wind/time flicker caused
+// by animated per-frame random thresholds. This is NOT MSAA or true alpha
+// blending; the user can opt back into the legacy 0.5 alpha test.
+fn leaf_coverage_threshold(pixel:vec2<u32>)->f32 {
+    let bayer=array<f32,16>(
+        0.0,8.0,2.0,10.0,
+        12.0,4.0,14.0,6.0,
+        3.0,11.0,1.0,9.0,
+        15.0,7.0,13.0,5.0,
+    );
+    let index=(pixel.y & 3u)*4u+(pixel.x & 3u);
+    return (bayer[index]+0.5)/16.0;
+}
+
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     var rgba: vec4<f32>;
@@ -151,7 +167,18 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         }
         // Petals can extend outside the permanent green-leaf silhouette.
         // When bloom fades, the original cutout remains unchanged.
-        if (rgba.a < 0.5 && blossom < 0.55) { discard; }
+        if (globals.season.z > 0.5) {
+            // Blossoms are still solid silhouettes at the original .55
+            // threshold; leaf edges get an optional ordered coverage test.
+            let flower_opaque=select(0.0,1.0,blossom>=0.55);
+            let coverage=max(rgba.a,flower_opaque);
+            if (coverage < leaf_coverage_threshold(vec2<u32>(input.clip.xy))) {
+                discard;
+            }
+        } else {
+            // Keep old shader output unchanged when opt-in is disabled.
+            if (rgba.a < 0.5 && blossom < 0.55) { discard; }
+        }
         let base=max(globals.leaf_base.rgb,vec3<f32>(0.12));
         let leaf_color=min(rgba.rgb*seasonal_foliage(1.0-input.uv.y)/base,
             vec3<f32>(1.0));
