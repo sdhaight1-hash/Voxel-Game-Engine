@@ -112,15 +112,17 @@ Voxel Game Engine is organized around **four linked workspaces**. **Assets** is 
 
 Use **Library → Foliage** to generate **grid-based trees with harvestable wood and leaf cells**. Trunks are full 1 m wood hexels; branches use tapered six-sided wood meshes and thin twig ribbons while remaining bound to occupied wood hexels; leaves render crossed cutout cards. This implements the block-world interpretation of the workflow shown in the supplied Unreal Engine 5.7 tutorial, while remaining native Rust.
 
-**Complete natural-world tree catalog:** The Foliage designer includes **29 requested entries: 27 trees/fruit-tree varieties and 2 bamboo varieties**. `Shrub` is kept separately as a non-tree foliage preset (30 total selectable options). The dropdown groups species by family.
+**Natural-world tree catalog:** The original 29 requested entries remain, plus an additional ornamental **Cherry Blossom** tree: **30 tree/bamboo entries (28 tree/fruit/ornamental varieties and 2 bamboo)**. `Shrub` stays separate (31 selectable presets in total). The dropdown groups species by family.
 
 | Group | Presets |
 |---|---|
-| Hardwood & broadleaf (10) | Acacia, Birch, Ebony, Kapok, Maple, Crimson King Maple, Oak, Purpleheart, Walnut, Willow |
+| Hardwood & broadleaf (11) | Acacia, Birch, Ebony, Kapok, Maple, Crimson King Maple, Oak, Purpleheart, Walnut, Willow, Cherry Blossom |
 | Conifer & evergreen (5) | Bald Cypress, Mediterranean Cypress, Larch, Pine, Redwood |
 | Fruit trees (12) | Red Apple, Pink Apple, Yellow Apple, Pear, Olive, Peach, Cherry, Mango, Orange, Lychee, Breadfruit, Pomegranate |
 | Bamboo (2) | Green Bamboo, Brown Bamboo |
-| Other foliage | Shrub (not one of the 29) |
+| Other foliage | Shrub (not one of the 30 tree/bamboo entries) |
+
+**Ornamental Cherry Blossom (sakura):** A distinct, non-fruiting visual preset alongside the existing fruit-bearing Cherry. It has a spreading/vase-shaped crown and green summer leaves. In the **wgpu seasonal preview**, early Spring (season 0) draws procedural pink five-petal blossom clusters over the existing leaf cards. Blossoms fade by late Spring, without changes to seed geometry or voxel occupancy. Summer remains green, Autumn is bronze-red, and Winter uses a muted dormant color. The overlay applies to imported editable Assets that retain the Cherry Blossom leaf-species material. It is a preview shader effect, not separate harvestable flower hexels, particle shedding or a new fruit system. Conventional OBJ/PNG exports and the CPU preview remain static summer/base leaf artwork without the transient blossom overlay.
 
 **Game-scale structural presets:** Each entry has its own initial tree height, trunk radius, branch count, branch reach, canopy density, colors, and growth parameters. Dense broadleaf crowns now combine overlapping interior-filled lobes and an upper crown cap; Willow additionally distributes foliage along its descending shoots instead of relying exclusively on end clusters. Conifers receive intermediate needle groups along selected branches. Key shape families include broad round crowns, Acacia's high spreading umbrella, Kapok's tall trunk/upper crown, Pine/Larch/Redwood tiered conifers, a narrow Mediterranean Cypress, drooping Willow, small orchard fruit trees and upright bamboo culms. These are procedural **1 m hexel** shapes; they are not imported models or a botanical growth simulator. Species and seeds remain editable.
 
