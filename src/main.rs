@@ -745,6 +745,16 @@ impl Studio {
         ui.label("Asset name");
         ui.add(egui::TextEdit::singleline(&mut self.asset.name));
         ui.small(format!("{} blocks",self.asset.voxels.len()));
+        if let Some(tree)=&self.asset.tree_structure {
+            ui.small(format!("Structured tree: {} branches · {} support hexes",
+                tree.branches.len(),tree.root_footprint.len()));
+            if let Some(cell)=self.asset_selected {
+                if let Some(part)=tree.cells.iter().find(|record|record.cell==cell) {
+                    ui.small(format!("Selected cell: {:?} · Branch {:?}",
+                        part.part,part.branch_id));
+                }
+            }
+        }
         ui.separator();
         ui.heading("TOOLS");
         ui.horizontal_wrapped(|ui| {
@@ -1243,6 +1253,16 @@ impl Studio {
                     ui.label(format!("Voxel type: {}",mesh.shape.name()));
                     ui.label(format!("Cell size: {:.2}",mesh.voxel_size));
                     ui.label(format!("Nominal height: {:.1}",mesh.height));
+                    if let Some(structure)=&mesh.structure {
+                        let majors=structure.branches.iter()
+                            .filter(|b|b.part==texture_studio::foliage::TreePart::MajorBranch).count();
+                        let forks=structure.branches.iter()
+                            .filter(|b|b.part==texture_studio::foliage::TreePart::SmallBranch).count();
+                        ui.label(format!("Trunk + {majors} main branches + {forks} forks"));
+                        ui.label(format!("Root footprint: {} support hexes",
+                            structure.root_footprint.len()));
+                        ui.small("Every leaf cell belongs to a branch; unsupported leaf islands are removed.");
+                    }
                 }
                 ui.small("Exports occupied foliage cells plus cutout textures, UV OBJ and material masks.");
                 ui.small("Also exports the culled hexel surface as OBJ with MTL.");
