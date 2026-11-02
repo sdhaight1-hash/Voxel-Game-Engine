@@ -3243,6 +3243,32 @@ mod wire_interaction_tests {
     }
 
     #[test]
+    fn nested_function_inherits_pinned_child_frequency_not_unused_parent_noise() {
+        let mut graph=Graph::default();
+        let placeholder=graph.add_node(NodeKind::Color{
+            rgb:[240,120,50],
+        },[100.0,100.0]);
+        graph.connect(placeholder,2,0).unwrap();
+        let mut function=MaterialFunction::from_graph(
+            "nested_parent".into(),1,graph).unwrap();
+        function.calls.push(MaterialFunctionCall{
+            placeholder_node_id:placeholder,
+            reference:MaterialFunctionInstance{
+                function_id:"child".into(),version:1,
+                overrides:vec![FunctionOverride{
+                    key:"frequency".into(),value:17,
+                }],
+            },
+        });
+        function.parameters=vec![FunctionParameter{
+            key:"frequency".into(),node_id:placeholder,
+            kind:FunctionParameterKind::NestedNoiseScale,
+        }];
+        function.validate().unwrap();
+        assert_eq!(authored_function_noise_scale(&function),Some(17));
+    }
+
+    #[test]
     fn voxel_face_hit_test_accepts_inside_and_rejects_outside() {
         let a=Pos2::new(10.0,10.0);
         let b=Pos2::new(30.0,10.0);
