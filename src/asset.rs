@@ -7,6 +7,7 @@
 use crate::foliage::{FoliageMesh, FoliageProject, Material, VoxelCell, LeafRenderSettings};
 use crate::voxel::VoxelShape;
 use crate::Graph;
+use crate::foliage_materials::FoliageMaterials;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -21,6 +22,8 @@ pub struct VoxelAsset {
     pub leaf_color: [u8; 3],
     #[serde(default)]
     pub leaf_render: LeafRenderSettings,
+    #[serde(default)]
+    pub materials: FoliageMaterials,
     /// Optional procedural surface material project. Kept editable in Nodes.
     pub material_graph: Option<Graph>,
 }
@@ -36,6 +39,7 @@ impl Default for VoxelAsset {
             bark_color: [125, 94, 68],
             leaf_color: [77, 142, 65],
             leaf_render: LeafRenderSettings::default(),
+            materials: FoliageMaterials::default(),
             material_graph: None,
         }
     }
@@ -52,6 +56,7 @@ impl VoxelAsset {
             bark_color: project.bark_color,
             leaf_color: project.leaf_color,
             leaf_render: project.leaf_render,
+            materials: project.materials.clone(),
             material_graph: Some(graph.clone()),
         }
     }
@@ -64,6 +69,7 @@ impl VoxelAsset {
             return Err("Asset name must be 1..120 characters".into());
         }
         self.mesh()?;
+        self.materials.validate()?;
         if let Some(graph) = &self.material_graph { graph.validate()?; }
         Ok(())
     }
@@ -141,6 +147,7 @@ impl VoxelAsset {
                 bark_color: project.bark_color,
                 leaf_color: project.leaf_color,
                 leaf_render: project.leaf_render,
+                materials: project.materials,
                 ..Self::default()
             }
         } else {
