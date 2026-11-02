@@ -554,7 +554,7 @@ impl Studio {
                 if std::env::var_os("VOXEL_PROFILE_MATERIALS").is_some() {
                     eprintln!("[material-profile] event=memo_pbr_export cpu_ms={:.3} sample_hits={} node_evaluations={} peak_entries_per_pixel={}",
                         started.elapsed().as_secs_f64()*1000.0,
-                        stats.sample_hits,stats.node_evaluations,stats.peak_entries_per_pixel);
+                        stats.reused_samples,stats.evaluated_samples,stats.peak_entries_per_pixel);
                 }
             } else {
                 for (channel,name) in ["albedo","roughness","metallic","height"]
