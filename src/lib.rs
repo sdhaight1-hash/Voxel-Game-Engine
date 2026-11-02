@@ -15,7 +15,9 @@ pub mod foliage_materials;
 pub mod presets;
 pub mod node_library;
 pub mod node_definitions;
+pub mod color_ramp;
 pub mod render_cache;
+pub use color_ramp::{ColorRamp, ColorStop, MAX_COLOR_STOPS};
 pub mod foliage_bake_cache;
 pub use node_library::LibraryNode;
 use node_definitions::{PortDefinition, SocketType};
@@ -125,6 +127,8 @@ pub enum NodeKind {
     Levels { black: f32, white: f32, gamma: f32 },
     /// Explicit scalar-to-mask conversion with optional smooth edge coverage.
     ThresholdMask { threshold: f32, softness: f32 },
+    /// Editable scalar-to-RGB ramp with two to eight sorted color stops.
+    ColorRamp { ramp: ColorRamp },
     Invert,
     Blend { factor: f32 },
     Bricks { columns: u32, rows: u32, mortar: f32 },
@@ -145,6 +149,7 @@ impl NodeKind {
             Self::Luminance => "Luminance",
             Self::Levels { .. } => "Levels",
             Self::ThresholdMask { .. } => "Threshold Mask",
+            Self::ColorRamp { .. } => "Color Ramp",
             Self::Invert => "Invert",
             Self::Blend { .. } => "Blend",
             Self::Bricks { .. } => "Bricks",
@@ -162,7 +167,8 @@ impl NodeKind {
                 | Self::Scalar { .. } | Self::Bricks { .. } | Self::Voronoi { .. }
                 | Self::Strata { .. } => 0,
             Self::Invert | Self::Colorize { .. } | Self::Luminance
-                | Self::Levels { .. } | Self::ThresholdMask { .. } => 1,
+                | Self::Levels { .. } | Self::ThresholdMask { .. }
+                | Self::ColorRamp { .. } => 1,
             Self::Blend { .. } => 2,
             Self::Library { operation, .. } => operation.input_count(),
             Self::Output => 4,
@@ -177,7 +183,7 @@ impl NodeKind {
             (Self::Output, 1) => "Roughness",
             (Self::Output, 2) => "Metallic",
             (Self::Output, 3) => "Height",
-            (Self::Levels { .. } | Self::ThresholdMask { .. }, 0) => "Scalar",
+            (Self::Levels { .. } | Self::ThresholdMask { .. } | Self::ColorRamp { .. }, 0) => "Scalar",
             (Self::Luminance,0) => "Color",
             (Self::Invert | Self::Colorize { .. }, 0) => "Image",
             (Self::Library { operation, .. }, i) => operation.input_name(i),
@@ -196,6 +202,7 @@ impl NodeKind {
             Self::Luminance=>"luminance".into(),
             Self::Levels{..}=>"levels".into(),
             Self::ThresholdMask{..}=>"threshold_mask".into(),
+            Self::ColorRamp{..}=>"color_ramp".into(),
             Self::Invert=>"invert".into(),
             Self::Blend{..}=>"blend".into(),
             Self::Bricks{..}=>"bricks".into(),
@@ -217,7 +224,7 @@ impl NodeKind {
 
     pub fn input_type(&self, index:usize) -> Option<SocketType> {
         if index>=self.input_count() {return None;}
-        Some(if matches!(self,Self::Levels{..}|Self::ThresholdMask{..}) {
+        Some(if matches!(self,Self::Levels{..}|Self::ThresholdMask{..}|Self::ColorRamp{..}) {
             SocketType::Scalar
         } else {
             SocketType::Color
@@ -395,6 +402,7 @@ impl Graph {
                     !(0.0..=1.0).contains(&threshold) ||
                     !(0.0..=1.0).contains(&softness)
                     => return Err("Threshold Mask requires threshold and softness in 0..1".into()),
+                NodeKind::ColorRamp { ramp } => ramp.validate()?,
                 _ => {}
             }
         }
@@ -619,6 +627,10 @@ impl Graph {
                     t*t*(3.0-2.0*t)
                 };
                 [coverage;3]
+            }
+            NodeKind::ColorRamp { ramp } => {
+                let value=self.sample_input_memo(id,0,u,v,memo)[0];
+                ramp.sample(value)
             }
             NodeKind::Invert => self.sample_input_memo(id, 0, u, v,memo).map(|c| 1.0 - c),
             NodeKind::Blend { factor } => {
@@ -933,6 +945,33 @@ mod tests {
             threshold:0.5,softness:0.0
         };
         assert_eq!(&graph.render_rgba(1,1).unwrap()[..4],&[255,255,255,255]);
+    }
+
+    #[test]
+    fn scalar_color_ramp_is_typed_editable_and_serde_compatible() {
+        let mut graph=Graph::default();
+        let scalar=graph.add_node(NodeKind::Scalar{value:0.5},[0.0,0.0]);
+        let ramp=graph.add_node(NodeKind::ColorRamp{
+            ramp:ColorRamp::default()
+        },[150.0,0.0]);
+        assert_eq!(graph.node(ramp).unwrap().kind.output_type(),SocketType::Color);
+        assert_eq!(graph.node(ramp).unwrap().kind.input_type(0),Some(SocketType::Scalar));
+        assert!(graph.connect(1,ramp,0).is_err(),"Color must not be implicitly cast to Scalar");
+        graph.connect(scalar,ramp,0).unwrap();
+        graph.connect(ramp,2,0).unwrap();
+        let expected=graph.render_rgba(64,64).unwrap();
+        let encoded=serde_json::to_string(&graph).unwrap();
+        let decoded:Graph=serde_json::from_str(&encoded).unwrap();
+        assert_eq!(decoded.render_rgba(64,64).unwrap(),expected);
+        assert_eq!(graph.node(ramp).unwrap().kind.type_id(),"color_ramp");
+        if let NodeKind::ColorRamp{ramp:gradient}=&mut graph.node_mut(ramp).unwrap().kind {
+            gradient.stops[1].rgb=[250,10,20];
+            gradient.add_stop();
+            gradient.validate().unwrap();
+        } else {panic!("must be a Color Ramp");}
+        assert_ne!(graph.render_rgba(64,64).unwrap(),expected);
+        let (memo,_)=graph.render_channels_memoized_rgba(&[0,1,2,3],64,64).unwrap();
+        assert_eq!(memo[0],graph.render_rgba(64,64).unwrap());
     }
 
     #[test]

@@ -5,6 +5,7 @@ use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, Str
 use std::{collections::HashMap, path::{Path, PathBuf}, time::Instant};
 use texture_studio::{Graph, NodeKind, LibraryNode, VoxelShape, SideMapping};
 use texture_studio::node_definitions::{SocketType, ParameterControl};
+use texture_studio::{ColorRamp,MAX_COLOR_STOPS};
 use texture_studio::render_cache::GraphRenderCache;
 use texture_studio::foliage_bake_cache::FoliageBakeCache;
 use texture_studio::presets::{builtin_presets, Preset};
@@ -1762,6 +1763,7 @@ impl Studio {
                 ("Invert", NodeKind::Invert),
                 ("Luminance", NodeKind::Luminance),
                 ("Colorize", NodeKind::Colorize { dark: [24, 37, 54], light: [204, 175, 130] }),
+                ("Color Ramp", NodeKind::ColorRamp { ramp: ColorRamp::default() }),
                 ("Levels", NodeKind::Levels { black: 0.0, white: 1.0, gamma: 1.0 }),
                 ("Threshold Mask", NodeKind::ThresholdMask {
                     threshold:0.5,softness:0.0
@@ -1981,6 +1983,57 @@ impl Studio {
                 ui.label("Light color");
                 changed |= ui.color_edit_button_srgb(light).changed();
             }
+            NodeKind::ColorRamp { ramp } => {
+                ui.small("Input: Scalar 0–1. Output: RGB color.");
+                let (preview,_) = ui.allocate_exact_size(
+                    Vec2::new(ui.available_width().min(240.0),18.0),
+                    Sense::hover());
+                for x in 0..64 {
+                    let t=x as f32/63.0;
+                    let rgb=ramp.sample(t).map(|component|
+                        (component*255.0).round() as u8);
+                    let start=preview.left()+preview.width()*x as f32/64.0;
+                    let end=preview.left()+preview.width()*(x+1) as f32/64.0;
+                    ui.painter().rect_filled(
+                        Rect::from_min_max(
+                            Pos2::new(start,preview.top()),
+                            Pos2::new(end,preview.bottom())),
+                        0.0,Color32::from_rgb(rgb[0],rgb[1],rgb[2]));
+                }
+                let count=ramp.count as usize;
+                let mut remove=None;
+                for index in 0..count {
+                    let lower=if index>0 {
+                        ramp.stops[index-1].position+0.001
+                    } else {0.0};
+                    let upper=if index+1<count {
+                        ramp.stops[index+1].position-0.001
+                    } else {1.0};
+                    ui.horizontal(|ui| {
+                        ui.label(format!("{}",index+1));
+                        if index>0 && index+1<count {
+                            changed |= ui.add(egui::Slider::new(
+                                &mut ramp.stops[index].position,lower..=upper)
+                                .fixed_decimals(3).text("Position")).changed();
+                        } else {
+                            ui.small(format!("{:.0}%",ramp.stops[index].position*100.0));
+                        }
+                        changed |= ui.color_edit_button_srgb(
+                            &mut ramp.stops[index].rgb).changed();
+                        if index>0 && index+1<count
+                            && ui.small_button("Remove").clicked() {
+                            remove=Some(index);
+                        }
+                    });
+                }
+                if let Some(index)=remove {changed |= ramp.remove_stop(index);}
+                if ui.add_enabled(count<MAX_COLOR_STOPS,
+                    egui::Button::new("Add color stop")).clicked() {
+                    changed |= ramp.add_stop();
+                }
+                ui.small("Up to 8 ordered stops; endpoints stay at 0% and 100%.");
+                ui.small("Static baked appearance — seasonal GPU palettes are edited separately.");
+            }
             NodeKind::Invert => { ui.label("Inverts the RGB channels of its input."); }
             NodeKind::Luminance => {
                 ui.label("Convert RGB to a scalar using luminance weights.");
@@ -2013,6 +2066,8 @@ impl Studio {
                         format!("{min}..{max} (step {step}), default {default}"),
                     ParameterControl::Seed{default} => format!("seed, default {default}"),
                     ParameterControl::Color{default} => format!("RGB, default {default:?}"),
+                    ParameterControl::ColorStops{min,max,default} =>
+                        format!("{min}..{max} color stops, default {default}"),
                 };
                 ui.small(format!("{} [{}]: {details}",param.label,param.id));
             }
@@ -2765,7 +2820,7 @@ fn node_accent(kind: NodeKind) -> Color32 {
         },
         NodeKind::Invert | NodeKind::Luminance | NodeKind::Blend { .. }
             | NodeKind::Colorize { .. } | NodeKind::Levels { .. }
-            | NodeKind::ThresholdMask { .. }
+            | NodeKind::ThresholdMask { .. } | NodeKind::ColorRamp { .. }
             => Color32::from_rgb(115, 64, 127),
         NodeKind::Output => Color32::from_rgb(43, 105, 77),
     }

@@ -38,6 +38,7 @@ pub enum ParameterControl {
     Integer {min:u32,max:u32,step:u32,default:u32},
     Seed {default:u32},
     Color {default:[u8;3]},
+    ColorStops {min:u8,max:u8,default:u8},
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -47,6 +48,10 @@ pub struct ParameterDefinition {
     pub control: ParameterControl,
 }
 
+const COLOR_RAMP: &[ParameterDefinition]=&[
+    ParameterDefinition{id:"ramp",label:"Color stops",control:ParameterControl::ColorStops{
+        min:2,max:8,default:4}},
+];
 const THRESHOLD_MASK: &[ParameterDefinition]=&[
     ParameterDefinition{id:"threshold",label:"Threshold",control:ParameterControl::Float{
         min:0.0,max:1.0,default:0.5,unit:"normalized"}},
@@ -122,6 +127,7 @@ pub fn parameters(kind:&NodeKind)-> &'static [ParameterDefinition] {
         NodeKind::Scalar{..}=>SCALAR,
         NodeKind::Levels{..}=>LEVELS,
         NodeKind::ThresholdMask{..}=>THRESHOLD_MASK,
+        NodeKind::ColorRamp{..}=>COLOR_RAMP,
         NodeKind::Noise{..}=>NOISE,
         NodeKind::Checker{..}=>CHECKER,
         NodeKind::Bricks{..}=>BRICKS,
@@ -198,7 +204,10 @@ mod tests {
                             assert!(step>0&&min<=default&&default<=max);
                             assert_eq!((default-min)%step,0);
                         }
-                        ParameterControl::Seed{..}|ParameterControl::Color{..}=>{}
+                        ParameterControl::Seed{..}|ParameterControl::Color{..}=>{},
+                        ParameterControl::ColorStops{min,max,default} => {
+                            assert!(min>=2&&min<=default&&default<=max&&max<=8);
+                        }
                     }
                 }
                 for index in 0..node.kind.input_count() {
@@ -211,6 +220,16 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn color_ramp_metadata_is_typed_and_bounded() {
+        let kind=NodeKind::ColorRamp{ramp:crate::ColorRamp::default()};
+        let params=parameters(&kind);
+        assert_eq!(params.len(),1);
+        assert_eq!(params[0].id,"ramp");
+        assert!(matches!(params[0].control,ParameterControl::ColorStops{
+            min:2,max:8,default:4}));
     }
 
     #[test]
