@@ -1717,10 +1717,12 @@ impl Studio {
                 ("Voronoi", NodeKind::Voronoi { cells: 7, seed: 17 }),
                 ("Strata", NodeKind::Strata { bands: 14, warp: 0.25, seed: 11 }),
                 ("Color", NodeKind::Color { rgb: [98, 152, 203] }),
+                ("Scalar", NodeKind::Scalar { value: 0.5 }),
             ]),
             ("FILTERS", vec![
                 ("Invert", NodeKind::Invert),
                 ("Colorize", NodeKind::Colorize { dark: [24, 37, 54], light: [204, 175, 130] }),
+                ("Levels", NodeKind::Levels { black: 0.0, white: 1.0, gamma: 1.0 }),
             ]),
             ("MIX", vec![
                 ("Blend", NodeKind::Blend { factor: 0.5 }),
@@ -1882,6 +1884,20 @@ impl Studio {
             }
             NodeKind::Color { rgb } => {
                 changed |= ui.color_edit_button_srgb(rgb).changed();
+            }
+            NodeKind::Scalar { value } => {
+                changed |= ui.add(egui::Slider::new(value, 0.0..=1.0)
+                    .text("Value")).changed();
+                ui.small("Scalar values broadcast to grayscale on RGB inputs.");
+            }
+            NodeKind::Levels { black,white,gamma } => {
+                changed |= ui.add(egui::Slider::new(black,0.0..=(*white-0.01).max(0.0))
+                    .text("Black point")).changed();
+                changed |= ui.add(egui::Slider::new(white,(*black+0.01).min(1.0)..=1.0)
+                    .text("White point")).changed();
+                changed |= ui.add(egui::Slider::new(gamma,0.1..=5.0)
+                    .text("Gamma")).changed();
+                ui.small("Typed scalar input; RGB to scalar requires an explicit conversion.");
             }
             NodeKind::Bricks { columns, rows, mortar } => {
                 changed |= ui.add(egui::Slider::new(columns, 2..=64).text("Columns")).changed();
@@ -2631,14 +2647,15 @@ fn socket_input(canvas: Pos2, pan: Vec2, zoom: f32, position: [f32; 2], input: u
 fn node_accent(kind: NodeKind) -> Color32 {
     match kind {
         NodeKind::Noise { .. } | NodeKind::Checker { .. } | NodeKind::Color { .. }
-            | NodeKind::Bricks { .. } | NodeKind::Voronoi { .. } | NodeKind::Strata { .. } => Color32::from_rgb(43, 95, 131),
+            | NodeKind::Scalar { .. } | NodeKind::Bricks { .. } | NodeKind::Voronoi { .. } | NodeKind::Strata { .. } => Color32::from_rgb(43, 95, 131),
         NodeKind::Library { operation, .. } => match operation.category() {
             "Shapes & Gradients" | "Noise" | "Patterns" => Color32::from_rgb(43, 95, 131),
             "Transforms" => Color32::from_rgb(107, 80, 148),
             "Math & Mix" => Color32::from_rgb(143, 96, 58),
             _ => Color32::from_rgb(115, 64, 127),
         },
-        NodeKind::Invert | NodeKind::Blend { .. } | NodeKind::Colorize { .. } => Color32::from_rgb(115, 64, 127),
+        NodeKind::Invert | NodeKind::Blend { .. } | NodeKind::Colorize { .. }
+            | NodeKind::Levels { .. } => Color32::from_rgb(115, 64, 127),
         NodeKind::Output => Color32::from_rgb(43, 105, 77),
     }
 }
