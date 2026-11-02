@@ -480,7 +480,7 @@ impl egui_wgpu::CallbackTrait for RenderScene {
                         label:Some("voxel-pixel-sampler"),
                         mag_filter:wgpu::FilterMode::Linear,
                         min_filter:wgpu::FilterMode::Linear,
-                        mipmap_filter:wgpu::FilterMode::Linear,
+                        mipmap_filter:wgpu::MipmapFilterMode::Linear,
                         address_mode_u:wgpu::AddressMode::Repeat,
                         address_mode_v:wgpu::AddressMode::Repeat,
                         ..Default::default()
