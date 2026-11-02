@@ -10,13 +10,15 @@ A cached RGBA image is identified by:
 
 - Bake algorithm version, requested output channel / Normal / node ID
 - Width and height
-- All graph node IDs, operations and resolved parameters
-- All graph links, including destination input indices
+- Only node IDs, operations and parameters in the requested output's
+  **transitive upstream dependency closure**
+- Only links within that required closure, including input indices
 
 Canvas node positions and unrelated voxel viewport settings are omitted
 because they do not influence the normalized 2D graph sampling. Editing a
-parameter or link automatically yields a new key; switching back after undo
-can reuse an older entry until LRU eviction. A change of size, target node or
+parameter or link **in the requested output's dependency closure** yields a
+new key; editing an unrelated branch does not invalidate that output.
+Switching back after undo can reuse an older entry until LRU eviction. A change of size, target node or
 channel cannot accidentally hit a previous image. The graph is validated
 **before** checking the cache, so invalid data is never hidden by an old hit.
 
@@ -42,7 +44,7 @@ whole-editor or whole-world texture de-duplication.
 ## Correctness tests and next gate
 
 The unit tests compare cached and uncached bytes, including a warped graph;
-verify invalidation for parameters/links/channels/resolutions; test LRU cap
+verify dependency-aware invalidation for parameters/links/channels/resolutions; test LRU cap
 and oversize bypass; and ensure invalid projects fail even after an earlier
 cache hit. The pre-existing frozen legacy 256/512/1024/2048 output hashes and
 1,039 preset graph tests remain unchanged.
