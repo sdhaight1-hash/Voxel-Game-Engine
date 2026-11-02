@@ -1238,6 +1238,10 @@ impl Studio {
                         changed |= ui.selectable_value(&mut tree.branch_growth,
                             BranchGrowth::CanopyGuided,"Canopy guided").changed();
                     });
+                let rules=tree.preset.growth_rules();
+                ui.small(format!("Species architecture: {:?} branches, {:?} foliage",
+                    rules.phyllotaxy,rules.foliage));
+                ui.small("Seed changes trunk lean, branches, twigs and leaf locations within species rules.");
                 ui.small("Canopy guided steers branches toward seeded crown targets.");
                 ui.small("Voxelize the selected species and branch layout at the grid resolution.");
             }
