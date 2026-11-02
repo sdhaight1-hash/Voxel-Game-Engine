@@ -1368,6 +1368,23 @@ impl Studio {
                 if tree.preset.is_palm() {
                     ui.small("Pinnate palms have feather fronds; fan palms have radial blades.");
                 }
+                ui.collapsing("Climate / habitat (biome placement reference)",|ui| {
+                    let c=tree.preset.climate_profile();
+                    ui.label(format!("Preferred annual mean: {:.0} to {:.0} °C",
+                        c.mean_annual_temp_c[0],c.mean_annual_temp_c[1]));
+                    ui.label(format!("Preferred annual rainfall: {} to {} mm",
+                        c.annual_precip_mm[0],c.annual_precip_mm[1]));
+                    ui.label(format!("Indicative cold-event floor: {:.0} °C",
+                        c.extreme_min_c));
+                    ui.label(format!("Preferred dry months (<30 mm rain): {} to {}",
+                        c.dry_months_per_year[0],c.dry_months_per_year[1]));
+                    ui.label(format!("Root-zone moisture: {:?} • light: {:?}",
+                        c.soil_moisture,c.light));
+                    ui.label(format!("Groundwater/stream access needed: {}",
+                        if c.requires_groundwater {"Yes"} else {"No"}));
+                    ui.small("Approximate world-placement preferences, not survival limits.");
+                    ui.small("World biome placement is not yet wired to this editor.");
+                });
                 changed |= species_growth_editor(ui,tree);
                 if !tree.preset.is_palm() {
                     ui.small("Canopy guided steers branches toward seeded crown targets.");
