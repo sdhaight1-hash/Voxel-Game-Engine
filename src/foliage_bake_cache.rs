@@ -97,7 +97,11 @@ impl FoliageBakeCache {
                 materials.bark_tint_strength,
             )),
         }.map_err(|err|err.to_string())?;
-        let key=BakeKey{role,size,tint,recipe};
+        // A Bark graph at zero tint strength ignores the base species bark
+        // tint. Keep that UI-only color change from invalidating its texture.
+        let key_tint=if role==Role::Bark && materials.bark.is_some()
+            && materials.bark_tint_strength==0.0 { [0;3] } else { tint };
+        let key=BakeKey{role,size,tint:key_tint,recipe};
         if let Some(index)=self.entries.iter().position(|entry|entry.key==key) {
             let entry=self.entries.remove(index).expect("indexed cache entry");
             let pixels=entry.rgba.clone();
@@ -169,6 +173,21 @@ mod tests {
         assert_eq!(bark.as_ref(),first.bake_bark(64,[99,76,55]).unwrap().as_slice());
         assert_eq!(cache.stats().hits,2);
         assert_eq!(cache.stats().misses,2);
+    }
+
+    #[test]
+    fn graph_bark_with_zero_tint_strength_ignores_species_color() {
+        let mut mats=FoliageMaterials::default();
+        mats.bark=Some(Graph::demo_bricks());
+        let mut cache=FoliageBakeCache::new(1024*1024);
+        let original=cache.bake_bark(&mats,16,[90,70,50]).unwrap();
+        let irrelevant_tint=cache.bake_bark(&mats,16,[10,200,240]).unwrap();
+        assert!(Arc::ptr_eq(&original,&irrelevant_tint));
+        assert_eq!(original.as_ref(),
+            mats.bake_bark(16,[10,200,240]).unwrap().as_slice());
+        mats.bark_tint_strength=0.6;
+        assert!(!Arc::ptr_eq(&original,
+            &cache.bake_bark(&mats,16,[10,200,240]).unwrap()));
     }
 
     #[test]
