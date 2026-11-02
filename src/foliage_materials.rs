@@ -1,7 +1,7 @@
 //! Material-role-aware procedural texture assignments for voxel foliage.
 //! Both slots use the existing editable graph engine and bundled natural presets.
 
-use crate::foliage::{leaf_cutout_rgba, PlantPreset};
+use crate::foliage::{leaf_cutout_for_species, PlantPreset};
 use crate::presets::{builtin_presets, Preset};
 use crate::{Graph, VoxelSettings};
 use serde::{Deserialize, Serialize};
@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 pub const MATERIAL_SIZE: u32 = 128;
 
 fn default_threshold() -> f32 { 0.5 }
+fn default_leaf_species() -> PlantPreset { PlantPreset::Oak }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MaterialRole { Bark, Leaf, Opacity }
@@ -29,6 +30,10 @@ pub struct FoliageMaterials {
     pub leaf_opacity: Option<Graph>,
     pub bark_preset: Option<String>,
     pub leaf_preset: Option<String>,
+    /// The shape of the leaf-card cutout. Travels with the authored asset,
+    /// including if its material node graphs are edited independently.
+    #[serde(default = "default_leaf_species")]
+    pub leaf_species: PlantPreset,
     #[serde(default = "default_threshold")]
     pub cutout_threshold: f32,
 }
@@ -36,7 +41,8 @@ pub struct FoliageMaterials {
 impl Default for FoliageMaterials {
     fn default() -> Self {
         Self { bark: None, leaf: None, leaf_opacity: None,
-            bark_preset: None, leaf_preset: None, cutout_threshold: 0.5 }
+            bark_preset: None, leaf_preset: None,
+            leaf_species: PlantPreset::Oak, cutout_threshold: 0.5 }
     }
 }
 
@@ -95,6 +101,7 @@ impl FoliageMaterials {
             PlantPreset::Shrub=>"Oak",
         };
         let mut out=Self::default();
+        out.leaf_species=species;
         if let Ok(presets)=builtin_presets() {
             for (is_bark, variants) in [
                 (true, if species==PlantPreset::Willow {
@@ -131,7 +138,7 @@ impl FoliageMaterials {
     pub fn bake_leaf(&self, size:u32, leaf_tint:[u8;3]) -> Result<Vec<u8>,String> {
         self.validate()?;
         if size==0 || size>1024 {return Err("Foliage bake must be 1..1024 px".into());}
-        let base=leaf_cutout_rgba();
+        let base=leaf_cutout_for_species(self.leaf_species);
         let graph=self.leaf.as_ref().map(|g|g.render_rgba(size,size)).transpose()?;
         let opacity=self.leaf_opacity.as_ref()
             .map(|g|g.render_rgba(size,size)).transpose()?;
@@ -209,6 +216,7 @@ mod tests {
             assert!(mats.leaf.is_some(),"{species:?} missing leaf preset");
             assert!(mats.bark_preset.is_some());
             assert!(mats.leaf_preset.is_some());
+            assert_eq!(mats.leaf_species,species);
             mats.validate().unwrap();
         }
     }
@@ -225,6 +233,32 @@ mod tests {
         assert!(mask.chunks_exact(4).all(|p|p[0]==p[1]&&p[1]==p[2]&&p[3]==255));
         assert_eq!(mat.bake_bark(16,[0;3]).unwrap().len(),16*16*4);
         assert!(!mat.bake_pbr(8).unwrap().is_empty());
+    }
+
+    #[test]
+    fn species_masks_survive_baking_and_material_serialization() {
+        let mut masks=Vec::new();
+        for species in PlantPreset::ALL {
+            let mats=FoliageMaterials::for_species(species);
+            let baked=mats.bake_leaf(64,[120,155,90]).unwrap();
+            let alpha:Vec<u8>=baked.chunks_exact(4).map(|p|p[3]).collect();
+            assert!(alpha.iter().any(|&v|v==0));
+            assert!(alpha.iter().any(|&v|v==255));
+            let opacity=mats.bake_leaf_opacity(64,[120,155,90]).unwrap();
+            for (px,&a) in opacity.chunks_exact(4).zip(alpha.iter()) {
+                assert_eq!(*px,[a,a,a,255]);
+            }
+            let saved=serde_json::to_string(&mats).unwrap();
+            let restored:FoliageMaterials=serde_json::from_str(&saved).unwrap();
+            assert_eq!(restored.leaf_species,species);
+            assert_eq!(restored.bake_leaf(64,[120,155,90]).unwrap(),baked);
+            masks.push(alpha);
+        }
+        for a in 0..masks.len() {
+            for b in 0..a {
+                assert_ne!(masks[a],masks[b]);
+            }
+        }
     }
 
     #[test]
