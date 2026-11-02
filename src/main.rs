@@ -670,7 +670,7 @@ impl Studio {
                 }
             }
         }
-        let center=std::array::from_fn(|i|(hi[i]+lo[i])*0.5);
+        let center: [f32; 3] = std::array::from_fn(|i|(hi[i]+lo[i])*0.5);
         let delta=[hi[0]-lo[0],hi[1]-lo[1],hi[2]-lo[2]];
         let span=delta[0].max(delta[1]).max(delta[2]).max(self.asset.voxel_size);
         let yaw=self.asset_yaw;
