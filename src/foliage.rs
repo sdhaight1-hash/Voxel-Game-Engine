@@ -1809,6 +1809,62 @@ mod tests {
     }
 
     #[test]
+    fn all_species_have_stable_seeded_branch_and_leaf_placement() {
+        for species in PlantPreset::TREE_CATALOG {
+            let original=FoliageProject::from_preset(species);
+            let a=original.generate().unwrap();
+            let b=original.generate().unwrap();
+            assert_eq!(a.structure.as_ref().unwrap().branches,
+                b.structure.as_ref().unwrap().branches, "{species:?}");
+            assert_eq!(a.structure.as_ref().unwrap().spans,
+                b.structure.as_ref().unwrap().spans, "{species:?}");
+            assert_eq!(a.voxels,b.voxels, "{species:?}");
+
+            let mut different=original.clone();
+            different.seed=different.seed.wrapping_add(1);
+            let c=different.generate().unwrap();
+            assert_ne!(a.structure.as_ref().unwrap().spans,
+                c.structure.as_ref().unwrap().spans,
+                "{species:?}: different seeds must change individual structure");
+            assert_eq!(a.shape,c.shape);
+            assert_eq!(a.voxel_size,c.voxel_size);
+        }
+    }
+
+    #[test]
+    fn apple_and_bamboo_color_variants_share_seeded_geometry() {
+        let geometry=|preset| {
+            let tree=FoliageProject::from_preset(preset);
+            let mesh=tree.generate().unwrap();
+            (mesh.structure.unwrap(),mesh.voxels)
+        };
+        assert_eq!(geometry(PlantPreset::RedApple),
+            geometry(PlantPreset::PinkApple));
+        assert_eq!(geometry(PlantPreset::PinkApple),
+            geometry(PlantPreset::YellowApple));
+        assert_eq!(geometry(PlantPreset::GreenBamboo),
+            geometry(PlantPreset::BrownBamboo));
+    }
+
+    #[test]
+    fn secondary_twig_growth_is_seeded_and_respects_species_limits() {
+        for species in [PlantPreset::Oak,PlantPreset::Willow,PlantPreset::Pine,
+            PlantPreset::Larch,PlantPreset::RedApple,PlantPreset::GreenBamboo] {
+            let mesh=FoliageProject::from_preset(species).generate().unwrap();
+            let tree=mesh.structure.as_ref().unwrap();
+            let majors=tree.branches.iter().filter(|b|
+                b.part==TreePart::MajorBranch).count();
+            let twigs=tree.branches.iter().filter(|b|
+                b.part==TreePart::SmallBranch).count();
+            assert!(twigs>=majors && twigs<=majors*2,
+                "{species:?}: {twigs} twigs for {majors} limbs");
+            assert!(tree.spans.iter().all(|span|
+                span.start_radius_mm>span.end_radius_mm));
+            tree.validate(&mesh.voxels).unwrap();
+        }
+    }
+
+    #[test]
     fn tapered_branch_mesh_keeps_solid_trunks_and_textured_leaves() {
         for preset in [PlantPreset::Oak,PlantPreset::Pine,PlantPreset::Willow] {
             let mesh=FoliageProject::from_preset(preset).generate().unwrap();
