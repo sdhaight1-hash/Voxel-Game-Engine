@@ -34,6 +34,9 @@ pub struct FoliageMaterials {
     /// including if its material node graphs are edited independently.
     #[serde(default = "default_leaf_species")]
     pub leaf_species: PlantPreset,
+    /// Ripe fruit colour for a small visual indication on foliage cards.
+    /// Real fruit items, harvesting and seasonal ripening are world systems.
+    pub fruit_color: Option<[u8;3]>,
     #[serde(default = "default_threshold")]
     pub cutout_threshold: f32,
 }
@@ -42,7 +45,8 @@ impl Default for FoliageMaterials {
     fn default() -> Self {
         Self { bark: None, leaf: None, leaf_opacity: None,
             bark_preset: None, leaf_preset: None,
-            leaf_species: PlantPreset::Oak, cutout_threshold: 0.5 }
+            leaf_species: PlantPreset::Oak, fruit_color: None,
+            cutout_threshold: 0.5 }
     }
 }
 
@@ -92,30 +96,34 @@ impl FoliageMaterials {
     /// Map each plant family to *existing* built-in bark/leaf appearance variants.
     /// No geometry or species art is claimed to be scanned or game-derived.
     pub fn for_species(species: PlantPreset) -> Self {
-        let name=match species {
-            PlantPreset::Oak=>"Oak",
-            PlantPreset::Pine=>"Pine",
-            PlantPreset::Birch=>"Birch",
-            PlantPreset::Willow=>"Willow",
-            PlantPreset::Maple=>"Maple",
-            PlantPreset::Shrub=>"Oak",
-        };
         let mut out=Self::default();
         out.leaf_species=species;
+        out.fruit_color=species.fruit_color();
+        // Reuse exact names and variant types from the existing natural
+        // material catalog. No extra external texture library is required.
+        let name=species.material_name();
+        let bark_variants:&[&str]=if species.is_bamboo() {
+            &["Stalk sides"]
+        } else if species==PlantPreset::Willow {
+            &["Willow bark","Bark / trunk sides"]
+        } else if species.group()=="Fruit trees" {
+            &["Bark"]
+        } else {
+            &["Bark / trunk sides","Bark"]
+        };
+        let leaf_variants:&[&str]=if species.is_bamboo() {
+            &["Leaves"]
+        } else if species==PlantPreset::Willow {
+            &["Willow hanging leaf clusters","Willow leaves"]
+        } else if species.group()=="Fruit trees" {
+            &["Leaves"]
+        } else {
+            &["Leaf-only canopy","Mature foliage","Leaves"]
+        };
         if let Ok(presets)=builtin_presets() {
-            for (is_bark, variants) in [
-                (true, if species==PlantPreset::Willow {
-                    vec!["Willow bark","Bark / trunk sides"]
-                } else {vec!["Bark / trunk sides","Bark"]}),
-                (false, if species==PlantPreset::Willow {
-                    vec!["Willow hanging leaf clusters","Willow leaves"]
-                } else if species==PlantPreset::Pine {
-                    vec!["Leaf-only canopy","Mature foliage"]
-                } else {vec!["Leaf-only canopy","Mature foliage","Leaves"]}),
-            ] {
-                let chosen=presets.iter().find(|p|
-                    p.material==name && variants.iter().any(|variant|p.variant==*variant));
-                if let Some(preset)=chosen {
+            for (is_bark,variants) in [(true,bark_variants),(false,leaf_variants)] {
+                if let Some(preset)=presets.iter().find(|p|
+                    p.material==name && variants.contains(&p.variant.as_str())) {
                     let graph=preset.build_graph(VoxelSettings {
                         geometryless:true, ..Default::default()
                     });
@@ -165,6 +173,19 @@ impl FoliageMaterials {
                     for ch in 0..3 {
                         rgba[dst+ch]=((leaf_tint[ch] as f32)*
                             (0.72+0.28*base[src] as f32/255.0)).round() as u8;
+                    }
+                }
+                if alpha!=0 {
+                    if let Some(fruit)=self.fruit_color {
+                        // Small fruit-colored dots are *texture only*. They
+                        // don't create physical or harvestable fruit objects.
+                        let u=(x as f32+0.5)/size as f32;
+                        let v=(y as f32+0.5)/size as f32;
+                        let on_fruit=[[0.37,0.39],[0.63,0.52],[0.37,0.65],
+                            [0.63,0.78]].iter().any(|p| {
+                                (u-p[0])*(u-p[0])+(v-p[1])*(v-p[1])<0.034*0.034
+                            });
+                        if on_fruit { rgba[dst..dst+3].copy_from_slice(&fruit); }
                     }
                 }
                 rgba[dst+3]=alpha;
@@ -236,29 +257,33 @@ mod tests {
     }
 
     #[test]
-    fn species_masks_survive_baking_and_material_serialization() {
-        let mut masks=Vec::new();
+    fn all_catalog_materials_bake_and_keep_species_and_fruit_data() {
+        assert_eq!(PlantPreset::TREE_CATALOG.len(),29);
+        assert_eq!(PlantPreset::ALL.len(),30);
         for species in PlantPreset::ALL {
             let mats=FoliageMaterials::for_species(species);
             let baked=mats.bake_leaf(64,[120,155,90]).unwrap();
-            let alpha:Vec<u8>=baked.chunks_exact(4).map(|p|p[3]).collect();
-            assert!(alpha.iter().any(|&v|v==0));
-            assert!(alpha.iter().any(|&v|v==255));
+            assert_eq!(baked.len(),64*64*4);
+            assert!(baked.chunks_exact(4).any(|p|p[3]==0));
+            assert!(baked.chunks_exact(4).any(|p|p[3]==255));
             let opacity=mats.bake_leaf_opacity(64,[120,155,90]).unwrap();
-            for (px,&a) in opacity.chunks_exact(4).zip(alpha.iter()) {
-                assert_eq!(*px,[a,a,a,255]);
+            for (px,rgba) in opacity.chunks_exact(4).zip(baked.chunks_exact(4)) {
+                assert_eq!(*px,[rgba[3],rgba[3],rgba[3],255]);
             }
-            let saved=serde_json::to_string(&mats).unwrap();
-            let restored:FoliageMaterials=serde_json::from_str(&saved).unwrap();
+            let restored:FoliageMaterials=serde_json::from_str(
+                &serde_json::to_string(&mats).unwrap()).unwrap();
             assert_eq!(restored.leaf_species,species);
+            assert_eq!(restored.fruit_color,species.fruit_color());
             assert_eq!(restored.bake_leaf(64,[120,155,90]).unwrap(),baked);
-            masks.push(alpha);
         }
-        for a in 0..masks.len() {
-            for b in 0..a {
-                assert_ne!(masks[a],masks[b]);
-            }
+        for pair in [PlantPreset::RedApple,PlantPreset::PinkApple,
+                     PlantPreset::YellowApple] {
+            assert!(pair.fruit_color().is_some());
         }
+        assert_ne!(FoliageMaterials::for_species(PlantPreset::RedApple)
+            .bake_leaf(64,[120,155,90]).unwrap(),
+            FoliageMaterials::for_species(PlantPreset::YellowApple)
+            .bake_leaf(64,[120,155,90]).unwrap());
     }
 
     #[test]
