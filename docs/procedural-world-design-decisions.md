@@ -171,6 +171,8 @@ The exact voxel representation (dense chunks, palettes, implicit solids, hybrid)
 
 **Persistence/revisions:** Game instances reference asset versions but own their **mutable gameplay state**. Changing or rebaking a source asset must not regenerate a chopped tree, recreate mined materials or overwrite player-edited structures. Asset-version pinning, runtime hot reload and migration strategy remain open.
 
+**Implemented foliage-authoring increment (2026-11-01):** Foliage can generate a **1 m across-flats × 1 m high hex-prism tree**, including connected **solid wood hexels** and logical **foliage hexels with cutout texture-card render geometry**. The Foliage **Output → Create editable 1 m hexel tree** command converts it into an ordinary, editable `VoxelAsset`. A per-cell `harvest_cell` operation returns the material of removed wood/foliage; future game-world logic must determine tools, item yields, felling connected trees, persistent instances and ecosystem consequences. Optional seeded canopy-guided branching is implemented as a **limited attraction step**, **not** full space colonization. See [the dedicated subsystem design](asset-creation-subsystems.md) for exact implemented-versus-future boundaries.
+
 **First proof:** Compile/bake two authored materials, one deterministic hexel tree and one editable hexel prefab; load them in a tiny chunked fixture through a game-side API without invoking the editor UI. Verify rendering, edit persistence, asset reuse and correct world-space coordinate conversion before adding a broad asset framework.
 
 See [Asset-creation subsystems and game-runtime integration](asset-creation-subsystems.md) for the concrete current-code inventory, ownership matrix, validation plan and outstanding interface choices.
@@ -330,7 +332,7 @@ External references:
 9. **Generation time/storage/performance budgets:** quantify on target hardware.
 10. **Climate and ecological simulation detail:** periodicity and physical plausibility versus cost.
 11. **Conserved-water implementation:** choose quantization/accounting, reservoir/basin and groundwater models, local fluid solver, active/inactive reconciliation, and validation limits; the **finite-water rule itself is decided**.
-12. **Hexel architecture:** exact cell radius/height/scale, wrapping lattice periods, 16³ versus 32³ chunk performance, meshing, collision, water-face geometry and practical building rules.
+12. **Hexel architecture:** **world-tree hexels now use 1 m across flats and 1 m height**; verify whether that becomes universal for other playable blocks, plus wrapping lattice periods, 16³ versus 32³ chunk performance, meshing, collision, water-face geometry and practical building rules.
 13. **Reactive state design:** choose the smallest adequate typed invalidation, region interests, transaction boundaries, ordering and storage mechanism; do not assume SpaceTimeDB is a dependency.
 14. **Rust dependency additions/upgrades:** benchmark and add only when a feature requires them; preserve **this repo's** eframe/serde/bytemuck baseline until compatibility tests justify upgrading. Hexel-prototype crate versions are not installed here.
 15. **Asset publishing format:** source/compiled content schemas, stable IDs, cached material variants, runtime prefab conversion, local Q/R/Z → world Q/R/Y scale, version pinning and safe asset updates for existing world instances.
