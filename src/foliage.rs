@@ -17,12 +17,13 @@ pub enum PlantPreset {
     RedApple, PinkApple, YellowApple, Pear, Olive, Peach, Cherry,
     Mango, Orange, Lychee, Breadfruit, Pomegranate,
     GreenBamboo, BrownBamboo,
+    CoconutPalm, DatePalm, FanPalm,
     Shrub,
 }
 
 impl PlantPreset {
-    /// Full natural-world catalog: 28 tree/fruit varieties + 2 bamboo.
-    pub const TREE_CATALOG: [Self; 30] = [
+    /// 31 tree varieties and 2 bamboo (original catalog plus Sakura and 3 palms).
+    pub const TREE_CATALOG: [Self; 33] = [
         Self::Acacia, Self::Birch, Self::Ebony, Self::Kapok, Self::Maple,
         Self::CrimsonKingMaple, Self::Oak, Self::Purpleheart, Self::Walnut,
         Self::Willow, Self::CherryBlossom, Self::BaldCypress, Self::MediterraneanCypress,
@@ -31,9 +32,10 @@ impl PlantPreset {
         Self::Olive, Self::Peach, Self::Cherry, Self::Mango, Self::Orange,
         Self::Lychee, Self::Breadfruit, Self::Pomegranate,
         Self::GreenBamboo, Self::BrownBamboo,
+        Self::CoconutPalm, Self::DatePalm, Self::FanPalm,
     ];
     /// Shrub remains a separate non-tree authoring preset.
-    pub const ALL: [Self; 31] = [
+    pub const ALL: [Self; 34] = [
         Self::Acacia, Self::Birch, Self::Ebony, Self::Kapok, Self::Maple,
         Self::CrimsonKingMaple, Self::Oak, Self::Purpleheart, Self::Walnut,
         Self::Willow, Self::CherryBlossom, Self::BaldCypress, Self::MediterraneanCypress,
@@ -41,7 +43,8 @@ impl PlantPreset {
         Self::RedApple, Self::PinkApple, Self::YellowApple, Self::Pear,
         Self::Olive, Self::Peach, Self::Cherry, Self::Mango, Self::Orange,
         Self::Lychee, Self::Breadfruit, Self::Pomegranate,
-        Self::GreenBamboo, Self::BrownBamboo, Self::Shrub,
+        Self::GreenBamboo, Self::BrownBamboo,
+        Self::CoconutPalm, Self::DatePalm, Self::FanPalm, Self::Shrub,
     ];
     pub fn name(self) -> &'static str {
         match self {
@@ -59,6 +62,8 @@ impl PlantPreset {
             Self::Mango=>"Mango", Self::Orange=>"Orange", Self::Lychee=>"Lychee",
             Self::Breadfruit=>"Breadfruit", Self::Pomegranate=>"Pomegranate",
             Self::GreenBamboo=>"Green Bamboo", Self::BrownBamboo=>"Brown Bamboo",
+            Self::CoconutPalm=>"Coconut Palm", Self::DatePalm=>"Date Palm",
+            Self::FanPalm=>"Fan Palm",
             Self::Shrub=>"Shrub",
         }
     }
@@ -70,6 +75,7 @@ impl PlantPreset {
             Self::BaldCypress|Self::MediterraneanCypress|Self::Larch|
             Self::Pine|Self::Redwood => "Conifer & evergreen",
             Self::GreenBamboo|Self::BrownBamboo => "Bamboo",
+            Self::CoconutPalm|Self::DatePalm|Self::FanPalm => "Palms",
             Self::Shrub => "Other foliage",
             _ => "Fruit trees",
         }
@@ -84,6 +90,8 @@ impl PlantPreset {
             Self::YellowApple=>"Yellow apple",
             Self::GreenBamboo=>"Green bamboo", Self::BrownBamboo=>"Brown bamboo",
             Self::CherryBlossom=>"Cherry", // Reuse the Cherry material recipes.
+            Self::CoconutPalm|Self::DatePalm|Self::FanPalm=>"Mango",
+            // Reuse available tropical bark/leaf graphs; silhouettes are unique.
             Self::Shrub=>"Oak",
             _ => self.name(),
         }
@@ -94,6 +102,9 @@ impl PlantPreset {
     }
     pub fn is_bamboo(self) -> bool {
         matches!(self,Self::GreenBamboo|Self::BrownBamboo)
+    }
+    pub fn is_palm(self) -> bool {
+        matches!(self,Self::CoconutPalm|Self::DatePalm|Self::FanPalm)
     }
     /// Visual ripened-fruit color, not a spawned or harvestable fruit block.
     pub fn fruit_color(self) -> Option<[u8;3]> {
@@ -701,6 +712,9 @@ impl FoliageProject {
                 PlantPreset::Pomegranate => (6.5,0.36,30,0.62,0.11,0.78,0.57,[100,83,57],[67,139,65]),
                 PlantPreset::GreenBamboo => (11.0,0.23,15,0.20,0.03,0.72,0.43,[74,151,64],[86,159,63]),
                 PlantPreset::BrownBamboo => (11.0,0.23,15,0.20,0.03,0.72,0.43,[152,121,69],[113,133,65]),
+                PlantPreset::CoconutPalm => (17.0,0.44,18,0.34,0.08,0.88,0.48,[127,107,77],[64,139,69]),
+                PlantPreset::DatePalm => (14.0,0.57,24,0.30,0.04,0.91,0.47,[135,103,71],[70,126,66]),
+                PlantPreset::FanPalm => (16.0,0.48,20,0.29,0.03,0.86,0.56,[140,112,86],[79,150,84]),
                 PlantPreset::Shrub => (3.5,0.34,20,0.65,0.13,0.86,0.46,[91,70,48],[67,142,51]),
             };
         let (carve_bottom,carve_top,phototropism,leaf_angle,leaf_variation,branch_growth)=
@@ -734,6 +748,8 @@ impl FoliageProject {
                 PlantPreset::Pomegranate=>(0.06,0.07,0.12,0.13,0.30,BranchGrowth::Classic),
                 PlantPreset::GreenBamboo|PlantPreset::BrownBamboo=>
                     (0.53,0.04,0.10,0.08,0.25,BranchGrowth::Classic),
+                PlantPreset::CoconutPalm|PlantPreset::DatePalm|PlantPreset::FanPalm=>
+                    (0.80,0.02,0.08,0.06,0.22,BranchGrowth::Classic),
                 PlantPreset::Shrub=>(0.05,0.08,0.13,0.18,0.40,BranchGrowth::Classic),
             };
         Self {
@@ -859,6 +875,8 @@ impl FoliageProject {
                 1.14-0.18*crown_t,
             PlantPreset::GreenBamboo|PlantPreset::BrownBamboo =>
                 0.30+0.12*crown_t,
+            PlantPreset::CoconutPalm|PlantPreset::DatePalm|PlantPreset::FanPalm =>
+                0.55+0.60*crown_t,
         }
     }
 
@@ -866,6 +884,7 @@ impl FoliageProject {
     /// Each wood or leaf entry is a real removable world-cell definition.
     pub fn generate(&self) -> Result<FoliageMesh, String> {
         self.validate()?;
+        if self.preset.is_palm() {return self.generate_palm();}
         let mut cells: BTreeMap<[i32; 3], Material> = BTreeMap::new();
         let mut ownership:BTreeMap<[i32;3],(TreePart,Option<u32>)>=BTreeMap::new();
         let mut branches=Vec::new();
@@ -1934,7 +1953,7 @@ mod tests {
     }
 
     #[test]
-    fn tree_catalog_contains_30_entries_with_new_ornamental_cherry() {
+    fn tree_catalog_contains_33_entries_including_palm_family() {
         let expected=[
             "Acacia","Birch","Ebony","Kapok","Maple","Crimson King Maple",
             "Oak","Purpleheart","Walnut","Willow","Cherry Blossom",
@@ -1942,11 +1961,12 @@ mod tests {
             "Red Apple","Pink Apple","Yellow Apple","Pear","Olive","Peach",
             "Cherry","Mango","Orange","Lychee","Breadfruit","Pomegranate",
             "Green Bamboo","Brown Bamboo",
+            "Coconut Palm","Date Palm","Fan Palm",
         ];
         let actual:Vec<_>=PlantPreset::TREE_CATALOG.iter()
             .map(|p|p.name()).collect();
         assert_eq!(actual,expected);
-        assert_eq!(PlantPreset::ALL.len(),31); // Shrub is not a tree entry
+        assert_eq!(PlantPreset::ALL.len(),34); // Shrub is not a tree entry
         assert_eq!(PlantPreset::TREE_CATALOG.iter()
             .filter(|p|p.group()=="Hardwood & broadleaf").count(),11);
         assert_eq!(PlantPreset::TREE_CATALOG.iter()
@@ -1955,6 +1975,8 @@ mod tests {
             .filter(|p|p.group()=="Fruit trees").count(),12);
         assert_eq!(PlantPreset::TREE_CATALOG.iter()
             .filter(|p|p.group()=="Bamboo").count(),2);
+        assert_eq!(PlantPreset::TREE_CATALOG.iter()
+            .filter(|p|p.group()=="Palms").count(),3);
         for preset in PlantPreset::ALL {
             let json=serde_json::to_string(&preset).unwrap();
             assert_eq!(serde_json::from_str::<PlantPreset>(&json).unwrap(),preset);
