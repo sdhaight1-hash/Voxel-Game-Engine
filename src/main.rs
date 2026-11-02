@@ -603,8 +603,18 @@ impl Studio {
         if ui.add(egui::Slider::new(&mut size,0.1..=1.5)).changed() {
             self.edit_asset(|asset|{asset.voxel_size=size;Ok(())});
         }
-        ui.small(format!("Shape: {}",self.asset.shape.name()));
-        ui.small("Changing a cube grid to a hex grid requires rebuilding or re-importing the asset.");
+        ui.label("Grid shape");
+        let mut shape=self.asset.shape;
+        egui::ComboBox::from_id_salt("asset_grid_shape")
+            .selected_text(shape.name())
+            .show_ui(ui, |ui| {
+                ui.selectable_value(&mut shape,VoxelShape::Cube,"Cube voxel grid");
+                ui.selectable_value(&mut shape,VoxelShape::HexPrism,"Hexagonal-prism voxel grid");
+            });
+        if shape != self.asset.shape {
+            self.edit_asset(|asset|{asset.shape=shape;Ok(())});
+        }
+        ui.small("Switching grid shape reinterprets the same integer cell coordinates.");
         ui.separator();
         ui.heading("PROCEDURAL MATERIAL");
         ui.small(if self.asset.material_graph.is_some() {
