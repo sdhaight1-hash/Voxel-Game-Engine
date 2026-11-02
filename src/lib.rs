@@ -6,6 +6,8 @@ use std::collections::HashSet;
 
 pub mod voxel;
 pub mod presets;
+pub mod node_library;
+pub use node_library::LibraryNode;
 pub use voxel::{VoxelSettings, VoxelShape, SideMapping};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -41,6 +43,7 @@ pub enum NodeKind {
     Bricks { columns: u32, rows: u32, mortar: f32 },
     Voronoi { cells: u32, seed: u32 },
     Strata { bands: u32, warp: f32, seed: u32 },
+    Library { operation: LibraryNode, amount: f32, seed: u32 },
     Colorize { dark: [u8; 3], light: [u8; 3] },
     Output,
 }
@@ -56,6 +59,7 @@ impl NodeKind {
             Self::Bricks { .. } => "Bricks",
             Self::Voronoi { .. } => "Voronoi",
             Self::Strata { .. } => "Strata",
+            Self::Library { operation, .. } => operation.name(),
             Self::Colorize { .. } => "Colorize",
             Self::Output => "Material Output",
         }
@@ -67,6 +71,7 @@ impl NodeKind {
                 | Self::Bricks { .. } | Self::Voronoi { .. } | Self::Strata { .. } => 0,
             Self::Invert | Self::Colorize { .. } => 1,
             Self::Blend { .. } => 2,
+            Self::Library { operation, .. } => operation.input_count(),
             Self::Output => 4,
         }
     }
@@ -80,6 +85,7 @@ impl NodeKind {
             (Self::Output, 2) => "Metallic",
             (Self::Output, 3) => "Height",
             (Self::Invert | Self::Colorize { .. }, 0) => "Image",
+            (Self::Library { operation, .. }, i) => operation.input_name(i),
             _ => "",
         }
     }
@@ -219,6 +225,8 @@ impl Graph {
                     => return Err("Voronoi cells out of range".into()),
                 NodeKind::Strata { bands, warp, .. } if !(1..=64).contains(&bands) || !warp.is_finite() || !(0.0..=1.0).contains(&warp)
                     => return Err("Strata settings out of range".into()),
+                NodeKind::Library { amount, .. } if !amount.is_finite() || !(0.0..=1.0).contains(&amount)
+                    => return Err("Library node amount must be between 0 and 1".into()),
                 _ => {}
             }
         }
@@ -387,6 +395,8 @@ impl Graph {
                 let t = (input[0] * 0.2126 + input[1] * 0.7152 + input[2] * 0.0722).clamp(0.0, 1.0);
                 std::array::from_fn(|i| (dark[i] as f32 * (1.0 - t) + light[i] as f32 * t) / 255.0)
             }
+            NodeKind::Library { operation, amount, seed } => operation.evaluate(u, v, amount, seed,
+                |input, su, sv| self.sample_input(id, input, su, sv)),
             NodeKind::Output => self.sample_input(id, 0, u, v),
         }
     }
