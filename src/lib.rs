@@ -16,6 +16,7 @@ pub mod presets;
 pub mod node_library;
 pub mod node_definitions;
 pub mod sdf;
+pub mod leaf_vector;
 pub mod sdf_bezier;
 pub use sdf::SdfBoolean;
 pub mod color_ramp;
