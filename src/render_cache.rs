@@ -5,7 +5,7 @@
 //! evaluating upstream inputs at their transformed UVs in Graph::sample.
 //! Once measured, downstream/analytic-node caching can be added separately.
 use crate::{Graph, NodeKind};
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
 
 /// Schema/bake algorithm version. Bump if pixel evaluation semantics change.
@@ -18,8 +18,9 @@ enum RenderTarget {
     Node(u64),
 }
 
-/// The graph's visual positions and voxel-display options do not affect these
-/// UV-domain RGBA renders, so neither belongs to the bake identity.
+/// The graph's visual positions, unrelated graph branches and voxel-display
+/// options do not affect these UV-domain RGBA renders. Only the target's
+/// transitive upstream dependency closure participates in the bake identity.
 #[derive(Clone, Debug, PartialEq)]
 struct RenderKey {
     bake_version: u32,
@@ -32,10 +33,35 @@ struct RenderKey {
 
 impl RenderKey {
     fn new(graph:&Graph,width:u32,height:u32,target:RenderTarget)->Self {
+        let root=match target {
+            RenderTarget::Node(id)=>Some(id),
+            RenderTarget::Normal|RenderTarget::Channel(_) => {
+                let channel=match target {
+                    RenderTarget::Normal=>3,
+                    RenderTarget::Channel(index)=>index,
+                    RenderTarget::Node(_)=>unreachable!(),
+                };
+                let output=graph.nodes.iter().find(|n|
+                    matches!(n.kind,NodeKind::Output)).expect("validated graph").id;
+                graph.links.iter().find(|link|
+                    link.to==output && link.input==channel).map(|link|link.from)
+            }
+        };
+        let mut required=HashSet::new();
+        let mut pending:Vec<u64>=root.into_iter().collect();
+        while let Some(id)=pending.pop() {
+            if required.insert(id) {
+                pending.extend(graph.links.iter().filter(|link|
+                    link.to==id).map(|link|link.from));
+            }
+        }
         Self {
             bake_version:BAKE_VERSION,width,height,target,
-            nodes:graph.nodes.iter().map(|n|(n.id,n.kind)).collect(),
-            links:graph.links.iter().map(|l|(l.from,l.to,l.input)).collect(),
+            nodes:graph.nodes.iter().filter(|n|required.contains(&n.id))
+                .map(|n|(n.id,n.kind)).collect(),
+            links:graph.links.iter().filter(|link|
+                required.contains(&link.to) && required.contains(&link.from))
+                .map(|l|(l.from,l.to,l.input)).collect(),
         }
     }
 }
@@ -154,6 +180,25 @@ mod tests {
         assert_eq!(cache.stats().hits,2);
         assert_eq!(cache.stats().misses,1);
         assert_eq!(cache.stats().resident_bytes,1024);
+    }
+
+    #[test]
+    fn editing_an_unrelated_branch_keeps_its_other_output_warm() {
+        let mut graph=Graph::demo_bricks();
+        // Noise #3 feeds Roughness, whereas Bricks->Colorize feeds Albedo.
+        let mut cache=GraphRenderCache::new(16*16*4*3);
+        let albedo=cache.render_channel(&graph,0,16,16).unwrap();
+        let roughness=cache.render_channel(&graph,1,16,16).unwrap();
+        graph.node_mut(3).unwrap().kind=NodeKind::Noise{
+            scale:14,octaves:4,seed:27,
+        };
+        let albedo_again=cache.render_channel(&graph,0,16,16).unwrap();
+        assert!(Arc::ptr_eq(&albedo,&albedo_again));
+        let roughness_again=cache.render_channel(&graph,1,16,16).unwrap();
+        assert!(!Arc::ptr_eq(&roughness,&roughness_again));
+        assert_ne!(roughness.as_ref(),roughness_again.as_ref());
+        assert_eq!(cache.stats().hits,1);
+        assert_eq!(cache.stats().misses,3);
     }
 
     #[test]
