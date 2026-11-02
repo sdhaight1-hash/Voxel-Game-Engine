@@ -2460,10 +2460,14 @@ mod wire_interaction_tests {
         app.import_tree_as_asset();
         assert!(app.asset.materials.bark.is_some());
         assert!(app.asset.materials.leaf.is_some());
+        let mut seasonal=app.asset.materials.effective_palettes(app.asset.leaf_color);
+        seasonal.seasons[2][0]=[220,80,39];
+        app.asset.materials.seasonal_palettes=Some(seasonal.clone());
         let json=app.asset.to_json().unwrap();
         let saved=VoxelAsset::from_json(&json).unwrap();
         assert!(saved.materials.bark.is_some());
         assert!(saved.materials.leaf.is_some());
+        assert_eq!(saved.materials.seasonal_palettes,Some(seasonal));
         assert!(saved.mtl().contains("bark-albedo.png"));
         assert!(saved.mtl().contains("foliage-leaves-alpha.png"));
         app.editing_material=Some((true,MaterialRole::Opacity));
