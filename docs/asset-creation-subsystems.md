@@ -66,6 +66,14 @@ Authoring subsystems (existing)                World systems (future)
 
 Species are designed to produce distinguishable architectural habits on the same world hexel grid: high umbrella Acacia crowns, tall Kapok, spreading broadleaves, tiered conifers, columnar Mediterranean Cypress, drooping Willow, orchard forms and narrow bamboo stalks. Each recipe provides its own editable height, trunk size, branch count, branch reach, leaf density, pigments and growth settings. Multiple biological species may legitimately share leaf **morphology**; the goal is differentiated geometry and identity, not an artificial one-to-one set of 29 alpha silhouettes.
 
+## Seasonal foliage palette authoring and wgpu interpolation (implemented)
+
+Each species defines four seasonal color gradients, each with four editable stops ordered shadow/base/midtone/highlight. `SeasonalPalettes` is compact RGB8 source data stored in `FoliageMaterials.seasonal_palettes` (optional for pre-existing saved assets, which derive defaults from their species and leaf tint). The UI supports editing/resetting every stop for Foliage and converted Assets, and both JSON formats retain authored palettes. Species families vary appropriately: temperate broadleaf trees develop stronger autumn colors, conifers remain comparatively stable, and Larch/Bald Cypress can shift autumn color.
+
+**GPU path:** One 16-element vec4 uniform palette is uploaded with each preview scene. `voxel_gpu.wgsl` samples a 4-stop gradient by leaf UV and blends between adjacent seasons using a 0–4 progress uniform updated per frame; 4 wraps to Spring. Already-baked alpha cutouts and detail stay unchanged, and moving the preview slider **does not** regenerate geometry, bake textures or re-upload vertex buffers. The shader applies the seasonal color relative to the species base tint, retaining individual leaf color variation and fruit accents. This uses the existing `wgpu` renderer (Vulkan when available), not a separate renderer or an extra dependency.
+
+**Scope:** This is **visual palette interpolation**, not a world-season controller, climate/ecology simulation, dropping foliage, fruit ripening or leaf-growth system. The CPU fallback and standard static OBJ/MTL/PNG exports do not animate seasonal color; runtime code will use the serialized palettes with its own per-instance season/time policy.
+
 ## Structural trees: trunk, attachments, supported foliage (implemented)
 
 The Foliage generator now records a **single cohesive tree structure** alongside its real 1 m harvestable hexels, inspired by PlanetSmith's editable structure workflow and the Vintage Story forum discussion of believable branches and crowns. This is **our own implementation**; no external model packs are imported.
