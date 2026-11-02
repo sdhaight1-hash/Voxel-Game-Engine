@@ -59,13 +59,13 @@ pub struct Scene {
     wind_strength: f32,
     wind_speed: f32,
     voxel_size: f32,
-    spring_blossoms: bool,
+    flower_kind: f32, // 0 none, 1 pink ornamental cherry, 2 white coffee
 }
 
 impl Scene {
     pub fn from_mesh(mesh: &FoliageMesh, bark: &[u8], leaf: &[u8],
                      leaf_tint: [u8; 3],palette:[[f32;4];16],
-                     spring_blossoms:bool) -> Self {
+                     flower_kind:f32) -> Self {
         let mut min = [f32::INFINITY;3];
         let mut max = [f32::NEG_INFINITY;3];
         let mut vertices = Vec::with_capacity(mesh.triangles.len() * 3);
@@ -129,7 +129,7 @@ impl Scene {
             wind_strength:mesh.leaf_render.wind_strength,
             wind_speed:mesh.leaf_render.wind_speed,
             voxel_size:mesh.voxel_size,
-            spring_blossoms,
+            flower_kind,
         }
     }
 
@@ -374,7 +374,7 @@ impl egui_wgpu::CallbackTrait for RenderScene {
             view:[front[0],front[1],front[2],0.4/span],
             wind:[self.time,self.scene.wind_strength,self.scene.wind_speed,self.scene.voxel_size],
             season:[self.season_progress.rem_euclid(4.0),
-                if self.scene.spring_blossoms {1.0} else {0.0},0.0,0.0],
+                self.scene.flower_kind,0.0,0.0],
             leaf_base:self.scene.leaf_base,
         };
         queue.write_buffer(&resources.uniform,0,bytemuck::bytes_of(&globals));
@@ -472,12 +472,12 @@ mod tests {
         ]).unwrap();
         let rgba=vec![255;TEX_SIZE as usize*TEX_SIZE as usize*4];
         let palette=texture_studio::foliage_materials::SeasonalPalettes::default();
-        let scene=Scene::from_mesh(&mesh,&rgba,&rgba,[50,150,80],palette.gpu_stops(),false);
+        let scene=Scene::from_mesh(&mesh,&rgba,&rgba,[50,150,80],palette.gpu_stops(),0.0);
         assert_eq!(scene.triangle_count(),mesh.triangle_count());
         assert!(scene.vertices.iter().any(|v|v.kind==0.0));
         assert!(scene.vertices.iter().any(|v|v.kind==1.0&&v.sway_weight==1.0));
         assert!(scene.vertices.iter().all(|v|v.uv.iter().all(|x|x.is_finite())));
         assert!(scene.span>0.0);
-        assert!(!scene.spring_blossoms);
+        assert_eq!(scene.flower_kind,0.0);
     }
 }
