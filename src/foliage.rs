@@ -1886,14 +1886,54 @@ mod tests {
             assert_eq!(faces.len(), expected);
             cells.insert([0, 0, 1], Material::Leaf);
             let faces = surface_triangles(&cells, shape, 1.0, LeafRenderSettings::default());
-            assert_eq!(faces.len(), expected+8, "leaf is four 2-sided triangles per plane");
-            assert_eq!(faces.iter().filter(|t|t.cutout).count(),8);
+            assert_eq!(faces.len(), expected+24, "leaf uses six double-sided sprays");
+            assert_eq!(faces.iter().filter(|t|t.cutout).count(),24);
             let solid=LeafRenderSettings {
                 geometry:LeafGeometry::SolidVoxel,..Default::default() };
             let legacy = surface_triangles(&cells,shape,1.0,solid);
             assert_eq!(legacy.len(),expected*2-if shape==VoxelShape::Cube {4} else {8});
 
         }
+    }
+
+    #[test]
+    fn leaf_sprays_are_deterministic_and_owned_by_one_harvestable_cell() {
+        let mut cells=BTreeMap::new();
+        cells.insert([2,-1,4],Material::Leaf);
+        let a=surface_triangles(&cells,VoxelShape::HexPrism,1.0,
+            LeafRenderSettings::default());
+        let b=surface_triangles(&cells,VoxelShape::HexPrism,1.0,
+            LeafRenderSettings::default());
+        assert_eq!(a.len(),24);
+        assert!(a.iter().all(|t|t.cell==[2,-1,4] && t.cutout));
+        assert_eq!(a.iter().map(|t|t.points).collect::<Vec<_>>(),
+            b.iter().map(|t|t.points).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn interior_of_a_dense_crown_lobe_is_not_perforated_randomly() {
+        let mut cells=BTreeMap::new();
+        paint_leaf_cluster(&mut cells,VoxelShape::HexPrism,1.0,
+            [0.0,0.0,8.0],4.0,3.2,0.82,0.32,0.12,42,7);
+        let mut tested=0usize;
+        let mut filled=0usize;
+        for z in 5..=11 {
+            for q in -5..=5 {
+                for r in -5..=5 {
+                    let key=[q,r,z];
+                    let p=grid_position(VoxelShape::HexPrism,1.0,key);
+                    let d=((p[0]/4.0).powi(2)+(p[1]/4.0).powi(2)
+                        +((p[2]-8.0)/3.2).powi(2)).sqrt();
+                    if d<0.60 {
+                        tested+=1;
+                        if cells.contains_key(&key){filled+=1;}
+                    }
+                }
+            }
+        }
+        assert!(tested>10);
+        assert!(filled as f32/tested as f32>0.94,
+            "dense lobe has too many hollow interior cells: {filled}/{tested}");
     }
 
     #[test]
