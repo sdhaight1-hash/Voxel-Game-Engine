@@ -91,21 +91,25 @@ fn rasterize_leaf_card(mut distance:impl FnMut(f32,f32)->(f32,f32),
             let (leaf,twig)=distance(u,v);
             let leaves=leaf<=0.0;
             let twig=twig<=0.0;
-            let shade=if leaves {
-                0.83+0.14*((x*11+y*7)%17) as f32/16.0
-            } else {0.58};
-            let value=(shade*255.0) as u8;
+            let mut covered_leaf=false;
             let alpha=if coverage_2x2 {
                 let mut inside=0u32;
                 for oy in [0.25,0.75] {
                     for ox in [0.25,0.75] {
                         let (l,t)=distance((x as f32+ox)/SIZE as f32,
                             (y as f32+oy)/SIZE as f32);
+                        if l<=0.0 {covered_leaf=true;}
                         if l<=0.0||t<=0.0 {inside+=1;}
                     }
                 }
                 ((inside*255+2)/4) as u8
             } else if leaves||twig {255} else {0};
+            // Fractional leaf pixels should not inherit the darker twig
+            // tint merely because the pixel center is just outside a blade.
+            let shade=if leaves||covered_leaf {
+                0.83+0.14*((x*11+y*7)%17) as f32/16.0
+            } else {0.58};
+            let value=(shade*255.0) as u8;
             pixels.extend_from_slice(&[value,value,value,alpha]);
         }
     }
@@ -271,6 +275,39 @@ mod tests {
         }
         assert!(vector_subpixel_cutout_rgba(
             LeafSilhouetteSource::LegacySpecies,PlantPreset::Oak).is_err());
+    }
+
+    #[test]
+    fn fractional_leaf_edge_uses_leaf_shading_not_dark_twig_shading() {
+        let image=vector_subpixel_cutout_rgba(
+            LeafSilhouetteSource::VectorOak{lobe_width:1.0},
+            PlantPreset::Oak).unwrap();
+        let mut found=false;
+        for y in 0..64 {
+            for x in 0..64 {
+                let i=(y*64+x)*4;
+                let u=(x as f32+0.5)/64.0;
+                let v=(y as f32+0.5)/64.0;
+                let (leaf,_)=oak_distance(u,v,1.0);
+                if leaf>0.0 && image[i+3]>0 && image[i+3]<255 {
+                    let mut subleaf=false;
+                    for oy in [0.25,0.75] {
+                        for ox in [0.25,0.75] {
+                            subleaf|=oak_distance(
+                                (x as f32+ox)/64.0,
+                                (y as f32+oy)/64.0,1.0).0<=0.0;
+                        }
+                    }
+                    if subleaf {
+                        assert!(image[i]>=210,"newly covered leaf edge must use leaf shade");
+                        found=true;
+                        break;
+                    }
+                }
+            }
+            if found {break;}
+        }
+        assert!(found,"must exercise a leaf fringe outside the center contour");
     }
 
     #[test]
