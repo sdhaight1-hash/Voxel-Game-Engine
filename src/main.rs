@@ -87,30 +87,47 @@ impl Studio {
         if !self.dirty && self.previewed_id == self.selected { return; }
         self.dirty = false;
         self.previewed_id = self.selected;
-        let rendered = if self.preview_channel == 4 {
-            self.graph.render_normal_rgba(PREVIEW_SIZE, PREVIEW_SIZE)
-        } else {
-            self.graph.render_output_channel_rgba(self.preview_channel, PREVIEW_SIZE, PREVIEW_SIZE)
-        };
-        match rendered {
-            Ok(pixels) => put_texture(ctx, &mut self.preview, "output-preview", pixels, PREVIEW_SIZE),
-            Err(err) => self.status = format!("Preview error: {err}"),
-        }
-        match render_voxel_preview(&self.graph, self.graph.voxel, PREVIEW_SIZE, self.voxel_yaw) {
-            Ok(pixels) => put_texture(ctx, &mut self.voxel_preview, "voxel-preview", pixels, PREVIEW_SIZE),
-            Err(err) => self.status = format!("Voxel preview error: {err}"),
-        }
-        match render_atlas(&self.graph, self.preview_channel, self.graph.voxel, 64) {
-            Ok((meta, pixels)) => put_texture_rect(ctx, &mut self.atlas_preview,
-                "voxel-atlas", pixels, [meta.width as usize, meta.height as usize]),
-            Err(err) => self.status = format!("Voxel atlas error: {err}"),
-        }
-        if let Some(id) = self.selected {
-            if let Ok(pixels) = self.graph.render_node_rgba(id, PREVIEW_SIZE, PREVIEW_SIZE) {
-                put_texture(ctx, &mut self.selected_preview, "selected-preview", pixels, PREVIEW_SIZE);
+        // Only render the visible preview. With the expanded preset graphs,
+        // computing every PBR channel, a voxel and a full atlas on each edit
+        // blocks the native UI for no benefit.
+        match self.view {
+            0 if !self.graph.voxel.geometryless => {
+                match render_voxel_preview(&self.graph, self.graph.voxel, PREVIEW_SIZE, self.voxel_yaw) {
+                    Ok(pixels) => put_texture(ctx, &mut self.voxel_preview,
+                        "voxel-preview", pixels, PREVIEW_SIZE),
+                    Err(err) => self.status = format!("Voxel preview error: {err}"),
+                }
             }
-        } else {
-            self.selected_preview = None;
+            1 => {
+                let rendered = if self.preview_channel == 4 {
+                    self.graph.render_normal_rgba(PREVIEW_SIZE, PREVIEW_SIZE)
+                } else {
+                    self.graph.render_output_channel_rgba(self.preview_channel, PREVIEW_SIZE, PREVIEW_SIZE)
+                };
+                match rendered {
+                    Ok(pixels) => put_texture(ctx, &mut self.preview,
+                        "output-preview", pixels, PREVIEW_SIZE),
+                    Err(err) => self.status = format!("Preview error: {err}"),
+                }
+            }
+            2 => {
+                if let Some(id) = self.selected {
+                    if let Ok(pixels) = self.graph.render_node_rgba(id, PREVIEW_SIZE, PREVIEW_SIZE) {
+                        put_texture(ctx, &mut self.selected_preview,
+                            "selected-preview", pixels, PREVIEW_SIZE);
+                    }
+                } else {
+                    self.selected_preview = None;
+                }
+            }
+            3 if !self.graph.voxel.geometryless => {
+                match render_atlas(&self.graph, self.preview_channel, self.graph.voxel, 64) {
+                    Ok((meta, pixels)) => put_texture_rect(ctx, &mut self.atlas_preview,
+                        "voxel-atlas", pixels, [meta.width as usize, meta.height as usize]),
+                    Err(err) => self.status = format!("Voxel atlas error: {err}"),
+                }
+            }
+            _ => {}
         }
         self.thumbs.retain(|id, _| self.graph.node(*id).is_some());
         for node in &self.graph.nodes {
@@ -224,6 +241,10 @@ impl Studio {
     }
 
     fn export_voxel(&mut self) {
+        if self.graph.voxel.geometryless {
+            self.status = "Geometryless mode exports square 2D maps. Use Export PBR maps.".into();
+            return;
+        }
         let Some(folder) = rfd::FileDialog::new().pick_folder() else { return; };
         let size = self.export_size;
         let settings = self.graph.voxel;
@@ -373,12 +394,12 @@ impl Studio {
         let title = preset.title();
         // Shape/side mapping are project settings and must survive changing materials.
         self.graph = preset.build_graph(self.graph.voxel);
-        self.selected = Some(2);
+        self.selected = Some(4); // Colorize is the primary editable color stage.
         self.connecting = None;
         self.wire_gesture = None;
         self.project_path = None;
         self.pan = Vec2::ZERO;
-        self.zoom = 0.85;
+        self.zoom = 0.7;
         self.dirty = true;
         self.status = format!("Applied '{title}' · editable procedural approximation. Save as a new project.");
     }
@@ -893,7 +914,10 @@ impl eframe::App for Studio {
                     });
                 if ui.button("Export image").clicked() { self.export_png(); }
                 if ui.button("Export PBR maps").clicked() { self.export_material(); }
-                if ui.button("Export voxel OBJ + atlases").clicked() { self.export_voxel(); }
+                if ui.add_enabled(!self.graph.voxel.geometryless,
+                    egui::Button::new("Export voxel OBJ + atlases")).clicked() {
+                    self.export_voxel();
+                }
                 ui.separator();
                 if ui.button("Example").clicked() { self.demo_material(); }
             });
@@ -913,41 +937,73 @@ impl eframe::App for Studio {
         });
         egui::Panel::right("previews").resizable(true).default_size(300.0).min_size(240.0).show(ui, |ui| {
             ui.add_space(6.0);
-            ui.heading("VOXEL GEOMETRY");
+            ui.heading("MATERIAL GEOMETRY");
             ui.horizontal(|ui| {
-                ui.label("Shape");
-                egui::ComboBox::from_id_salt("voxel_shape")
-                    .selected_text(self.graph.voxel.shape.name())
+                ui.label("Mode");
+                egui::ComboBox::from_id_salt("material_geometry")
+                    .selected_text(if self.graph.voxel.geometryless {
+                        "Geometryless (2D)"
+                    } else { self.graph.voxel.shape.name() })
                     .show_ui(ui, |ui| {
-                        self.dirty |= ui.selectable_value(&mut self.graph.voxel.shape,
-                            VoxelShape::Cube, "Cube (6 faces)").changed();
-                        self.dirty |= ui.selectable_value(&mut self.graph.voxel.shape,
-                            VoxelShape::HexPrism, "Hexagonal prism (8 faces)").changed();
+                        if ui.selectable_label(self.graph.voxel.geometryless,
+                            "Geometryless (2D)").clicked() {
+                            self.graph.voxel.geometryless = true;
+                            self.view = 1;
+                            self.dirty = true;
+                        }
+                        if ui.selectable_label(!self.graph.voxel.geometryless &&
+                            self.graph.voxel.shape == VoxelShape::Cube, "Cube (6 faces)").clicked() {
+                            self.graph.voxel.geometryless = false;
+                            self.graph.voxel.shape = VoxelShape::Cube;
+                            self.view = 0;
+                            self.dirty = true;
+                        }
+                        if ui.selectable_label(!self.graph.voxel.geometryless &&
+                            self.graph.voxel.shape == VoxelShape::HexPrism,
+                            "Hexagonal prism (8 faces)").clicked() {
+                            self.graph.voxel.geometryless = false;
+                            self.graph.voxel.shape = VoxelShape::HexPrism;
+                            self.view = 0;
+                            self.dirty = true;
+                        }
                     });
             });
-            ui.horizontal(|ui| {
-                ui.label("Side UV");
-                egui::ComboBox::from_id_salt("voxel_uv_mapping")
-                    .selected_text(match self.graph.voxel.side_mapping {
-                        SideMapping::Wrap => "Wrap around perimeter",
-                        SideMapping::Repeat => "Repeat per face",
-                    })
-                    .show_ui(ui, |ui| {
-                        self.dirty |= ui.selectable_value(&mut self.graph.voxel.side_mapping,
-                            SideMapping::Wrap, "Wrap around perimeter").changed();
-                        self.dirty |= ui.selectable_value(&mut self.graph.voxel.side_mapping,
-                            SideMapping::Repeat, "Repeat per face").changed();
-                    });
-            });
-            ui.small("This shape and UV mode are saved in your project.");
+            if !self.graph.voxel.geometryless {
+                ui.horizontal(|ui| {
+                    ui.label("Side UV");
+                    egui::ComboBox::from_id_salt("voxel_uv_mapping")
+                        .selected_text(match self.graph.voxel.side_mapping {
+                            SideMapping::Wrap => "Wrap around perimeter",
+                            SideMapping::Repeat => "Repeat per face",
+                        })
+                        .show_ui(ui, |ui| {
+                            self.dirty |= ui.selectable_value(&mut self.graph.voxel.side_mapping,
+                                SideMapping::Wrap, "Wrap around perimeter").changed();
+                            self.dirty |= ui.selectable_value(&mut self.graph.voxel.side_mapping,
+                                SideMapping::Repeat, "Repeat per face").changed();
+                        });
+                });
+                ui.small("Shape and UV mode are saved in the project.");
+            } else {
+                ui.small("2D-only PBR textures. No mesh, UV atlas, or voxel preview.");
+                ui.small("Export image or Export PBR maps for square PNG files.");
+            }
             ui.separator();
             ui.heading("PREVIEW");
             ui.horizontal(|ui| {
-                ui.selectable_value(&mut self.view, 0, "Voxel 3D");
-                ui.selectable_value(&mut self.view, 1, "2D");
-                ui.selectable_value(&mut self.view, 2, "Node");
-                ui.selectable_value(&mut self.view, 3, "Atlas");
+                if !self.graph.voxel.geometryless {
+                    self.dirty |= ui.selectable_value(&mut self.view, 0, "Voxel 3D").changed();
+                }
+                self.dirty |= ui.selectable_value(&mut self.view, 1, "2D").changed();
+                self.dirty |= ui.selectable_value(&mut self.view, 2, "Node").changed();
+                if !self.graph.voxel.geometryless {
+                    self.dirty |= ui.selectable_value(&mut self.view, 3, "Atlas").changed();
+                }
             });
+            if self.graph.voxel.geometryless && (self.view == 0 || self.view == 3) {
+                self.view = 1;
+                self.dirty = true;
+            }
             if self.view == 0 {
                 self.dirty |= ui.add(egui::Slider::new(&mut self.voxel_yaw,
                     0.0..=std::f32::consts::TAU).text("Orbit")).changed();
@@ -978,7 +1034,7 @@ impl eframe::App for Studio {
                 ui.label("No preview available.");
             }
             ui.small(match self.view {
-                0 => "Actual cube/hex-prism faces with UV-mapped texture · approximate lighting",
+                0 => "Cube / hex-prism faces with UV-mapped texture · approximate lighting",
                 1 => "Tileable 2D material channel",
                 2 => "Selected node image",
                 _ => "Face tiles: sides first, then top and bottom caps",
