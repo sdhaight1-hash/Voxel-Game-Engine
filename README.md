@@ -17,6 +17,31 @@ An offline, standalone **Rust desktop application** for building procedural text
 - **Voxel export:** generate five per-face RGBA texture atlases, a UV-unwrapped `voxel.obj`, `voxel.mtl` and machine-readable `voxel_layout.json`. The OBJ material connects albedo; other PBR maps can be assigned in the target renderer.
 - **Projects:** save/load JSON node graphs *including voxel shape and side UV mode*; older projects without voxel settings load as cubes.
 
+## Native Procedural Foliage Designer
+
+The app now includes a separate **Library → Foliage** workspace for modeling actual 3D vegetation, inspired by the **Unreal Engine 5.7 Procedural Vegetation Editor** tutorial: https://www.youtube.com/watch?v=o-kMXZX_oK8. This is an independently implemented Rust tree-mesh generator, not a copy of Epic's plugin, presets or proprietary Megaplants assets.
+
+**Included plant starters:** Oak, Pine, Birch, Willow, Maple and Shrub. Every preset is a starting point with a reproducible random seed and editable controls.
+
+Select one of ten **growth stages** in the Foliage panel, then edit its settings in the inspector:
+
+| Stage | Native behavior |
+|---|---|
+| Preset Loader | Species, seed, tree height, branching density and length |
+| Carve | Remove lower/upper branch-growing zones |
+| Gravity / Phototropism | Bend branches downward or steer them upward toward light |
+| Slope | Lean the trunk for hillsides / windswept forms |
+| Scale | Scale the complete tree without changing the underlying growth seed |
+| Remove Branches | Seeded random pruning |
+| Mesh Builder | Tapered polygon trunk, limbs and twig geometry; adjustable 3–12 radial segments |
+| Foliage Palette | Bark color and three leaf-tone material slots |
+| Foliage Distributor | Leaf density, scale, variation and orientation; actual triangulated leaf geometry |
+| Output | Save foliage settings or export a standalone polygon mesh |
+
+The central viewport shows a rotatable, shaded **3D triangle-mesh preview**, rather than a 2D foliage noise texture. The foliage editor works alongside the previous material graph. **Save Tree** writes a standalone editable `tree.foliage.json`; **Open Tree** reloads it; **Export Tree OBJ** writes `foliage.obj`, `foliage.mtl` and `foliage.json`. The MTL colors are bark, leaf, darker leaf, and lighter leaf. These are solid polygon leaves and branches; the exporter does not depend on missing image assets.
+
+**Important differences from Unreal:** The stages are a fixed procedural editing sequence, not a freely rewritable Unreal point-cloud graph. Output is a static triangulated OBJ with MTL; no skeletal bones, live physics wind, Nanite, PCG forest population, terrain-aware plant placement, foliage instancing, photoreal leaf textures, or Fab/Megaplant asset ingestion. Those require a bigger geometry/scene architecture.
+
 ## Expanded Material Maker-inspired Node Library
 
 The native **Nodes** tab now includes **76 additional, working 2D nodes** in seven searchable groups:
@@ -147,6 +172,7 @@ The OBJ/MTL format directly links the albedo map. Roughness, metallic, height, a
 - `src/lib.rs`: deterministic tileable procedural graph renderer, input validation, PBR channels, and unit tests.
 - `src/presets.rs` and `src/presets/catalog.json`: embedded 1,039-preset natural material catalog and procedural node-graph builder.
 - `src/node_library.rs`: 76 executable original Rust generators, filters, math/mix operations and transforms with tests.
+- `src/foliage.rs`: deterministic 3D plant skeleton, branch and leaf generation, OBJ/MTL export, and tests.
 - `src/main.rs`: native egui interface, graph controls, sphere and node previews, project dialogs, and PNG output.
 - `.github/workflows/ci.yml`: build/test validation on push.
 - `.github/workflows/desktop-builds.yml`: manual downloadable desktop executables.
