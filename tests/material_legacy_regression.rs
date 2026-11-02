@@ -158,6 +158,45 @@ fn branching_warped_materials_remain_byte_identical_after_old_graph_roundtrip() 
     }
 }
 
+/// The CI benchmark step runs this alongside the pre-optimization baseline.
+/// It measures repeat-output reuse (not GPU upload or intermediate graph caching).
+#[test]
+#[ignore = "run explicitly to compare cold and warm graph cache output"]
+fn profile_bounded_graph_output_cache() {
+    use std::time::Instant;
+    use texture_studio::render_cache::GraphRenderCache;
+    let graph=old_graph();
+    let mut cache=GraphRenderCache::new(64*1024*1024);
+    for size in [256,512,1024,2048] {
+        let cold_started=Instant::now();
+        let cold=cache.render_channel(&graph,0,size,size).unwrap();
+        let cold_ms=cold_started.elapsed().as_secs_f64()*1000.0;
+        let warm_started=Instant::now();
+        let warm=cache.render_channel(&graph,0,size,size).unwrap();
+        let warm_ms=warm_started.elapsed().as_secs_f64()*1000.0;
+        assert!(std::sync::Arc::ptr_eq(&cold,&warm));
+        let stats=cache.stats();
+        println!("material-cache-baseline graph=legacy_color size={size} cold_ms={cold_ms:.3} warm_ms={warm_ms:.3} hits={} misses={} resident_bytes={} peak_bytes={} fnv64={:016x}",
+            stats.hits,stats.misses,stats.resident_bytes,
+            stats.peak_resident_bytes,fnv1a(warm.as_ref()));
+    }
+    let mut warped=Graph::default();
+    let warp=warped.add_node(NodeKind::Library{
+        operation:LibraryNode::Warp,amount:0.4,seed:41,
+    },[120.0,10.0]);
+    warped.connect(1,warp,0).unwrap();
+    warped.connect(warp,2,0).unwrap();
+    let started=Instant::now();
+    let cold=cache.render_channel(&warped,0,512,512).unwrap();
+    let cold_ms=started.elapsed().as_secs_f64()*1000.0;
+    let started=Instant::now();
+    let warm=cache.render_channel(&warped,0,512,512).unwrap();
+    let warm_ms=started.elapsed().as_secs_f64()*1000.0;
+    assert!(std::sync::Arc::ptr_eq(&cold,&warm));
+    println!("material-cache-baseline graph=warped_noise size=512 cold_ms={cold_ms:.3} warm_ms={warm_ms:.3} fnv64={:016x}",
+        fnv1a(warm.as_ref()));
+}
+
 /// Opt-in measurement, never a CI correctness assertion. GitHub Actions can
 /// execute it with `cargo test --test material_legacy_regression -- --ignored --nocapture`.
 /// Record the CPU/runner for meaningful before/after comparisons.
