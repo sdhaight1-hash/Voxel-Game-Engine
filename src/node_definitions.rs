@@ -1,10 +1,11 @@
 //! Stable authoring metadata. Legacy nodes continue to evaluate as RGB;
 //! this is a compatibility adapter, not a second graph execution engine.
 use crate::NodeKind;
+use serde::{Deserialize,Serialize};
 
 /// Logical socket semantics. Unmigrated nodes remain Color because the old
 /// evaluator transports RGB even for roughness/height and grayscale fields.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SocketType {
     Scalar,
     Mask,
