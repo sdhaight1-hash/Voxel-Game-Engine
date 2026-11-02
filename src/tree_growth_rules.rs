@@ -3,8 +3,9 @@
 //! measured botanical growth simulations. Author-edited slider values still
 //! apply, but the seed cannot turn one species into a different silhouette.
 use crate::foliage::PlantPreset;
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Phyllotaxy {
     Spiral,       // staggered / alternate shoots
     Opposite,     // paired branches rotated between pairs
@@ -12,7 +13,7 @@ pub enum Phyllotaxy {
     CulmNodes,    // bamboo branches at discrete culm nodes
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LeafPlacement {
     OuterCrown,      // terminal and near-terminal broadleaf sprays
     AlongTwigs,      // compound leaves along fine lateral shoots
@@ -23,7 +24,7 @@ pub enum LeafPlacement {
     CulmLeaves,      // bamboo leaves concentrated at nodes / twigs
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TreeGrowthRules {
     pub phyllotaxy: Phyllotaxy,
     pub foliage: LeafPlacement,
@@ -41,23 +42,55 @@ pub struct TreeGrowthRules {
 
 impl TreeGrowthRules {
     pub fn check(self) -> bool {
-        self.primary_pitch[0] <= self.primary_pitch[1]
+        self.primary_pitch.into_iter().chain(self.secondary_pitch)
+            .all(f32::is_finite)
+            && self.primary_pitch[0] <= self.primary_pitch[1]
             && self.secondary_pitch[0] <= self.secondary_pitch[1]
+            && self.reach_factor.is_finite()
             && self.reach_factor > 0.0 && self.reach_factor <= 1.5
             && (0.0..=1.0).contains(&self.extra_twig_chance)
             && (0.0..=0.08).contains(&self.lean_fraction)
             && (0.25..=1.5).contains(&self.foliage_factor)
     }
+
+    /// Custom values can tune a species, never replace its architecture.
+    pub fn within_species(self, base: Self) -> bool {
+        fn near(x: f32, center: f32, allowance: f32) -> bool {
+            x.is_finite() && (x-center).abs() <= allowance + 0.00001
+        }
+        self.check()
+            && self.phyllotaxy == base.phyllotaxy && self.foliage == base.foliage
+            && (0..2).all(|i| near(self.primary_pitch[i],base.primary_pitch[i],0.20))
+            && (0..2).all(|i| near(self.secondary_pitch[i],base.secondary_pitch[i],0.20))
+            && near(self.reach_factor,base.reach_factor,base.reach_factor*0.20)
+            && near(self.extra_twig_chance,base.extra_twig_chance,0.20)
+            && near(self.lean_fraction,base.lean_fraction,0.012)
+            && near(self.foliage_factor,base.foliage_factor,base.foliage_factor*0.20)
+    }
 }
 
 /// Species-level trunk proportions. Radius is still a solid 1m hexel
 /// occupancy; this rule controls the occupancy envelope and base flare.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TrunkGrowthRules {
     pub taper: f32,
     pub base_flare: f32,
     pub height_seed_variation: f32,
     pub radius_seed_variation: f32,
+}
+
+impl TrunkGrowthRules {
+    pub fn within_species(self, base: Self) -> bool {
+        fn near(x: f32, center: f32, allowance: f32) -> bool {
+            x.is_finite() && (x-center).abs() <= allowance + 0.00001
+        }
+        near(self.taper,base.taper,0.12)
+            && (0.0..=0.85).contains(&self.taper)
+            && near(self.base_flare,base.base_flare,0.20)
+            && (0.0..=1.0).contains(&self.base_flare)
+            && (0.0..=0.10).contains(&self.height_seed_variation)
+            && (0.0..=0.15).contains(&self.radius_seed_variation)
+    }
 }
 
 impl PlantPreset {
@@ -148,6 +181,25 @@ mod tests {
             PlantPreset::Maple.trunk_growth_rules().base_flare);
         assert!(PlantPreset::GreenBamboo.trunk_growth_rules().taper <
             PlantPreset::Oak.trunk_growth_rules().taper);
+    }
+
+    #[test]
+    fn custom_rules_cannot_change_species_architecture() {
+        for species in PlantPreset::ALL {
+            let base=species.growth_rules();
+            assert!(base.within_species(base), "{species:?}");
+            let trunk=species.trunk_growth_rules();
+            assert!(trunk.within_species(trunk), "{species:?}");
+        }
+        let mut oak=PlantPreset::Oak.growth_rules();
+        oak.phyllotaxy=Phyllotaxy::CulmNodes;
+        assert!(!oak.within_species(PlantPreset::Oak.growth_rules()));
+        let mut willow=PlantPreset::Willow.growth_rules();
+        willow.primary_pitch[1]=0.8;
+        assert!(!willow.within_species(PlantPreset::Willow.growth_rules()));
+        let mut trunk=PlantPreset::Kapok.trunk_growth_rules();
+        trunk.base_flare=0.0;
+        assert!(!trunk.within_species(PlantPreset::Kapok.trunk_growth_rules()));
     }
 
     #[test]

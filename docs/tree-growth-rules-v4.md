@@ -12,6 +12,18 @@
 - The Foliage inspector reports the species' branch and foliage architecture.
 - Regression tests cover deterministic same-seed geometry, changing seed geometry, shape-variant identity, structural validation and bound ranges.
 
+## Tree Designer preset editing
+
+The `Foliage → Preset Loader` inspector exposes a collapsible **Species growth rules** editor. Selecting any of the 29 built-in tree/bamboo presets loads its own growth profile, including trunk taper and base flare, primary and secondary pitch ranges, lateral twig chance, and leaf-cluster size. The branching pattern and leaf arrangement are fixed to the species.
+
+- **Seed / Next seed** create deterministic individuals of the selected type.
+- Numeric growth controls can be tuned only within the current species' authored bounds. These controls are applied by `FoliageProject::generate()`, not just displayed.
+- **Reset to species growth defaults** removes only rule overrides; it does not reset the current seed, palette, materials, or unrelated authoring sliders.
+- **Save foliage project / Open foliage project** persist edited rule overrides alongside existing geometry and material settings. Older project JSON files with no overrides continue to load using species defaults.
+- Selecting another tree type loads that species' canonical preset and colors as before.
+
+The separate **Presets** workspace remains the procedural material library; tree growth profiles belong to **Foliage / Tree Designer**, not the material graph presets.
+
 ## Compatibility boundaries
 - No change to serialized `FoliageProject` fields or authored material graph format.
 - Existing saved editable `VoxelAsset` objects are independent and do not regenerate automatically.

@@ -41,6 +41,88 @@ fn seasonal_palette_editor(ui:&mut egui::Ui,materials:&mut FoliageMaterials,
     changed
 }
 
+/// Edit one tree's growth rules without replacing the selected species.
+/// Geometry/morphology controls use the same bounds as FoliageProject::validate.
+fn species_growth_editor(ui:&mut egui::Ui,tree:&mut FoliageProject)->bool {
+    let base=tree.preset.growth_rules();
+    let trunk_base=tree.preset.trunk_growth_rules();
+    let mut rules=tree.effective_growth_rules();
+    let mut trunk=tree.effective_trunk_rules();
+    let mut edited=false;
+    let mut reset=false;
+    ui.collapsing("Species growth rules (trunk, branches, twigs, leaves)",|ui| {
+        ui.small(format!("Branch pattern: {:?} • leaf arrangement: {:?}",
+            base.phyllotaxy,base.foliage));
+        ui.small("Growth patterns are locked to the species. Sliders stay inside its limits.");
+        ui.separator();
+        ui.strong("Trunk");
+        edited |= ui.add(egui::Slider::new(&mut trunk.taper,
+            (trunk_base.taper-0.12).max(0.0)..=
+            (trunk_base.taper+0.12).min(0.85))
+            .text("Taper")).changed();
+        edited |= ui.add(egui::Slider::new(&mut trunk.base_flare,
+            (trunk_base.base_flare-0.20).max(0.0)..=
+            (trunk_base.base_flare+0.20).min(1.0))
+            .text("Root flare")).changed();
+        edited |= ui.add(egui::Slider::new(&mut trunk.height_seed_variation,
+            0.0..=0.10).text("Seed height variation")).changed();
+        edited |= ui.add(egui::Slider::new(&mut trunk.radius_seed_variation,
+            0.0..=0.15).text("Seed width variation")).changed();
+        edited |= ui.add(egui::Slider::new(&mut rules.lean_fraction,
+            (base.lean_fraction-0.012).max(0.0)..=
+            (base.lean_fraction+0.012).min(0.08))
+            .text("Seed lean")).changed();
+        ui.separator();
+        ui.strong("Primary branches");
+        edited |= ui.add(egui::Slider::new(&mut rules.primary_pitch[0],
+            (base.primary_pitch[0]-0.20)..=(base.primary_pitch[0]+0.20))
+            .text("Lowest pitch")).changed();
+        edited |= ui.add(egui::Slider::new(&mut rules.primary_pitch[1],
+            (base.primary_pitch[1]-0.20)..=(base.primary_pitch[1]+0.20))
+            .text("Highest pitch")).changed();
+        rules.primary_pitch[0]=rules.primary_pitch[0].min(rules.primary_pitch[1]);
+        edited |= ui.add(egui::Slider::new(&mut rules.reach_factor,
+            base.reach_factor*0.80..=base.reach_factor*1.20)
+            .text("Crown reach")).changed();
+        ui.separator();
+        ui.strong("Twigs");
+        edited |= ui.add(egui::Slider::new(&mut rules.secondary_pitch[0],
+            (base.secondary_pitch[0]-0.20)..=(base.secondary_pitch[0]+0.20))
+            .text("Lowest twig pitch")).changed();
+        edited |= ui.add(egui::Slider::new(&mut rules.secondary_pitch[1],
+            (base.secondary_pitch[1]-0.20)..=(base.secondary_pitch[1]+0.20))
+            .text("Highest twig pitch")).changed();
+        rules.secondary_pitch[0]=rules.secondary_pitch[0].min(rules.secondary_pitch[1]);
+        edited |= ui.add(egui::Slider::new(&mut rules.extra_twig_chance,
+            (base.extra_twig_chance-0.20).max(0.0)..=
+            (base.extra_twig_chance+0.20).min(1.0))
+            .text("Extra twig chance")).changed();
+        ui.separator();
+        ui.strong("Leaf clusters");
+        edited |= ui.add(egui::Slider::new(&mut rules.foliage_factor,
+            base.foliage_factor*0.80..=base.foliage_factor*1.20)
+            .text("Cluster size multiplier")).changed();
+        ui.small("Season colors and leaf cutouts stay in Foliage Palette.");
+        if ui.button("Reset to species growth defaults").clicked() {
+            reset=true;
+        }
+    });
+    if reset {
+        let changed=tree.growth_rules_override.is_some() ||
+            tree.trunk_rules_override.is_some();
+        tree.reset_growth_rules();
+        return changed;
+    }
+    if edited {
+        // The UI shares species bounds with JSON validation. Invalid values
+        // cannot silently override a tree's canonical architecture.
+        let growth_ok=tree.set_growth_rules(rules).is_ok();
+        let trunk_ok=tree.set_trunk_rules(trunk).is_ok();
+        return growth_ok && trunk_ok;
+    }
+    false
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum AssetTool { Select, Add, Erase, Paint }
 
@@ -1222,7 +1304,14 @@ impl Studio {
         let mut changed=false;
         match self.foliage_stage {
             FoliageStage::PresetLoader => {
-                changed |= ui.add(egui::DragValue::new(&mut tree.seed).prefix("Seed: ")).changed();
+                ui.horizontal(|ui| {
+                    changed |= ui.add(egui::DragValue::new(&mut tree.seed)
+                        .prefix("Seed: ")).changed();
+                    if ui.button("Next seed").clicked() {
+                        tree.seed=tree.seed.wrapping_add(1);
+                        changed=true;
+                    }
+                });
                 changed |= ui.add(egui::Slider::new(&mut tree.height,0.5..=30.0).text("Height")).changed();
                 changed |= ui.add(egui::Slider::new(&mut tree.branch_count,1..=90).text("Branch count")).changed();
                 changed |= ui.add(egui::Slider::new(&mut tree.branch_length,0.1..=1.5).text("Branch length")).changed();
@@ -1242,6 +1331,7 @@ impl Studio {
                 ui.small(format!("Species architecture: {:?} branches, {:?} foliage",
                     rules.phyllotaxy,rules.foliage));
                 ui.small("Seed changes trunk lean, branches, twigs and leaf locations within species rules.");
+                changed |= species_growth_editor(ui,tree);
                 ui.small("Canopy guided steers branches toward seeded crown targets.");
                 ui.small("Voxelize the selected species and branch layout at the grid resolution.");
             }

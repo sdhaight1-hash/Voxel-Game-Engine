@@ -3,7 +3,7 @@
 //! intersecting cutout cards. There is no dependency on imported game assets.
 
 use crate::voxel::VoxelShape;
-use crate::tree_growth_rules::{LeafPlacement, Phyllotaxy};
+use crate::tree_growth_rules::{LeafPlacement, Phyllotaxy, TreeGrowthRules, TrunkGrowthRules};
 use crate::foliage_materials::FoliageMaterials;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -450,6 +450,12 @@ pub struct FoliageProject {
     pub branch_length: f32,
     #[serde(default)]
     pub branch_growth: BranchGrowth,
+    /// Optional artist overrides. Absent in older saved foliage projects.
+    /// Values are constrained around the currently selected species.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub growth_rules_override: Option<TreeGrowthRules>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trunk_rules_override: Option<TrunkGrowthRules>,
     pub carve_bottom: f32,
     pub carve_top: f32,
     pub gravity: f32,
@@ -729,6 +735,7 @@ impl FoliageProject {
         Self {
             preset, seed: 42, height, trunk_radius: radius, branch_count: branches,
             branch_length, branch_growth, carve_bottom, carve_top,
+            growth_rules_override: None, trunk_rules_override: None,
             gravity, phototropism, slope: 0.0, overall_scale: 1.0, prune: 0.0,
             leaf_density: density, leaf_scale, leaf_angle, leaf_variation,
             bark_color: bark, leaf_color: leaves,
@@ -737,7 +744,42 @@ impl FoliageProject {
         }
     }
 
+    pub fn effective_growth_rules(&self) -> TreeGrowthRules {
+        self.growth_rules_override.unwrap_or_else(|| self.preset.growth_rules())
+    }
+
+    pub fn effective_trunk_rules(&self) -> TrunkGrowthRules {
+        self.trunk_rules_override.unwrap_or_else(|| self.preset.trunk_growth_rules())
+    }
+
+    pub fn set_growth_rules(&mut self, rules: TreeGrowthRules) -> Result<(), String> {
+        let defaults=self.preset.growth_rules();
+        if !rules.within_species(defaults) {
+            return Err("Growth rules must stay within selected species limits".into());
+        }
+        self.growth_rules_override=(rules!=defaults).then_some(rules);
+        Ok(())
+    }
+
+    pub fn set_trunk_rules(&mut self, rules: TrunkGrowthRules) -> Result<(), String> {
+        let defaults=self.preset.trunk_growth_rules();
+        if !rules.within_species(defaults) {
+            return Err("Trunk rules must stay within selected species limits".into());
+        }
+        self.trunk_rules_override=(rules!=defaults).then_some(rules);
+        Ok(())
+    }
+
+    pub fn reset_growth_rules(&mut self) {
+        self.growth_rules_override=None;
+        self.trunk_rules_override=None;
+    }
+
     pub fn validate(&self) -> Result<(), String> {
+        if !self.effective_growth_rules().within_species(self.preset.growth_rules())
+            || !self.effective_trunk_rules().within_species(self.preset.trunk_growth_rules()) {
+            return Err("Custom tree growth rules exceed species limits".into());
+        }
         self.leaf_render.validate()?;
         if self.leaf_render.geometry != LeafGeometry::CrossedCutout {
             return Err("Game foliage requires logical leaf cells with textured cutout cards".into());
@@ -825,8 +867,8 @@ impl FoliageProject {
         let mut spans=Vec::new();
         let s = WORLD_HEXEL_SIZE_METRES;
         let shape = VoxelShape::HexPrism;
-        let rules = self.preset.growth_rules();
-        let trunk_rules = self.preset.trunk_growth_rules();
+        let rules = self.effective_growth_rules();
+        let trunk_rules = self.effective_trunk_rules();
         // Per-individual dimensions vary independently of branch/leaf hashes.
         // Constrain values to the existing author's 96-level / 8-cell limits.
         let h=(self.height*self.overall_scale*(1.0+
@@ -1833,6 +1875,58 @@ pub fn mtl(project: &FoliageProject) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tree_growth_presets_are_saved_loaded_and_change_the_generated_tree() {
+        for preset in PlantPreset::TREE_CATALOG {
+            let mut tree=FoliageProject::from_preset(preset);
+            let default_structure=tree.generate().unwrap().structure.unwrap();
+            let original=serde_json::to_value(&tree).unwrap();
+            assert!(original.get("growth_rules_override").is_none());
+            assert!(original.get("trunk_rules_override").is_none());
+
+            let mut branch=tree.effective_growth_rules();
+            branch.reach_factor*=1.10;
+            tree.set_growth_rules(branch).unwrap();
+            let mut trunk=tree.effective_trunk_rules();
+            trunk.taper=(trunk.taper+0.06).min(0.85);
+            tree.set_trunk_rules(trunk).unwrap();
+            assert_ne!(tree.generate().unwrap().structure.unwrap().spans,
+                default_structure.spans, "{preset:?}: editable growth controls had no effect");
+
+            let json=serde_json::to_string(&tree).unwrap();
+            let roundtrip: FoliageProject=serde_json::from_str(&json).unwrap();
+            roundtrip.validate().unwrap();
+            assert_eq!(roundtrip.effective_growth_rules(),branch);
+            assert_eq!(roundtrip.effective_trunk_rules(),trunk);
+            assert_eq!(roundtrip.generate().unwrap().voxels,
+                tree.generate().unwrap().voxels);
+
+            tree.reset_growth_rules();
+            assert!(tree.growth_rules_override.is_none());
+            assert!(tree.trunk_rules_override.is_none());
+            assert_eq!(tree.effective_growth_rules(),preset.growth_rules());
+            assert_eq!(tree.effective_trunk_rules(),preset.trunk_growth_rules());
+        }
+    }
+
+    #[test]
+    fn invalid_growth_overrides_rejected_and_old_projects_still_load() {
+        let mut tree=FoliageProject::from_preset(PlantPreset::Willow);
+        let old_json=serde_json::to_string(&tree).unwrap();
+        let restored: FoliageProject=serde_json::from_str(&old_json).unwrap();
+        restored.validate().unwrap();
+        let mut rules=tree.effective_growth_rules();
+        rules.reach_factor=1.5;
+        assert!(tree.set_growth_rules(rules).is_err());
+        let mut rules=tree.effective_growth_rules();
+        rules.primary_pitch[1]=1.0;
+        tree.growth_rules_override=Some(rules);
+        assert!(tree.validate().is_err());
+        let mut trunk=tree.preset.trunk_growth_rules();
+        trunk.taper=f32::NAN;
+        assert!(tree.set_trunk_rules(trunk).is_err());
+    }
 
     #[test]
     fn tree_catalog_contains_all_29_requested_entries_in_order() {
