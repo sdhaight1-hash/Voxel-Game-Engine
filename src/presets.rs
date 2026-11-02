@@ -340,7 +340,7 @@ mod tests {
     #[test]
     fn all_attached_catalog_categories_load() {
         let presets = builtin_presets().unwrap();
-        assert_eq!(presets.len(), 1039);
+        assert_eq!(presets.len(), 1067);
         let cats: HashSet<_> = presets.iter().map(|p| p.category.as_str()).collect();
         assert_eq!(cats.len(), 14);
         assert!(presets.iter().any(|p|p.material == "Willow" &&
@@ -352,6 +352,20 @@ mod tests {
         assert!(presets.iter().any(|p|p.material == "Blue clay"));
         assert!(presets.iter().any(|p|p.material == "Rye"));
         assert_eq!(presets.iter().filter(|p|p.category=="Seashells").count(),42);
+        // Additions must remain after the frozen 1,039 entries. Neither
+        // saved titles nor the identity-derived seeds of old presets move.
+        assert_eq!((&presets[0].material[..],&presets[0].variant[..]),
+            ("Andesite","Solid rock"));
+        assert_eq!((&presets[1038].material[..],&presets[1038].variant[..]),
+            ("Volute","Turquoise"));
+        assert_eq!(presets[0].seed,stable_hash(
+            "Stone & Rock|Igneous / volcanic|Andesite|Solid rock"));
+        assert_eq!(presets[1038].seed,stable_hash(
+            "Seashells|Seashell shapes|Volute|Turquoise"));
+        assert_eq!(presets.iter().skip(1039).count(),28);
+        assert!(presets.iter().skip(1039).all(|p|
+            matches!(p.category.as_str(),"Trees & Wood"|"Fruit Trees"|"Vegetation")));
+
     }
 
     #[test]
@@ -365,6 +379,27 @@ mod tests {
             // bundled preset, not just the graph's connection structure.
             assert_eq!(graph.render_rgba(2, 2).unwrap_or_else(|err|
                 panic!("{} / {} render: {}", preset.material, preset.variant, err)).len(), 16);
+        }
+    }
+
+    #[test]
+    fn all_material_presets_cover_pbr_ports_and_memoized_exact_pixels() {
+        for preset in builtin_presets().unwrap() {
+            let graph=preset.build_graph(VoxelSettings::default());
+            let (memo,_)=graph.render_channels_memoized_rgba(
+                &[0,1,2,3],2,2).unwrap();
+            assert_eq!(memo.len(),4);
+            for channel in 0..4 {
+                assert_eq!(memo[channel],
+                    graph.render_output_channel_rgba(channel,2,2).unwrap(),
+                    "{} / {} PBR channel {channel}",preset.material,preset.variant);
+            }
+            let serialized=serde_json::to_string(&graph).unwrap();
+            let restored:Graph=serde_json::from_str(&serialized).unwrap();
+            restored.validate().unwrap();
+            assert_eq!(graph.render_rgba(2,2).unwrap(),
+                restored.render_rgba(2,2).unwrap(),
+                "{} / {} JSON graph drift",preset.material,preset.variant);
         }
     }
 
