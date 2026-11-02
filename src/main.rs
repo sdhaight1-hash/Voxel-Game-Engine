@@ -2037,8 +2037,11 @@ impl Studio {
                     threshold:0.5,softness:0.0
                 }),
             ]),
-            ("MIX", vec![
+            ("MIX & ROUTING", vec![
                 ("Blend", NodeKind::Blend { factor: 0.5 }),
+                ("Color Reroute", NodeKind::Reroute {kind:SocketType::Color}),
+                ("Scalar Reroute", NodeKind::Reroute {kind:SocketType::Scalar}),
+                ("Mask Reroute", NodeKind::Reroute {kind:SocketType::Mask}),
             ]),
         ] {
             if entries.iter().any(|(name, _)| name.to_lowercase().contains(&query)) {
@@ -2354,6 +2357,11 @@ impl Studio {
                     changed |= curve.add_point();
                 }
                 ui.small("2–8 points. The 0% and 100% input positions remain fixed.");
+            }
+            NodeKind::Reroute { kind } => {
+                ui.label(format!("{kind:?} pass-through"));
+                ui.small("Organize cables without changing values, texture sampling or material ownership.");
+                ui.small("Input and output types are fixed. Pick a different reroute variant to change types.");
             }
             NodeKind::Invert => { ui.label("Inverts the RGB channels of its input."); }
             NodeKind::Luminance => {
@@ -3144,7 +3152,7 @@ fn node_accent(kind: NodeKind) -> Color32 {
         NodeKind::Invert | NodeKind::Luminance | NodeKind::Blend { .. }
             | NodeKind::Colorize { .. } | NodeKind::Levels { .. }
             | NodeKind::ThresholdMask { .. } | NodeKind::ColorRamp { .. }
-            | NodeKind::CurveRemap { .. }
+            | NodeKind::CurveRemap { .. } | NodeKind::Reroute { .. }
             => Color32::from_rgb(115, 64, 127),
         NodeKind::Output => Color32::from_rgb(43, 105, 77),
     }
