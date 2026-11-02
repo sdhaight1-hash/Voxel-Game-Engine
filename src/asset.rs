@@ -120,7 +120,26 @@ impl VoxelAsset {
     }
 
     pub fn from_json(text: &str) -> Result<Self, String> {
-        let asset: Self = serde_json::from_str(text).map_err(|e| e.to_string())?;
+        let value: serde_json::Value =
+            serde_json::from_str(text).map_err(|e| e.to_string())?;
+        let asset = if value["format"].as_str() == Some("texture-studio-voxel-tree-v1") {
+            // Upgrade the voxel trees saved by the previous standalone workflow.
+            let project: FoliageProject = serde_json::from_value(value["settings"].clone())
+                .map_err(|e| format!("Voxel tree settings: {e}"))?;
+            let cells: Vec<VoxelCell> = serde_json::from_value(value["voxels"].clone())
+                .map_err(|e| format!("Voxel tree cells: {e}"))?;
+            Self {
+                name: format!("{} voxel tree",project.preset.name()),
+                shape: project.shape,
+                voxel_size: project.voxel_size,
+                voxels: cells,
+                bark_color: project.bark_color,
+                leaf_color: project.leaf_color,
+                ..Self::default()
+            }
+        } else {
+            serde_json::from_value(value).map_err(|e|e.to_string())?
+        };
         asset.validate()?;
         Ok(asset)
     }
@@ -192,6 +211,19 @@ mod tests {
         asset.voxel_size = 0.5;
         asset.name = " ".into();
         assert!(asset.to_json().is_err());
+    }
+
+    #[test]
+    fn older_voxel_tree_json_imports_as_editable_asset() {
+        let project = FoliageProject::from_preset(PlantPreset::Birch);
+        let mesh = project.generate().unwrap();
+        let legacy = mesh.voxel_json(&project).unwrap();
+        let mut asset = VoxelAsset::from_json(&legacy).unwrap();
+        assert_eq!(asset.voxels.len(),mesh.voxels.len());
+        assert_eq!(asset.shape,project.shape);
+        assert_eq!(asset.bark_color,project.bark_color);
+        let first=asset.voxels[0];
+        assert!(asset.erase([first.x,first.y,first.z]));
     }
 
     #[test]
