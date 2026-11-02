@@ -563,7 +563,6 @@ fn bridge_hex_wood(cells: &mut BTreeMap<[i32; 3], Material>,
     }
 }
 #[allow(clippy::too_many_arguments)]
-fn paint_leaf_cluster#[allow(clippy::too_many_arguments)]
 fn paint_leaf_cluster(
     cells: &mut BTreeMap<[i32; 3], Material>, shape: VoxelShape, s: f32,
     center: [f32; 3], radius: f32, radius_z: f32,
