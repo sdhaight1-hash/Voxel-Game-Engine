@@ -464,7 +464,7 @@ mod tests {
 
     #[test]
     fn repeat_sides_do_not_share_global_uv() {
-        let s=VoxelSettings{shape:VoxelShape::HexPrism,side_mapping:SideMapping::Repeat};
+        let s=VoxelSettings{shape:VoxelShape::HexPrism,side_mapping:SideMapping::Repeat,..Default::default()};
         assert_eq!(source_uv(s,0,0.25,0.5),source_uv(s,5,0.25,0.5));
     }
 
