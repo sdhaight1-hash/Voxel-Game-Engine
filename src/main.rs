@@ -472,20 +472,7 @@ impl Studio {
     }
 
     fn import_tree_as_asset(&mut self) {
-        self.import_generated_tree_as_asset(false);
-    }
-
-    fn import_world_tree_as_asset(&mut self) {
-        self.import_generated_tree_as_asset(true);
-    }
-
-    fn import_generated_tree_as_asset(&mut self, world_hexels: bool) {
-        let result = if world_hexels {
-            self.foliage.generate_world_hexels()
-        } else {
-            self.foliage.generate()
-        };
-        match result {
+        match self.foliage.generate() {
             Ok(mesh) => {
                 self.asset = VoxelAsset::from_tree(&self.foliage, &mesh, &self.graph);
                 self.asset_selected = mesh.voxels.first().map(|v| [v.x, v.y, v.z]);
@@ -495,15 +482,10 @@ impl Studio {
                 self.asset_dirty = true;
                 self.asset_mats_dirty = true;
                 self.library_tab = 3;
-                self.status = if world_hexels {
-                    format!("Created {}: {} harvestable 1 m hexels (wood + card foliage)",
-                        self.foliage.preset.name(), mesh.voxel_count())
-                } else {
-                    format!("Converted {} into {} editable voxels",
-                        self.foliage.preset.name(), mesh.voxel_count())
-                };
+                self.status = format!("Created {}: {} editable standard 1m hexels",
+                    self.foliage.preset.name(), mesh.voxel_count());
             }
-            Err(e) => self.status = format!("Could not convert tree: {e}"),
+            Err(e) => self.status = format!("Could not create hexel tree: {e}"),
         }
     }
 
@@ -1229,35 +1211,13 @@ impl Studio {
                 ui.small("Deterministic branch removal using the current seed.");
             }
             FoliageStage::MeshBuilder => {
-                ui.label("Voxel block shape");
-                egui::ComboBox::from_id_salt("tree_voxel_shape")
-                    .selected_text(tree.shape.name())
-                    .show_ui(ui, |ui| {
-                        changed |= ui.selectable_value(&mut tree.shape,
-                            VoxelShape::Cube, "Cube voxels").changed();
-                        changed |= ui.selectable_value(&mut tree.shape,
-                            VoxelShape::HexPrism, "Hexagonal prism voxels").changed();
-                    });
-                changed |= ui.add(egui::Slider::new(&mut tree.voxel_size,
-                    0.1..=1.5).text("Voxel cell size")).changed();
+                ui.label("Game hexel geometry: 1 m across flats, 1 m high.");
+                ui.small("Six horizontal faces; solid wood is generated as editable world cells.");
                 changed |= ui.add(egui::Slider::new(&mut tree.trunk_radius,
-                    0.02..=2.0).text("Trunk width")).changed();
-                ui.small("Cells are discrete occupied cubes or axial hex prisms.");
-                ui.small("Smaller cells = finer detail and more blocks; internal faces are culled.");
+                    0.02..=2.0).text("Trunk width (m)")).changed();
             }
             FoliageStage::FoliagePalette => {
-                ui.label("Leaf cell geometry");
-                egui::ComboBox::from_id_salt("foliage_leaf_mesh")
-                    .selected_text(match tree.leaf_render.geometry {
-                        LeafGeometry::CrossedCutout=>"Crossed cutout cards",
-                        LeafGeometry::SolidVoxel=>"Solid voxel leaves",
-                    })
-                    .show_ui(ui,|ui|{
-                        changed |= ui.selectable_value(&mut tree.leaf_render.geometry,
-                            LeafGeometry::CrossedCutout,"Crossed foliage cards").changed();
-                        changed |= ui.selectable_value(&mut tree.leaf_render.geometry,
-                            LeafGeometry::SolidVoxel,"Solid block leaves").changed();
-                    });
+                ui.label("Harvestable foliage hexels with crossed cutout leaf cards.");
                 changed |= ui.add(egui::Slider::new(&mut tree.leaf_render.wind_strength,
                     0.0..=0.5).text("Wind sway")).changed();
                 changed |= ui.add(egui::Slider::new(&mut tree.leaf_render.wind_speed,
@@ -1285,12 +1245,12 @@ impl Studio {
                     ui.label(format!("Nominal height: {:.1}",mesh.height));
                 }
                 ui.small("Exports occupied foliage cells plus cutout textures, UV OBJ and material masks.");
-                ui.small("Also exports the culled cube/hex surface as OBJ with MTL.");
+                ui.small("Also exports the culled hexel surface as OBJ with MTL.");
                 ui.separator();
                 ui.small("World tree: 1 m between opposing hex faces, 1 m high.");
                 ui.small("Wood is solid; foliage cells render crossed cutout cards.");
-                if ui.button("Create editable 1 m hexel tree").clicked() {
-                    self.import_world_tree_as_asset();
+                if ui.button("Edit tree as hexel asset").clicked() {
+                    self.import_tree_as_asset();
                 }
                 ui.small("Opens in Assets for per-cell removal/painting and saving.");
                 if ui.button("Export voxel tree").clicked() { self.export_foliage(); }
@@ -1312,7 +1272,7 @@ impl Studio {
         ui.horizontal(|ui| {
             ui.heading("VOXEL TREE PREVIEW");
             ui.separator();
-            ui.small("Occupied cube / hex cells • adjustable growth stages");
+            ui.small("Standard 1 m game hexels • adjustable growth stages");
         });
         ui.add(egui::Slider::new(&mut self.foliage_yaw,
             0.0..=std::f32::consts::TAU).text("Orbit"));
@@ -2450,8 +2410,9 @@ mod wire_interaction_tests {
         app.library_tab=2;
         app.import_tree_as_asset();
         assert_eq!(app.library_tab,3);
-        assert_eq!(app.asset.shape,app.foliage.shape);
-        assert!(app.asset.voxels.len()>100);
+        assert_eq!(app.asset.shape,VoxelShape::HexPrism);
+        assert_eq!(app.asset.voxel_size,1.0);
+        assert!(app.asset.voxels.len()>4);
         assert!(app.asset.material_graph.is_some());
         assert!(app.asset.mesh().is_ok());
     }
