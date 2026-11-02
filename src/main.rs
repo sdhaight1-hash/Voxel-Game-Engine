@@ -1,6 +1,7 @@
 use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, TextureHandle, Vec2};
 use std::{collections::HashMap, path::{Path, PathBuf}};
 use texture_studio::{Graph, NodeKind, VoxelShape, SideMapping};
+use texture_studio::presets::{builtin_presets, Preset};
 use texture_studio::voxel::{render_atlas, render_voxel_preview, export_obj};
 
 const NODE_W: f32 = 170.0;
@@ -38,6 +39,11 @@ struct Studio {
     pan: Vec2,
     zoom: f32,
     library_search: String,
+    library_tab: u8,
+    preset_search: String,
+    preset_category: String,
+    preset_selected: Option<usize>,
+    presets: Vec<Preset>,
     dirty: bool,
     export_size: u32,
     project_path: Option<PathBuf>,
@@ -63,6 +69,11 @@ impl Default for Studio {
             pan: Vec2::ZERO,
             zoom: 1.0,
             library_search: String::new(),
+            library_tab: 1,
+            preset_search: String::new(),
+            preset_category: "All categories".into(),
+            preset_selected: None,
+            presets: builtin_presets().expect("bundled preset catalog is checked by tests"),
             dirty: true,
             export_size: 1024,
             project_path: None,
@@ -274,6 +285,15 @@ impl Studio {
 
     fn palette(&mut self, ui: &mut egui::Ui) {
         ui.heading("LIBRARY");
+        ui.horizontal(|ui| {
+            ui.selectable_value(&mut self.library_tab, 1, "Presets");
+            ui.selectable_value(&mut self.library_tab, 0, "Nodes");
+        });
+        ui.separator();
+        if self.library_tab == 1 {
+            self.preset_browser(ui);
+            return;
+        }
         ui.add(egui::TextEdit::singleline(&mut self.library_search).hint_text("Search nodes..."));
         ui.separator();
         let query = self.library_search.trim().to_lowercase();
@@ -283,6 +303,7 @@ impl Studio {
                 ("Checker", NodeKind::Checker { tiles: 8 }),
                 ("Bricks", NodeKind::Bricks { columns: 8, rows: 12, mortar: 0.12 }),
                 ("Voronoi", NodeKind::Voronoi { cells: 7, seed: 17 }),
+                ("Strata", NodeKind::Strata { bands: 14, warp: 0.25, seed: 11 }),
                 ("Color", NodeKind::Color { rgb: [98, 152, 203] }),
             ]),
             ("FILTERS", vec![
@@ -322,6 +343,83 @@ impl Studio {
                 self.wire_gesture = None;
             }
         }
+    }
+
+    fn apply_preset(&mut self) {
+        let Some(index) = self.preset_selected else { return; };
+        let Some(preset) = self.presets.get(index) else { return; };
+        let title = preset.title();
+        // Shape/side mapping are project settings and must survive changing materials.
+        self.graph = preset.build_graph(self.graph.voxel);
+        self.selected = Some(2);
+        self.connecting = None;
+        self.wire_gesture = None;
+        self.project_path = None;
+        self.pan = Vec2::ZERO;
+        self.zoom = 0.85;
+        self.dirty = true;
+        self.status = format!("Applied '{title}' · editable procedural approximation. Save as a new project.");
+    }
+
+    fn preset_browser(&mut self, ui: &mut egui::Ui) {
+        ui.label(egui::RichText::new(format!("{} natural presets", self.presets.len())).strong());
+        ui.add(egui::TextEdit::singleline(&mut self.preset_search)
+            .hint_text("Find basalt, willow, snow..."));
+        let mut categories: Vec<&str> = self.presets.iter().map(|p| p.category.as_str()).collect();
+        categories.sort_unstable();
+        categories.dedup();
+        egui::ComboBox::from_id_salt("preset_category")
+            .selected_text(&self.preset_category)
+            .width(ui.available_width())
+            .show_ui(ui, |ui| {
+                ui.selectable_value(&mut self.preset_category,
+                    "All categories".to_owned(), "All categories");
+                for category in &categories {
+                    ui.selectable_value(&mut self.preset_category,
+                        (*category).to_owned(), *category);
+                }
+            });
+        let indices: Vec<usize> = self.presets.iter().enumerate()
+            .filter(|(_, p)| (self.preset_category == "All categories" ||
+                self.preset_category == p.category) &&
+                p.matches(&self.preset_search))
+            .map(|(index, _)| index)
+            .collect();
+        ui.small(format!("{} matches · select for details", indices.len()));
+        ui.separator();
+        egui::ScrollArea::vertical().max_height(325.0)
+            .id_salt("preset_list")
+            .show_rows(ui, 26.0, indices.len(), |ui, visible| {
+                for row in visible {
+                    let idx = indices[row];
+                    if ui.selectable_label(self.preset_selected == Some(idx),
+                        self.presets[idx].title()).clicked() {
+                        self.preset_selected = Some(idx);
+                    }
+                }
+            });
+        ui.separator();
+        if let Some(index) = self.preset_selected {
+            if let Some(preset) = self.presets.get(index) {
+                ui.label(egui::RichText::new(preset.material.clone()).strong());
+                ui.small(format!("{} / {}", preset.category, preset.family));
+                ui.small(format!("Appearance: {}", preset.variant));
+                let (dark, light) = preset.colors();
+                ui.horizontal(|ui| {
+                    ui.colored_label(Color32::from_rgb(dark[0],dark[1],dark[2]), "■ Dark");
+                    ui.colored_label(Color32::from_rgb(light[0],light[1],light[2]), "■ Light");
+                });
+            }
+            ui.add_space(6.0);
+            if ui.button("Apply selected preset").clicked() {
+                self.apply_preset();
+            }
+            ui.small("Replaces the current node graph. Save your project first.");
+        } else {
+            ui.small("Select any material to inspect it, then click Apply.");
+        }
+        ui.add_space(4.0);
+        ui.small("Procedural approximations, not source-game PNGs or plant meshes.");
     }
 
     fn inspector(&mut self, ui: &mut egui::Ui) {
@@ -364,6 +462,11 @@ impl Studio {
             NodeKind::Voronoi { cells, seed } => {
                 changed |= ui.add(egui::Slider::new(cells, 2..=32).text("Cells")).changed();
                 changed |= ui.add(egui::DragValue::new(seed).speed(1).prefix("Seed: ")).changed();
+            }
+            NodeKind::Strata { bands, warp, seed } => {
+                changed |= ui.add(egui::Slider::new(bands, 1..=64).text("Bands")).changed();
+                changed |= ui.add(egui::Slider::new(warp, 0.0..=1.0).text("Warp")).changed();
+                changed |= ui.add(egui::DragValue::new(seed).prefix("Seed: ")).changed();
             }
             NodeKind::Colorize { dark, light } => {
                 ui.label("Dark color");
@@ -893,7 +996,7 @@ fn socket_input(canvas: Pos2, pan: Vec2, zoom: f32, position: [f32; 2], input: u
 fn node_accent(kind: NodeKind) -> Color32 {
     match kind {
         NodeKind::Noise { .. } | NodeKind::Checker { .. } | NodeKind::Color { .. }
-            | NodeKind::Bricks { .. } | NodeKind::Voronoi { .. } => Color32::from_rgb(43, 95, 131),
+            | NodeKind::Bricks { .. } | NodeKind::Voronoi { .. } | NodeKind::Strata { .. } => Color32::from_rgb(43, 95, 131),
         NodeKind::Invert | NodeKind::Blend { .. } | NodeKind::Colorize { .. } => Color32::from_rgb(115, 64, 127),
         NodeKind::Output => Color32::from_rgb(43, 105, 77),
     }
