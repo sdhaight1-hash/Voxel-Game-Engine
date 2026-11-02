@@ -149,11 +149,21 @@ fn leaf_coverage_threshold(pixel:vec2<u32>)->f32 {
 
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
+    // Compute derivatives in uniform fragment control flow. The optional
+    // mip branch uses the same UVs at the current projected pixel footprint.
+    let foliage_uv_dx=dpdx(input.uv);
+    let foliage_uv_dy=dpdy(input.uv);
     var rgba: vec4<f32>;
     if (input.kind < 0.5) {
         rgba = textureSampleLevel(bark_tex, linear_sampler, input.uv, 0.0);
     } else if (input.kind < 1.5) {
-        rgba = textureSampleLevel(foliage_tex, linear_sampler, input.uv, 0.0);
+        if (globals.season.w > 0.5) {
+            rgba = textureSampleGrad(foliage_tex, linear_sampler,
+                input.uv, foliage_uv_dx, foliage_uv_dy);
+        } else {
+            // This is the old level-zero sample, unchanged by default.
+            rgba = textureSampleLevel(foliage_tex, linear_sampler, input.uv, 0.0);
+        }
         let bloom=spring_bloom_amount();
         var blossom=0.0;
         // Do not evaluate the procedural flower mask for any other species
