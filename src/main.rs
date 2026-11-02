@@ -541,9 +541,27 @@ impl Studio {
                     return Err(format!("{name} already exists in that folder — choose an empty folder"));
                 }
             }
-            for (channel, name) in ["albedo", "roughness", "metallic", "height"].iter().enumerate() {
-                let pixels = self.graph.render_output_channel_rgba(channel, size, size)?;
-                save_png(&folder.join(format!("{name}.png")), size, &pixels)?;
+            // Opt-in until hardware and preset-level export benchmarks justify
+            // making shared-channel memoization the default path.
+            if std::env::var_os("VOXEL_MEMOIZED_PBR_EXPORT").is_some() {
+                let started=Instant::now();
+                let (images,stats)=self.graph.render_channels_memoized_rgba(
+                    &[0,1,2,3],size,size)?;
+                for (name,pixels) in ["albedo","roughness","metallic","height"]
+                    .iter().zip(images.iter()) {
+                    save_png(&folder.join(format!("{name}.png")),size,pixels)?;
+                }
+                if std::env::var_os("VOXEL_PROFILE_MATERIALS").is_some() {
+                    eprintln!("[material-profile] event=memo_pbr_export cpu_ms={:.3} sample_hits={} node_evaluations={} peak_entries_per_pixel={}",
+                        started.elapsed().as_secs_f64()*1000.0,
+                        stats.sample_hits,stats.node_evaluations,stats.peak_entries_per_pixel);
+                }
+            } else {
+                for (channel,name) in ["albedo","roughness","metallic","height"]
+                    .iter().enumerate() {
+                    let pixels=self.graph.render_output_channel_rgba(channel,size,size)?;
+                    save_png(&folder.join(format!("{name}.png")),size,&pixels)?;
+                }
             }
             let normals = self.graph.render_normal_rgba(size, size)?;
             save_png(&folder.join("normal.png"), size, &normals)?;
