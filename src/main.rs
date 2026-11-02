@@ -6,7 +6,7 @@ use std::{collections::HashMap, path::{Path, PathBuf}};
 use texture_studio::{Graph, NodeKind, LibraryNode, VoxelShape, SideMapping};
 use texture_studio::presets::{builtin_presets, Preset};
 use texture_studio::foliage::{FoliageProject, FoliageMesh, FoliageStage, PlantPreset, Material,
-    LeafGeometry, leaf_cutout_rgba, leaf_opacity_rgba, sway_leaf_vertex, LEAF_TEXTURE_SIZE};
+    BranchGrowth, LeafGeometry, leaf_cutout_rgba, leaf_opacity_rgba, sway_leaf_vertex, LEAF_TEXTURE_SIZE};
 use texture_studio::asset::VoxelAsset;
 use texture_studio::foliage_materials::{FoliageMaterials, MaterialRole, MATERIAL_SIZE};
 use texture_studio::voxel::{render_atlas, render_voxel_preview, export_obj};
@@ -472,7 +472,20 @@ impl Studio {
     }
 
     fn import_tree_as_asset(&mut self) {
-        match self.foliage.generate() {
+        self.import_generated_tree_as_asset(false);
+    }
+
+    fn import_world_tree_as_asset(&mut self) {
+        self.import_generated_tree_as_asset(true);
+    }
+
+    fn import_generated_tree_as_asset(&mut self, world_hexels: bool) {
+        let result = if world_hexels {
+            self.foliage.generate_world_hexels()
+        } else {
+            self.foliage.generate()
+        };
+        match result {
             Ok(mesh) => {
                 self.asset = VoxelAsset::from_tree(&self.foliage, &mesh, &self.graph);
                 self.asset_selected = mesh.voxels.first().map(|v| [v.x, v.y, v.z]);
@@ -482,8 +495,13 @@ impl Studio {
                 self.asset_dirty = true;
                 self.asset_mats_dirty = true;
                 self.library_tab = 3;
-                self.status = format!("Converted {} into {} editable voxels",
-                    self.foliage.preset.name(), mesh.voxel_count());
+                self.status = if world_hexels {
+                    format!("Created {}: {} harvestable 1 m hexels (wood + card foliage)",
+                        self.foliage.preset.name(), mesh.voxel_count())
+                } else {
+                    format!("Converted {} into {} editable voxels",
+                        self.foliage.preset.name(), mesh.voxel_count())
+                };
             }
             Err(e) => self.status = format!("Could not convert tree: {e}"),
         }
@@ -1174,6 +1192,19 @@ impl Studio {
                 changed |= ui.add(egui::Slider::new(&mut tree.height,0.5..=30.0).text("Height")).changed();
                 changed |= ui.add(egui::Slider::new(&mut tree.branch_count,1..=90).text("Branch count")).changed();
                 changed |= ui.add(egui::Slider::new(&mut tree.branch_length,0.1..=1.5).text("Branch length")).changed();
+                ui.label("Branch growth");
+                egui::ComboBox::from_id_salt("foliage_branch_growth")
+                    .selected_text(match tree.branch_growth {
+                        BranchGrowth::Classic=>"Classic",
+                        BranchGrowth::CanopyGuided=>"Canopy guided",
+                    })
+                    .show_ui(ui, |ui| {
+                        changed |= ui.selectable_value(&mut tree.branch_growth,
+                            BranchGrowth::Classic,"Classic").changed();
+                        changed |= ui.selectable_value(&mut tree.branch_growth,
+                            BranchGrowth::CanopyGuided,"Canopy guided").changed();
+                    });
+                ui.small("Canopy guided steers branches toward seeded crown targets.");
                 ui.small("Voxelize the selected species and branch layout at the grid resolution.");
             }
             FoliageStage::Carve => {
@@ -1255,6 +1286,13 @@ impl Studio {
                 }
                 ui.small("Exports occupied foliage cells plus cutout textures, UV OBJ and material masks.");
                 ui.small("Also exports the culled cube/hex surface as OBJ with MTL.");
+                ui.separator();
+                ui.small("World tree: 1 m between opposing hex faces, 1 m high.");
+                ui.small("Wood is solid; foliage cells render crossed cutout cards.");
+                if ui.button("Create editable 1 m hexel tree").clicked() {
+                    self.import_world_tree_as_asset();
+                }
+                ui.small("Opens in Assets for per-cell removal/painting and saving.");
                 if ui.button("Export voxel tree").clicked() { self.export_foliage(); }
                 if ui.button("Save foliage project").clicked() { self.save_foliage(); }
                 if ui.button("Open foliage project").clicked() { self.open_foliage(); }
