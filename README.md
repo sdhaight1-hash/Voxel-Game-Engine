@@ -17,6 +17,20 @@ An offline, standalone **Rust desktop application** for voxel asset creation, pr
 - **Voxel export:** generate five per-face RGBA texture atlases, a UV-unwrapped `voxel.obj`, `voxel.mtl` and machine-readable `voxel_layout.json`. The OBJ material connects albedo; other PBR maps can be assigned in the target renderer.
 - **Projects:** save/load JSON node graphs *including voxel shape and side UV mode*; older projects without voxel settings load as cubes.
 
+## wgpu / Vulkan GPU Rendering
+
+**The 3D editor is now powered by wgpu** (the existing Rust/egui desktop UI also runs on the same wgpu device). The app's native adapter selector **prefers Vulkan** when a compatible Vulkan adapter is present, then chooses Metal (macOS), Direct3D 12 (Windows), or an available GL backend as a fallback. This is an adapter preference, **not** a requirement to install Vulkan on macOS or a guarantee that every GPU supports it. The active backend and GPU adapter are shown in the editor status.
+
+The **Assets** and **Foliage** 3D viewports use a shared native WGSL rendering pipeline in `src/gpu_renderer.rs` + `src/voxel_gpu.wgsl`:
+
+- Voxel/cutout mesh triangles are uploaded to GPU vertex buffers. They are re-uploaded only when geometry or baked material content changes, not when orbiting the model.
+- GPU vertex shaders project the 3D camera and animate foliage tips. The underlying editable voxel coordinates and static OBJ exports stay unchanged.
+- A **depth-tested offscreen render target** provides actual 3D occlusion, replacing painter's-order triangle rasterization. The egui interface displays the target texture without a second graphics context.
+- Fragment shaders sample the **existing procedural bark and foliage textures**, discard transparent leaf-cutout pixels and shade visible faces.
+- Asset selection still uses CPU ray/screen-face intersection on clicks, but the GPU handles the per-frame rasterization. The material node graph, preset construction, voxel growth, file formats and OBJ exports remain deterministic CPU code.
+
+For now, the render target is 1024 × 1024 pixels and uses a simple orthographic camera and directional face lighting. The node graph is **not yet a GPU compute graph**, and there is no PBR-lighting model, shadow map, compute meshing or skeletal wind engine. The underlying wgpu renderer is the foundation for those later stages.
+
 ## Procedural Bark and Foliage Materials
 
 The **Foliage** and **Assets** workspaces now use real material roles instead of treating every block or leaf card as a flat RGB color. Each project retains independent editable **Bark**, **Leaf Albedo** and optional **Leaf Cutout** node graphs. Existing asset/project JSON remains readable; missing material assignments use palette colors and the original generated leaf cutout.
@@ -209,6 +223,7 @@ The OBJ/MTL format directly links the albedo map. Roughness, metallic, height, a
 - `src/node_library.rs`: 76 executable original Rust generators, filters, math/mix operations and transforms with tests.
 - `src/foliage.rs`: deterministic cube/hex-prism voxel tree generation and shared exposed-face geometry for editing/export.
 - `src/asset.rs`: standalone editable voxel asset model, tree imports, block operations and asset serialization.
+- `src/gpu_renderer.rs`, `src/voxel_gpu.wgsl`: wgpu GPU 3D rendering, depth-buffered voxel mesh projection, procedural texture sampling and leaf wind.
 - `src/main.rs`: native egui interface, graph controls, sphere and node previews, project dialogs, and PNG output.
 - `.github/workflows/ci.yml`: build/test validation on push.
 - `.github/workflows/desktop-builds.yml`: manual downloadable desktop executables.
