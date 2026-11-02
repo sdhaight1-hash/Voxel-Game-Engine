@@ -17,6 +17,26 @@ An offline, standalone **Rust desktop application** for building procedural text
 - **Voxel export:** generate five per-face RGBA texture atlases, a UV-unwrapped `voxel.obj`, `voxel.mtl` and machine-readable `voxel_layout.json`. The OBJ material connects albedo; other PBR maps can be assigned in the target renderer.
 - **Projects:** save/load JSON node graphs *including voxel shape and side UV mode*; older projects without voxel settings load as cubes.
 
+## Expanded Material Maker-inspired Node Library
+
+The native **Nodes** tab now includes **76 additional, working 2D nodes** in seven searchable groups:
+
+| Group | Added nodes | Examples |
+|---|---:|---|
+| Shapes & Gradients | 6 | Linear/Radial Gradient, Circle, Rounded Rectangle, Polygon, Sine Wave |
+| Noise | 7 | White Noise, Color Noise, Value Noise, Fractal Noise, Clouds, Crystal, Dirt |
+| Patterns | 8 | Beehive, Weave, Diagonal Weave, Truchet, Fibers, Scratches, Spots, Triangles |
+| Color & Tones | 20 | Brightness/Contrast, Gamma, Threshold, Posterize, Hue Shift, Saturation, Smoothstep, Quantize |
+| Filters | 10 | Edge Detect, Blur, Sharpen, Emboss, Dilate, Erode, Pixelize, Normal Map, Directional Blur |
+| Math & Mix | 14 | Add, Subtract, Multiply, Divide, Min/Max, Difference, Screen, Overlay, Soft Light, Hard Light, Mask, Lerp, Switch |
+| Transforms | 11 | Translate, Rotate, Scale, Mirror, Kaleidoscope, Warp, Swirl, Shear, Tile, Wave Distort, Spherize |
+
+The prior core nodes (Noise, Checker, Color, Bricks, Voronoi, Strata, Invert, Colorize, Blend, Material Output) remain available. In the Nodes tab, search by name, scroll the node library, and click **+** to add a node. Drag its ports to connect it; change **Amount / scale** and **Seed** in the node inspector. Most generators have no inputs, filters/transforms take one image, and math/mix nodes take two.
+
+Every operation is implemented directly in Rust, runs locally, can be saved in project JSON, and works with cube/hexagonal-prism atlas export. They are **similar node categories with independently written CPU implementations**, *not exact Material Maker shader replicas*. Parameters and visual behavior may differ.
+
+**Not yet implemented:** the entire 200+ / ~250-node Material Maker library, 3D SDF and mesh/projection nodes, custom GLSL shaders, arbitrary multi-output nodes, group/subgraph editing, GPU buffer and iterative nodes, image/text/glyph loading, texture painting, GPU shader live preview, or material imports from Material Maker files. Full parity requires a GPU graph architecture and broader project schema. The added operations intentionally retain the current one-image-per-node graph model.
+
 ## Built-in Natural Preset Library
 
 This build includes **1,039 named material/appearance presets across 14 categories**, derived from the provided *Complete Natural Texture Catalog*. The catalog is embedded in the executable at `src/presets/catalog.json` — no network connection or texture downloads needed.
@@ -109,6 +129,7 @@ The OBJ/MTL format directly links the albedo map. Roughness, metallic, height, a
 
 - `src/lib.rs`: deterministic tileable procedural graph renderer, input validation, PBR channels, and unit tests.
 - `src/presets.rs` and `src/presets/catalog.json`: embedded 1,039-preset natural material catalog and procedural node-graph builder.
+- `src/node_library.rs`: 76 executable original Rust generators, filters, math/mix operations and transforms with tests.
 - `src/main.rs`: native egui interface, graph controls, sphere and node previews, project dialogs, and PNG output.
 - `.github/workflows/ci.yml`: build/test validation on push.
 - `.github/workflows/desktop-builds.yml`: manual downloadable desktop executables.
