@@ -88,10 +88,9 @@ impl VoxelAsset {
     }
 
     pub fn mesh(&self) -> Result<FoliageMesh, String> {
-        let mut mesh=FoliageMesh::from_voxels_with_render(self.shape,self.voxel_size,
-            self.voxels.clone(),self.leaf_render)?;
-        mesh.structure=self.tree_structure.clone();
-        Ok(mesh)
+        Ok(FoliageMesh::from_voxels_with_render(self.shape,self.voxel_size,
+            self.voxels.clone(),self.leaf_render)?
+            .with_tree_structure(self.tree_structure.clone()))
     }
 
     pub fn contains(&self, pos: [i32; 3]) -> bool {
