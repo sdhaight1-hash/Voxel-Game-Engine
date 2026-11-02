@@ -4,7 +4,7 @@
 **Project:** Voxel Game Engine (Rust + wgpu); currently a procedural material and voxel asset editor, **not** a working planetary terrain engine.
 **Earlier title:** “World-generation option 1: InfiniteDiffusion-inspired synthetic worlds.” The original unbounded, inference-on-demand plan is superseded for our default world.
 
-> **Source of truth:** [Procedural World — Design Decisions](procedural-world-design-decisions.md) is the authoritative design record for world size, topology, vertical presets, finite water, hexel preference, persistence, reactive state and open decisions. This page goes deeper on the **synthetic generation pipeline** and retains research that might be useful in its world-creation backend. It does not specify an additional world mode.
+> **Source of truth:** [Procedural World — Design Decisions](procedural-world-design-decisions.md) is the authoritative design record for world size, topology, vertical presets, finite water, hexel preference, persistence, reactive state and open decisions. [Asset-creation subsystems](asset-creation-subsystems.md) explains how this same engine's existing Nodes, Presets, Foliage and Assets tooling publishes reusable content for the world. This page goes deeper on the **synthetic generation pipeline** and retains research that might be useful in its world-creation backend. It does not specify an additional world mode.
 
 ## Current architectural direction
 
@@ -15,6 +15,7 @@
 - **Playable geometry preference:** hexagonal prisms with axial Q/R and vertical Y; chunk dimensions and hexel physical scale are not finalized. A square/rectangular geographic raster is still suitable for diffusion output and map storage.
 - **Persist edits and finite resources:** regenerated base chunks may be discarded; changes to blocks, mined deposits, constructed works, water reservoirs and ecosystem state must survive reload and cannot be restored merely by rerunning a generator.
 - **Reactive world-state direction:** authoritative state, controlled edits and conservative water transfers, coalesced spatial invalidation and region/field interests. This remains a proposal to test, not an installed SpaceTimeDB runtime.
+- **Engine asset-creation subsystems (already implemented as authoring tools):** **Nodes** creates procedural material graphs, **Presets** defines appearance recipes, **Foliage** generates editable tree/plant geometry, and **Assets** creates cube/hexel objects. Their proposed **game-ready publishing/library interface** supplies baked materials, vegetation and prefabs to the world; they do **not** own geology, landscape, ecology or water simulation.
 
 These are **design choices**, not claims about existing code. The current repository's working functionality is focused on procedural materials, foliage and editable voxel assets.
 
@@ -34,11 +35,24 @@ World configuration (seed, finite periodic domain, height preset, model revision
 During gameplay:
   saved geographic tiles + deterministic local geology/terrain detail
   -> streamed hexel chunks + persistent user/world edit overrides
+  -> biome/geology-driven placement using the shared game-ready asset library
   -> meshes, physics, AI and ecological field updates
   -> wgpu renderer
 ```
 
 Terrain Diffusion is an **elevation/surface-field model**, not a volumetric hexel generator. Underground cavities, strata, ores, overhangs and one-hexel-scale surface detail require independent procedures. The current discussion has **not validated** a conditioning API that will reliably make Terrain Diffusion respect tectonic constraints or periodic seams; the integration must be proven at limited scale.
+
+## Asset content versus geographic simulation
+
+The world generator uses the **existing separate asset-creation subsystems of this same engine**; it must not absorb their editors or procedural texture graphs into its physical simulation.
+
+- **Nodes/Presets** author and bake *appearance*. Tectonics, rock types, climate, soil conditions and biomes determine **where** a material is appropriate. A material's texture height is not the geographic elevation field.
+- **Foliage** authors/generates trees and plants. Ecology and biome placement choose species/seeds/locations and keep growth, health, harvesting and water needs in persistent **world state**.
+- **Assets** authors explicit cube/hex-prism voxel objects and structures. Published prefabs can be placed in the world; player edits must not overwrite the immutable source prefab or reset after reload.
+- The planned **source → validation/bake → stable-ID game-ready asset library → world runtime** handoff is **not yet implemented**. Bake/cache shared textures, instantiate or expand geometry appropriately, and avoid running CPU graph evaluations per block or simulation tick.
+- Reuse hexel neighbour/UV/mesh **algorithms** where appropriate, but an asset-scale mesh/preview is not a streamed chunk renderer. Local authoring hex coordinates have **Z vertical**; proposed world hexel coordinates use **Y vertical**, requiring explicit import conversion.
+
+See [Asset-creation subsystems and game-runtime integration](asset-creation-subsystems.md) for the contract, current code inventory and validation tests.
 
 ## Geographic data and storage contract
 
@@ -92,7 +106,7 @@ Research references:
 2. **Compressed world store:** write/read multiple 16-bit elevation tiles with checksums, revisions, bounded random access and measured Zstd compression/decompression.
 3. **Limited-area geology → diffusion test:** establish what conditioning is actually possible; compare adjacent tiles and periodically wrapped seams.
 4. **Hydrology from finalized geography:** calculate reservoirs, watersheds, spill elevations and drainage connections, including across the torus; initialize and audit a **finite** water inventory.
-5. **Local hexel runtime:** stream and mesh hexel chunks from canonical geography plus deterministic microterrain, caves and geology, preserving sparse player modifications.
+5. **Local hexel runtime and asset integration:** stream and mesh hexel chunks from canonical geography plus deterministic microterrain, caves and geology; bake/import two authored materials and one existing deterministic hexel tree via a shared library interface, and preserve sparse player modifications.
 6. **Reactive validity and water transaction fixture:** editing a boundary cell rebuilds only necessary neighbours; dam breach moves water with equal debit/credit, including unload/reload and seam crossings.
 7. **Benchmark before scaling to 1,024 km:** measure inference time, disk, load latency, peak RAM/VRAM, frame impact and persistent data size; don't claim the full world is practical until measured.
 
