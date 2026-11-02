@@ -16,6 +16,7 @@ pub mod presets;
 pub mod node_library;
 pub mod node_definitions;
 pub mod render_cache;
+pub mod foliage_bake_cache;
 pub use node_library::LibraryNode;
 use node_definitions::{PortDefinition, SocketType};
 pub use voxel::{VoxelSettings, VoxelShape, SideMapping};

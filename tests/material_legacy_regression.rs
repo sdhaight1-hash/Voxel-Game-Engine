@@ -197,6 +197,39 @@ fn profile_bounded_graph_output_cache() {
         fnv1a(warm.as_ref()));
 }
 
+/// Opt-in comparison on exactly the same hardware/build profile. Measures the
+/// final material recipe cache, not graph intermediate caching or GPU uploads.
+#[test]
+#[ignore = "measure cold and reused bark/leaf material bakes"]
+fn profile_shared_foliage_bake_cache() {
+    use std::time::Instant;
+    use texture_studio::foliage_bake_cache::FoliageBakeCache;
+    let materials=FoliageMaterials::for_species(PlantPreset::Willow);
+    let mut cache=FoliageBakeCache::new(32*1024*1024);
+    for size in [64,256] {
+        for (role,tint) in [("leaf",[81,139,73]),("bark",[117,91,62])] {
+            let before=Instant::now();
+            let cold=if role=="leaf" {
+                cache.bake_leaf(&materials,size,tint).unwrap()
+            } else {
+                cache.bake_bark(&materials,size,tint).unwrap()
+            };
+            let cold_ms=before.elapsed().as_secs_f64()*1000.0;
+            let before=Instant::now();
+            let warm=if role=="leaf" {
+                cache.bake_leaf(&materials,size,tint).unwrap()
+            } else {
+                cache.bake_bark(&materials,size,tint).unwrap()
+            };
+            let warm_ms=before.elapsed().as_secs_f64()*1000.0;
+            assert!(std::sync::Arc::ptr_eq(&cold,&warm));
+            let stats=cache.stats();
+            println!("material-recipe-cache role={role} size={size} cold_ms={cold_ms:.3} warm_ms={warm_ms:.3} hits={} misses={} resident_bytes={} fnv64={:016x}",
+                stats.hits,stats.misses,stats.resident_bytes,fnv1a(warm.as_ref()));
+        }
+    }
+}
+
 /// Opt-in measurement, never a CI correctness assertion. GitHub Actions can
 /// execute it with `cargo test --test material_legacy_regression -- --ignored --nocapture`.
 /// Record the CPU/runner for meaningful before/after comparisons.
