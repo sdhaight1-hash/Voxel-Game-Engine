@@ -32,7 +32,7 @@ impl SeasonalPalettes {
         [shade(0.55),shade(0.83),color,shade(1.23)]
     }
     pub fn for_species(species:PlantPreset,summer:[u8;3])->Self {
-        let evergreen=species.is_conifer() || species.is_bamboo()
+        let evergreen=species.is_conifer() || species.is_bamboo() || species.is_palm()
             || matches!(species,PlantPreset::Olive|PlantPreset::Orange|
                 PlantPreset::Mango|PlantPreset::Lychee|
                 PlantPreset::Breadfruit|PlantPreset::Kapok|
@@ -374,8 +374,8 @@ mod tests {
 
     #[test]
     fn all_catalog_materials_bake_and_keep_species_and_fruit_data() {
-        assert_eq!(PlantPreset::TREE_CATALOG.len(),30);
-        assert_eq!(PlantPreset::ALL.len(),31);
+        assert_eq!(PlantPreset::TREE_CATALOG.len(),33);
+        assert_eq!(PlantPreset::ALL.len(),34);
         for species in PlantPreset::ALL {
             let mats=FoliageMaterials::for_species(species);
             let baked=mats.bake_leaf(64,[120,155,90]).unwrap();
@@ -414,6 +414,21 @@ mod tests {
         assert!(summer[1]>summer[0] && summer[1]>summer[2]);
         assert!(autumn[0]>autumn[1]);
         assert_eq!(palette.sample(0.0,0.5),palette.sample(4.0,0.5));
+    }
+
+    #[test]
+    fn palm_materials_remain_evergreen_without_fake_harvestable_fruit() {
+        for species in [PlantPreset::CoconutPalm,PlantPreset::DatePalm,
+                        PlantPreset::FanPalm] {
+            let project=crate::foliage::FoliageProject::from_preset(species);
+            let materials=&project.materials;
+            assert!(materials.bark.is_some(), "{species:?}");
+            assert!(materials.leaf.is_some(), "{species:?}");
+            assert_eq!(materials.fruit_color,None);
+            let pal=materials.effective_palettes(project.leaf_color);
+            assert!(pal.sample(2.0,0.5)[1]>pal.sample(2.0,0.5)[0]*0.9);
+            assert!(pal.sample(3.0,0.5)[1]>pal.sample(3.0,0.5)[0]*0.9);
+        }
     }
 
     #[test]
