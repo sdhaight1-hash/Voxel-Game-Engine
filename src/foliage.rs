@@ -2866,6 +2866,15 @@ mod tests {
                 mesh.voxels.iter().map(|v| (v.x, v.y, v.z)).collect();
             assert_eq!(unique.len(), mesh.voxel_count());
             assert!(mesh.triangle_count() > 0);
+            let wood:BTreeSet<_>=mesh.voxels.iter()
+                .filter(|cell|cell.material.is_wood())
+                .map(|cell|[cell.x,cell.y,cell.z]).collect();
+            for face in mesh.triangles.iter().filter(|face|face.material.is_wood()) {
+                assert!(wood.contains(&face.cell),"{preset:?}: unowned wood");
+                assert!(face.points.iter().all(|point|
+                    crate::hexel_clip::contains(*point,face.cell,mesh.voxel_size)),
+                    "{preset:?}: wood escaped owning hexel {:?}",face.cell);
+            }
         }
     }
 
