@@ -10,7 +10,7 @@ const MAX_PARAMETERS:usize=16;
 const MAX_NESTED_CALLS:usize=16;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum FunctionParameterKind { NoiseScale }
+pub enum FunctionParameterKind { NoiseScale, NestedNoiseScale }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FunctionParameter {
@@ -115,6 +115,9 @@ impl MaterialFunction {
                 .ok_or("Material function parameter target node does not exist")?;
             match (param.kind,node.kind) {
                 (FunctionParameterKind::NoiseScale,NodeKind::Noise{..})=>{},
+                (FunctionParameterKind::NestedNoiseScale,NodeKind::Color{..})
+                    if self.calls.iter().any(|call|
+                        call.placeholder_node_id==param.node_id)=>{},
                 _=>return Err("Material function parameter targets wrong node kind".into()),
             }
         }
@@ -144,17 +147,21 @@ impl MaterialFunction {
             let param=self.parameters.iter().find(|param|param.key==item.key)
                 .ok_or("Unknown material function override")?;
             match param.kind {
-                FunctionParameterKind::NoiseScale => {
+                FunctionParameterKind::NoiseScale | FunctionParameterKind::NestedNoiseScale => {
                     if !(1..=64).contains(&item.value) {
                         return Err("Noise frequency override must be 1..64".into());
                     }
-                    let node=graph.node_mut(param.node_id)
-                        .ok_or("Material function parameter target missing")?;
-                    if let NodeKind::Noise{scale,..}=&mut node.kind {
-                        *scale=item.value;
-                    } else {
-                        return Err("Material function parameter target is not Noise".into());
+                    if param.kind==FunctionParameterKind::NoiseScale {
+                        let node=graph.node_mut(param.node_id)
+                            .ok_or("Material function parameter target missing")?;
+                        if let NodeKind::Noise{scale,..}=&mut node.kind {
+                            *scale=item.value;
+                        } else {
+                            return Err("Material function parameter target is not Noise".into());
+                        }
                     }
+                    // NestedNoiseScale is forwarded to the child by the
+                    // material_function_nesting resolver, not executed here.
                 }
             }
         }
