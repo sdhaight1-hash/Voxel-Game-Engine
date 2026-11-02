@@ -237,7 +237,9 @@ struct Studio {
     asset_leaf_texture: Option<TextureHandle>,
     asset_bark_texture: Option<TextureHandle>,
     foliage_leaf_pixels: Vec<u8>,
+    foliage_bark_pixels: Vec<u8>,
     asset_leaf_pixels: Vec<u8>,
+    asset_bark_pixels: Vec<u8>,
     foliage_mats_dirty: bool,
     asset_mats_dirty: bool,
     material_role: MaterialRole,
@@ -299,7 +301,9 @@ impl Default for Studio {
             asset_leaf_texture: None,
             asset_bark_texture: None,
             foliage_leaf_pixels: Vec::new(),
+            foliage_bark_pixels: Vec::new(),
             asset_leaf_pixels: Vec::new(),
+            asset_bark_pixels: Vec::new(),
             foliage_mats_dirty: true,
             asset_mats_dirty: true,
             material_role: MaterialRole::Leaf,
@@ -593,7 +597,7 @@ impl Studio {
     fn import_tree_as_asset(&mut self) {
         match self.foliage.generate() {
             Ok(mesh) => {
-                self.asset = VoxelAsset::from_tree(&self.foliage, &mesh, &self.graph);
+                self.asset = VoxelAsset::from_tree(&self.foliage, &mesh);
                 self.asset_selected = mesh.voxels.first().map(|v| [v.x, v.y, v.z]);
                 self.asset_undo.clear();
                 self.asset_redo.clear();
@@ -814,7 +818,16 @@ impl Studio {
             if for_asset {self.asset_mats_dirty=true;}
             else {self.foliage_mats_dirty=true;}
         }
+        ui.small("Leaf Pattern controls luminance/detail; species and seasonal palettes control the base color.");
         ui.small("Transparency keeps the leaf silhouette; an opacity graph can add holes.");
+        if slot==MaterialRole::Bark && mat.bark.is_some() {
+            if ui.add(egui::Slider::new(&mut mat.bark_tint_strength,0.0..=1.0)
+                .text("Bark tint mix")).changed() {
+                if for_asset {self.asset_mats_dirty=true;}
+                else {self.foliage_mats_dirty=true;}
+            }
+            ui.small("0: original graph colors · 1: graph detail colored by tree bark color");
+        }
         ui.horizontal(|ui| {
             if ui.button("Edit slot in Nodes").clicked() {
                 let mats=if for_asset {&self.asset.materials}
@@ -1447,15 +1460,24 @@ impl Studio {
             }
             FoliageStage::FoliagePalette => {
                 ui.label("Harvestable foliage hexels with crossed cutout leaf cards.");
-                changed |= ui.add(egui::Slider::new(&mut tree.leaf_render.wind_strength,
+                let mut wind_changed=false;
+                wind_changed |= ui.add(egui::Slider::new(&mut tree.leaf_render.wind_strength,
                     0.0..=0.5).text("Wind sway")).changed();
-                changed |= ui.add(egui::Slider::new(&mut tree.leaf_render.wind_speed,
+                wind_changed |= ui.add(egui::Slider::new(&mut tree.leaf_render.wind_speed,
                     0.0..=5.0).text("Wind speed")).changed();
+                if wind_changed {
+                    // Wind affects the scene uniforms, not physical leaf cells.
+                    if let Some(mesh)=&mut self.foliage_mesh {
+                        mesh.leaf_render=tree.leaf_render;
+                    }
+                    self.foliage_gpu_scene=None;
+                }
                 ui.small("Leaf cell positions remain voxel-anchored; only their visual mesh bends.");
                 ui.label("Bark color");
-                changed |= ui.color_edit_button_srgb(&mut tree.bark_color).changed();
+                let bark_changed=ui.color_edit_button_srgb(&mut tree.bark_color).changed();
                 ui.label("Leaf color");
-                changed |= ui.color_edit_button_srgb(&mut tree.leaf_color).changed();
+                let leaf_changed=ui.color_edit_button_srgb(&mut tree.leaf_color).changed();
+                if bark_changed || leaf_changed {self.foliage_mats_dirty=true;}
                 if seasonal_palette_editor(ui,&mut tree.materials,tree.leaf_color) {
                     self.foliage_gpu_scene=None;
                 }
@@ -1516,7 +1538,7 @@ impl Studio {
                 if ui.button("Open foliage project").clicked() { self.open_foliage(); }
             }
         }
-        if changed { self.foliage_dirty = true; self.foliage_mats_dirty = true; }
+        if changed { self.foliage_dirty = true; }
         if let Err(err)=self.foliage.validate() {
             ui.colored_label(Color32::from_rgb(232,133,104),err);
         }
@@ -2235,6 +2257,7 @@ impl eframe::App for Studio {
                    self.foliage.materials.bake_bark(size,self.foliage.bark_color)) {
                 (Ok(leaves),Ok(bark))=>{
                     self.foliage_leaf_pixels=leaves.clone();
+                    self.foliage_bark_pixels=bark.clone();
                     put_texture_rect(&ctx,&mut self.leaf_texture,"foliage-leaf-material",
                         leaves,[size as usize,size as usize]);
                     put_texture_rect(&ctx,&mut self.bark_texture,"foliage-bark-material",
@@ -2250,6 +2273,7 @@ impl eframe::App for Studio {
                    self.asset.materials.bake_bark(size,self.asset.bark_color)) {
                 (Ok(leaves),Ok(bark))=>{
                     self.asset_leaf_pixels=leaves.clone();
+                    self.asset_bark_pixels=bark.clone();
                     put_texture_rect(&ctx,&mut self.asset_leaf_texture,"asset-leaf-material",
                         leaves,[size as usize,size as usize]);
                     put_texture_rect(&ctx,&mut self.asset_bark_texture,"asset-bark-material",
@@ -2269,17 +2293,17 @@ impl eframe::App for Studio {
             }
             if self.asset_gpu_scene.is_none() && self.gpu.is_some() {
                 if let Some(mesh)=&self.asset_mesh {
-                    if self.asset_leaf_pixels.len()==64*64*4 {
-                        let bark=self.asset.materials.bake_bark(64,self.asset.bark_color);
-                        if let Ok(bark)=bark {
-                            self.asset_gpu_scene=Some(Arc::new(GpuScene::from_mesh(
-                                mesh,&bark,&self.asset_leaf_pixels,self.asset.leaf_color,
-                                self.asset.materials.effective_palettes(self.asset.leaf_color)
-                                    .gpu_stops(),
-                                if self.asset.materials.leaf_species.is_coffee() {2.0}
-                                else if self.asset.materials.leaf_species==PlantPreset::CherryBlossom {1.0}
-                                else {0.0})));
-                        }
+                    // Geometry and palette changes reuse the already baked textures.
+                    if self.asset_leaf_pixels.len()==64*64*4
+                        && self.asset_bark_pixels.len()==64*64*4 {
+                        self.asset_gpu_scene=Some(Arc::new(GpuScene::from_mesh(
+                            mesh,&self.asset_bark_pixels,&self.asset_leaf_pixels,
+                            self.asset.leaf_color,
+                            self.asset.materials.effective_palettes(self.asset.leaf_color)
+                                .gpu_stops(),
+                            if self.asset.materials.leaf_species.is_coffee() {2.0}
+                            else if self.asset.materials.leaf_species==PlantPreset::CherryBlossom {1.0}
+                            else {0.0})));
                     }
                 }
             }
@@ -2294,17 +2318,16 @@ impl eframe::App for Studio {
             }
             if self.foliage_gpu_scene.is_none() && self.gpu.is_some() {
                 if let Some(mesh)=&self.foliage_mesh {
-                    if self.foliage_leaf_pixels.len()==64*64*4 {
-                        let bark=self.foliage.materials.bake_bark(64,self.foliage.bark_color);
-                        if let Ok(bark)=bark {
-                            self.foliage_gpu_scene=Some(Arc::new(GpuScene::from_mesh(
-                                mesh,&bark,&self.foliage_leaf_pixels,self.foliage.leaf_color,
-                                self.foliage.materials.effective_palettes(self.foliage.leaf_color)
-                                    .gpu_stops(),
-                                if self.foliage.materials.leaf_species.is_coffee() {2.0}
-                                else if self.foliage.materials.leaf_species==PlantPreset::CherryBlossom {1.0}
-                                else {0.0})));
-                        }
+                    if self.foliage_leaf_pixels.len()==64*64*4
+                        && self.foliage_bark_pixels.len()==64*64*4 {
+                        self.foliage_gpu_scene=Some(Arc::new(GpuScene::from_mesh(
+                            mesh,&self.foliage_bark_pixels,&self.foliage_leaf_pixels,
+                            self.foliage.leaf_color,
+                            self.foliage.materials.effective_palettes(self.foliage.leaf_color)
+                                .gpu_stops(),
+                            if self.foliage.materials.leaf_species.is_coffee() {2.0}
+                            else if self.foliage.materials.leaf_species==PlantPreset::CherryBlossom {1.0}
+                            else {0.0})));
                     }
                 }
             }
@@ -2660,6 +2683,8 @@ mod wire_interaction_tests {
         app.import_tree_as_asset();
         assert!(app.asset.materials.bark.is_some());
         assert!(app.asset.materials.leaf.is_some());
+        assert!(app.asset.material_graph.is_none(),
+            "active Nodes graph must not overwrite imported tree material roles");
         let mut seasonal=app.asset.materials.effective_palettes(app.asset.leaf_color);
         seasonal.seasons[2][0]=[220,80,39];
         app.asset.materials.seasonal_palettes=Some(seasonal.clone());
@@ -2680,6 +2705,21 @@ mod wire_interaction_tests {
     }
 
     #[test]
+    fn only_material_edits_invalidate_material_bakes() {
+        let mut app=Studio::default();
+        app.foliage_mats_dirty=false;
+        app.foliage_dirty=false;
+        app.foliage_stage=FoliageStage::Scale;
+        // A geometry-only editor change should be treated as such.
+        app.foliage.overall_scale+=0.1;
+        app.foliage_dirty=true;
+        assert!(!app.foliage_mats_dirty);
+        app.foliage.materials.bark_tint_strength=0.5;
+        app.foliage_mats_dirty=true;
+        assert!(app.foliage_mats_dirty);
+    }
+
+    #[test]
     fn generated_tree_converts_into_independently_editable_asset() {
         let mut app=Studio::default();
         app.library_tab=2;
@@ -2688,7 +2728,7 @@ mod wire_interaction_tests {
         assert_eq!(app.asset.shape,VoxelShape::HexPrism);
         assert_eq!(app.asset.voxel_size,1.0);
         assert!(app.asset.voxels.len()>4);
-        assert!(app.asset.material_graph.is_some());
+        assert!(app.asset.material_graph.is_none());
         assert!(app.asset.mesh().is_ok());
     }
 
