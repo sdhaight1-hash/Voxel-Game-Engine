@@ -1,4 +1,4 @@
-# Procedural World — Design Decisions (v0.2)
+# Procedural World — Design Decisions (v0.3)
 
 **Status:** Working design; documents agreed direction, provisional defaults, and open engineering decisions. **Not an implementation claim.**  
 **Recorded:** 2026-11-01  
@@ -13,9 +13,10 @@ This is the **authoritative current design record**. Companion documents in this
 
 - [Synthetic world-generation foundation](world-generation-foundation.md) — current proposed tectonics → Terrain Diffusion → compressed geography → streamed hexel pipeline, including older InfiniteDiffusion research.
 - [Tellus / real-Earth research](real-earth-world-generation.md) — **archived/superseded** dual-world-mode candidate, kept for geodata lessons; **not an active second terrain provider**.
-- [Repository README](../README.md) — what the **existing** procedural asset/material editor currently does, plus a short pointer to this future-world specification.
+- [Asset-creation subsystems and game-runtime integration](asset-creation-subsystems.md) — **chosen architecture:** Nodes, Presets, Foliage and Assets are modular subsystems for producing reusable game content; source-vs-game-ready formats and the integration steps are proposed.
+- [Repository README](../README.md) — implemented asset-creation tools and future-world design overview.
 
-**Project boundaries:** The material/asset editor already supports **cube and hexagonal-prism assets**; that does not mean this repository already has a planetary hexel runtime. Another hexel prototype may be cited as a research/reference implementation, but **no other repository is being changed or implicitly merged**. The 1,024 km torus, synthetic tectonics/diffusion, conserved hydrology and reactive pub/sub architecture are **design work** until tested and implemented.
+**Project boundaries:** This repository already implements distinct **asset-creation subsystems** for procedural materials, presets, foliage and editable voxel models, currently presented in one `texture-studio` desktop authoring application. Those tools are **part of the intended greater engine architecture**, not throwaway prototypes or independent engines. They support **cube and hexagonal-prism assets**; that does not mean this repository already has a planetary hexel runtime. Another hexel prototype may be cited as a reference, but **no other repository is being changed or implicitly merged**. The 1,024 km torus, synthetic tectonics/diffusion, conserved hydrology and reactive pub/sub architecture are **design work** until tested and implemented.
 
 ## Decision status conventions
 
@@ -148,6 +149,32 @@ The exact voxel representation (dense chunks, palettes, implicit solids, hybrid)
 
 **Repository alignment note:** Hexel-Game-Engine's current README still describes an eventual **true sphere**, while this design selects a **flat torus**. Do not silently mix those topologies; reconcile the Hexel repository's design documentation when adopting this world model. The Voxel-Game-Engine repository still contains the procedural materials/asset editor and the present world-design document; no project merge is assumed.
 
+## 7A. Asset-creation subsystems and game-content handoff
+
+**Decided architectural principle:** The four working editor workspaces — **Nodes, Presets, Foliage and Assets** — are specialized, reusable **asset-creation subsystems of the greater game engine**. Retain their functionality and editable source data as the game runtime grows. The currently standalone authoring desktop app is a packaging/UI arrangement, **not a separate engine or a temporary prototype to replace**.
+
+**Subsystem responsibilities:**
+
+| Asset-creation subsystem | Creates and edits | Game-world consumer |
+|---|---|---|
+| **Nodes** | Deterministic tileable appearance graphs and albedo/roughness/metallic/height/derived-normal textures | Shared baked material/texture resources for renderer |
+| **Presets** | Data-driven natural material/appearance recipes built using Nodes | Material library selected by geology, biome, plants or object definitions |
+| **Foliage** | Seeded tree/shrub hexel or cube geometry, bark/leaves, cutout cards and visual wind parameters | Vegetation definitions/prefabs placed by ecology/biomes |
+| **Assets** | Editable cube or hex-prism occupancy, authored objects, material bindings and JSON source models | Placeable/editable structures and objects |
+| **Shared authoring preview** | Hex/cube exposed-face geometry, UV maps, existing wgpu preview and OBJ/MTL exports | Source of reusable geometric/rendering techniques; **not** automatically the streaming world renderer |
+
+**Proposed integration:** Authoring **source asset** (graph/preset/vegetation recipe/voxel model) → explicit **validate/bake/publish** operation → **game-ready shared asset library** (stable asset IDs, versioned definitions, baked textures, reusable geometry or deterministic recipe, material metadata) → world-gen placement / game rendering. This pipeline, its exact compiled storage format, dependency handling and registry are **not yet implemented**. Preserve existing JSON authoring and OBJ compatibility exports; OBJ is not enough to represent editable in-game hexel cells.
+
+**Runtime ownership boundary:** An asset definition says **what a tree, rock texture or structure is and looks like**; the world's tectonics, geology, ecology and gameplay decide **where it is placed, what it consumes, whether it grows/dies/is mined, and how it changes**. Physical water/ore/soil and player edits remain under conserved/persistent authoritative world state. Material texture height is not the game's geographic elevation field. Do not re-evaluate CPU texture graphs per block or simulation tick; bake/cache shared variants. Runtime water and ecology must not be implemented inside the asset editor.
+
+**Compatibility and performance:** Continue to support the asset editor's cube mode even if playable terrain prefers hexels. Existing foliage/assets use **Q/R/Z** for local hex occupancy (Z vertical), while the proposed world uses **Q/R/Y**; an importer must map axes and physical scales explicitly. The existing `FoliageMesh` and one-asset GPU viewport are useful **asset-scale** implementations, not optimized full-world chunk meshing. A separately streamed chunk mesher and renderer will be needed.
+
+**Persistence/revisions:** Game instances reference asset versions but own their **mutable gameplay state**. Changing or rebaking a source asset must not regenerate a chopped tree, recreate mined materials or overwrite player-edited structures. Asset-version pinning, runtime hot reload and migration strategy remain open.
+
+**First proof:** Compile/bake two authored materials, one deterministic hexel tree and one editable hexel prefab; load them in a tiny chunked fixture through a game-side API without invoking the editor UI. Verify rendering, edit persistence, asset reuse and correct world-space coordinate conversion before adding a broad asset framework.
+
+See [Asset-creation subsystems and game-runtime integration](asset-creation-subsystems.md) for the concrete current-code inventory, ownership matrix, validation plan and outstanding interface choices.
+
 ## 8. Geology, climate, hydrology and ecology
 
 **Design direction, algorithms still open:**
@@ -266,7 +293,7 @@ No end-to-end performance numbers or compression ratios have yet been demonstrat
 
 **Upgrade discipline:** Do not replace the existing eframe/wgpu integration, introduce a second independently versioned wgpu dependency, or change the asset renderer simply because the hexel prototype used different versions. Test `hexx`/`glam` type compatibility if adopting them, and change Cargo only when actually implementing world features. A real database is **not** required merely to emulate SpaceTimeDB-style subscriptions.
 
-**Scope:** No dependencies or source code are changed by this design document.
+**Scope:** No dependencies or source code are changed by this design document. Asset-authoring facilities already exist in this repository; a game-ready runtime asset registry is still proposed.
 
 ## 10. Technical references (inspiration, not implementation claims)
 
@@ -306,6 +333,7 @@ External references:
 12. **Hexel architecture:** exact cell radius/height/scale, wrapping lattice periods, 16³ versus 32³ chunk performance, meshing, collision, water-face geometry and practical building rules.
 13. **Reactive state design:** choose the smallest adequate typed invalidation, region interests, transaction boundaries, ordering and storage mechanism; do not assume SpaceTimeDB is a dependency.
 14. **Rust dependency additions/upgrades:** benchmark and add only when a feature requires them; preserve **this repo's** eframe/serde/bytemuck baseline until compatibility tests justify upgrading. Hexel-prototype crate versions are not installed here.
+15. **Asset publishing format:** source/compiled content schemas, stable IDs, cached material variants, runtime prefab conversion, local Q/R/Z → world Q/R/Y scale, version pinning and safe asset updates for existing world instances.
 
 ## 12. Initial validation plan
 
@@ -322,11 +350,12 @@ External references:
 11. Add one authoritative edit command, region-scoped typed dirty notification and an entity changing subscribed regions; verify only relevant meshes and fields rebuild.
 12. Test an atomic finite-water transfer across active and inactive region state, including failure/rollback, save/reload and no duplicate water ownership.
 13. Profile **this repository's actual eframe/wgpu + serde dependency stack** before introducing `hexx`, `glam`, `rayon`, `redb`, or dedicated message-queue crates; test any direct wgpu API change separately.
+14. Verify an **authoring → game-ready asset** path for two baked materials, one deterministic tree and one editable hexel object, with a persistent world instance and shared material resources; do not run authoring texture graphs per visible hexel.
 
 ---
 
 ### Summary
 
-**Chosen future-world direction (not implemented):** A **1,024 × 1,024 km**, finite **horizontally toroidal** synthetic world; **512-block default** vertical height with **256/768/1,024** options; **complete pre-generation and permanent compression of base Terrain Diffusion geography**; **no diffusion inference in gameplay**; **streamed, regenerable detailed voxel terrain**; **persistent independent edit data**; tectonics-first geography, **finite conserved water** and coherent global climate/ecology. **Preferred playable cell geometry is now hexagonal prisms (Q/R/Y)**, with the existing Hexel Engine as the implementation reference, pending lattice/chunk tests. A SpaceTimeDB-inspired reactive world-state design and selective Rust dependency additions are **proposals**, not implemented subsystems. **This repository's existing code remains the texture/material/asset editor**, with cubes and hexagonal-prism models both available there.
+**Chosen future-world direction (not implemented):** A **1,024 × 1,024 km**, finite **horizontally toroidal** synthetic world; **512-block default** vertical height with **256/768/1,024** options; **complete pre-generation and permanent compression of base Terrain Diffusion geography**; **no diffusion inference in gameplay**; **streamed, regenerable detailed voxel terrain**; **persistent independent edit data**; tectonics-first geography, **finite conserved water** and coherent global climate/ecology. **Preferred playable cell geometry is now hexagonal prisms (Q/R/Y)**, with the existing Hexel Engine as the implementation reference, pending lattice/chunk tests. A SpaceTimeDB-inspired reactive world-state design and selective Rust dependency additions are **proposals**, not implemented subsystems. **Nodes, Presets, Foliage and Assets are chosen as retained asset-creation subsystems of the greater engine**, currently exposed through the existing `texture-studio` desktop authoring app, with cube and hexagonal-prism asset support. The game-ready library, world runtime and integration pipeline have **not yet been implemented**.
 
 **Important open problem:** How to map geographic kilometres and realistic mountain elevation into a fixed-height voxel game **without unacceptable slope distortion**. Do not hard-code a metre-per-voxel equivalence until this is resolved.
