@@ -567,6 +567,26 @@ impl Studio {
         };
     }
 
+    fn export_antialiased_png(&mut self) {
+        if self.preview_channel>=4 || self.export_size>1024 {
+            self.status="AA export supports Albedo/Roughness/Metallic/Height up to 1024px".into();
+            return;
+        }
+        let Some(path)=rfd::FileDialog::new()
+            .add_filter("PNG image",&["png"])
+            .set_file_name("texture-aa.png").save_file() else {
+            return;
+        };
+        let size=self.export_size;
+        let result=self.graph.render_output_channel_rgba_ssaa2x(
+            self.preview_channel,size,size)
+            .and_then(|pixels|save_png(&path,size,&pixels));
+        self.status=match result {
+            Ok(())=>format!("2x2 antialiased PNG exported: {}",path.display()),
+            Err(error)=>format!("AA export failed: {error}"),
+        };
+    }
+
     fn export_material(&mut self) {
         let Some(folder) = rfd::FileDialog::new().pick_folder() else { return; };
         let size = self.export_size;
@@ -3048,6 +3068,10 @@ impl eframe::App for Studio {
                         }
                     });
                 if ui.button("Export image").clicked() { self.export_png(); }
+                if ui.add_enabled(self.preview_channel<4 && self.export_size<=1024,
+                    egui::Button::new("Export AA (2×2)")).on_hover_text(
+                    "Supersample the selected PBR channel at four subpixel UVs. Slower, useful for SDF silhouettes. Does not change regular exports or normal maps."
+                    ).clicked() { self.export_antialiased_png(); }
                 if ui.button("Export PBR maps").clicked() { self.export_material(); }
                 if ui.add_enabled(!self.graph.voxel.geometryless,
                     egui::Button::new("Export voxel OBJ + atlases")).clicked() {
