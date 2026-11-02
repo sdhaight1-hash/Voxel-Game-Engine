@@ -532,9 +532,10 @@ fn neighbor(shape: VoxelShape, face: usize) -> [i32; 3] {
     }
 }
 fn push_triangle(out: &mut Vec<Triangle>, a: [f32; 3], b: [f32; 3],
-                 c: [f32; 3], material: Material, cell: [i32; 3], outward: [i32; 3]) {
+                 c: [f32; 3], material: Material, cell: [i32; 3],
+                 outward: [i32; 3], uv:[[f32;2];3]) {
     out.push(Triangle { points: [a, b, c], material, cell, outward,
-        uv: [[0.0, 0.0]; 3], cutout: false, wind_weight: [0.0; 3] });
+        uv, cutout: false, wind_weight: [0.0; 3] });
 }
 fn add_leaf_cards(triangles:&mut Vec<Triangle>, pos:[i32;3],
                   material:Material, shape:VoxelShape, size:f32) {
@@ -601,16 +602,22 @@ fn surface_triangles(
             let next = (face + 1) % n;
             // Footprints are CCW; side quad normal points outward.
             push_triangle(&mut triangles, bottom[face], bottom[next],
-                top[next], *material, *cell, d);
+                top[next], *material, *cell, d,
+                [[0.0,1.0],[1.0,1.0],[1.0,0.0]]);
             push_triangle(&mut triangles, bottom[face], top[next],
-                top[face], *material, *cell, d);
+                top[face], *material, *cell, d,
+                [[0.0,1.0],[1.0,0.0],[0.0,0.0]]);
         }
         if cells.get(&[cell[0],cell[1],cell[2]+1])!=Some(&Material::Bark) &&
             (render.geometry!=LeafGeometry::SolidVoxel ||
              !cells.contains_key(&[cell[0],cell[1],cell[2]+1])) {
             for i in 1..n-1 {
                 push_triangle(&mut triangles, top[0], top[i], top[i+1],
-                    *material, *cell, [0, 0, 1]);
+                    *material, *cell, [0, 0, 1],[
+                        [0.5,0.5],
+                        [(top[i][0]-c[0])/s+0.5,(top[i][1]-c[1])/s+0.5],
+                        [(top[i+1][0]-c[0])/s+0.5,(top[i+1][1]-c[1])/s+0.5],
+                    ]);
             }
         }
         if cells.get(&[cell[0],cell[1],cell[2]-1])!=Some(&Material::Bark) &&
@@ -618,7 +625,11 @@ fn surface_triangles(
              !cells.contains_key(&[cell[0],cell[1],cell[2]-1])) {
             for i in 1..n-1 {
                 push_triangle(&mut triangles, bottom[0], bottom[i+1],
-                    bottom[i], *material, *cell, [0, 0, -1]);
+                    bottom[i], *material, *cell, [0, 0, -1],[
+                        [0.5,0.5],
+                        [(bottom[i+1][0]-c[0])/s+0.5,(bottom[i+1][1]-c[1])/s+0.5],
+                        [(bottom[i][0]-c[0])/s+0.5,(bottom[i][1]-c[1])/s+0.5],
+                    ]);
             }
         }
     }
@@ -724,11 +735,18 @@ pub fn mtl(project: &FoliageProject) -> String {
     ];
     let mut text = String::from("# Voxel tree bark and leaf block palette\n");
     for (name, c) in colors {
+        let textured = (name=="bark" && project.materials.bark.is_some())
+            || (name!="bark" && project.leaf_render.geometry==LeafGeometry::CrossedCutout);
+        let kd=if textured {[1.0;3]} else {
+            [c[0] as f32/255.0,c[1] as f32/255.0,c[2] as f32/255.0]
+        };
         text.push_str(&format!(
             "newmtl {name}\nKd {:.4} {:.4} {:.4}\nKa 0 0 0\n",
-            c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0
+            kd[0],kd[1],kd[2]
         ));
-        if name != "bark" && project.leaf_render.geometry == LeafGeometry::CrossedCutout {
+        if name=="bark" && project.materials.bark.is_some() {
+            text.push_str("map_Kd bark-albedo.png\n");
+        } else if name!="bark" && project.leaf_render.geometry == LeafGeometry::CrossedCutout {
             text.push_str("map_Kd foliage-leaves.png\nmap_d foliage-leaves-alpha.png\n");
         }
         text.push('\n');
