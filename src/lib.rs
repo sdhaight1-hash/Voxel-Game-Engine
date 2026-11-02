@@ -547,6 +547,52 @@ impl Graph {
         })
     }
 
+    /// Optional 2x2 ordered supersampling for authored vector/SDF edges.
+    /// Four subpixel samples are accumulated in floating point and clamped
+    /// only once after averaging. The legacy pixel-corner render is unchanged.
+    /// This is bounded to 1024px because dense Bézier/warp graphs can be costly.
+    pub fn render_output_channel_rgba_ssaa2x(&self,channel:usize,width:u32,height:u32)
+        ->Result<Vec<u8>,String> {
+        self.validate()?;
+        if channel>=4 {
+            return Err("Unsupported material channel".into());
+        }
+        if width==0||height==0||width>1024||height>1024 {
+            return Err("2x2 supersampling requires dimensions 1..1024".into());
+        }
+        let output=self.nodes.iter().find(|n|matches!(n.kind,NodeKind::Output))
+            .expect("validated graph").id;
+        let source=self.links.iter().find(|l|l.to==output&&l.input==channel)
+            .map(|l|l.from);
+        let default=match channel {
+            1=>[0.72;3],
+            3=>[0.5;3],
+            _=>[0.0;3],
+        };
+        let mut rgba=Vec::with_capacity(width as usize*height as usize*4);
+        for y in 0..height {
+            for x in 0..width {
+                let mut rgb=[0.0f32;3];
+                for oy in [0.25,0.75] {
+                    for ox in [0.25,0.75] {
+                        let u=(x as f32+ox)/width as f32;
+                        let v=(y as f32+oy)/height as f32;
+                        let value=match source {
+                            Some(id)=>self.sample(id,u,v),
+                            None=>default,
+                        };
+                        for i in 0..3 {rgb[i]+=value[i]*0.25;}
+                    }
+                }
+                for component in rgb {
+                    rgba.push((component.clamp(0.0,1.0)*255.0).round() as u8);
+                }
+                rgba.push(255);
+            }
+        }
+        Ok(rgba)
+    }
+
     /// Render several PBR output channels in one pixel traversal. Upstream
     /// node evaluations are reused only at the *same exact UV coordinate*,
     /// including transformed/filter sample positions. No upstream raster
@@ -847,6 +893,44 @@ fn periodic_noise(u: f32, v: f32, period: u32, seed: u32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn supersampled_vector_mask_has_partial_coverage_with_hard_sdf_edge() {
+        let mut graph=Graph::default();
+        let circle=graph.add_node(NodeKind::SdfCircle{
+            center:[0.5,0.5],radius:0.235,
+        },[20.0,20.0]);
+        let mask=graph.add_node(NodeKind::SdfToMask{
+            edge_width:0.0,
+        },[140.0,20.0]);
+        graph.connect(circle,mask,0).unwrap();
+        graph.connect(mask,2,0).unwrap();
+        let unfiltered=graph.render_rgba(64,64).unwrap();
+        let antialiased=graph.render_output_channel_rgba_ssaa2x(0,64,64).unwrap();
+        assert_eq!(antialiased.len(),unfiltered.len());
+        assert!(antialiased.chunks_exact(4).any(|p|p[0]>0&&p[0]<255),
+            "2x2 coverage must resolve intermediate edge pixels");
+        assert!(antialiased.chunks_exact(4).all(|p|p[3]==255));
+        assert!(unfiltered.chunks_exact(4).all(|p|p[0]==0||p[0]==255));
+        // An explicit render path must not change legacy output bytes.
+        assert_eq!(graph.render_rgba(64,64).unwrap(),unfiltered);
+    }
+
+    #[test]
+    fn supersampling_preserves_constant_color_and_validates_bounds() {
+        let mut graph=Graph::default();
+        graph.node_mut(1).unwrap().kind=NodeKind::Color{
+            rgb:[34,125,202],
+        };
+        let original=graph.render_rgba(32,32).unwrap();
+        let antialiased=graph.render_output_channel_rgba_ssaa2x(0,32,32).unwrap();
+        assert_eq!(antialiased,original);
+        assert!(graph.render_output_channel_rgba_ssaa2x(4,32,32).is_err());
+        assert!(graph.render_output_channel_rgba_ssaa2x(0,1025,1).is_err());
+        assert!(graph.render_output_channel_rgba_ssaa2x(0,0,32).is_err());
+        let missing=graph.render_output_channel_rgba_ssaa2x(1,16,16).unwrap();
+        assert!(missing.chunks_exact(4).all(|p|p==[184,184,184,255]));
+    }
 
     #[test]
     fn starter_graph_renders_opaque_pixels() {
