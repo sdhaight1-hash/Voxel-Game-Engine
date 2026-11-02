@@ -948,6 +948,7 @@ impl Studio {
         });
         ui.add(egui::Slider::new(&mut self.season_preview,0.0..=4.0)
             .text("Season preview").fixed_decimals(2));
+        ui.small("0 Spring • 1 Summer • 2 Autumn • 3 Winter • 4 Spring");
         let available=ui.available_size();
         let desired=Vec2::new(available.x.max(50.0),available.y.max(240.0));
         let (rect,response)=ui.allocate_exact_size(desired,Sense::click_and_drag());
@@ -1343,6 +1344,7 @@ impl Studio {
             0.0..=std::f32::consts::TAU).text("Orbit"));
         ui.add(egui::Slider::new(&mut self.season_preview,0.0..=4.0)
             .text("Season preview").fixed_decimals(2));
+        ui.small("0 Spring • 1 Summer • 2 Autumn • 3 Winter • 4 Spring");
         let available=ui.available_size();
         let desired=Vec2::new(available.x.max(50.0),available.y.max(250.0));
         let (rect,_) = ui.allocate_exact_size(desired,Sense::hover());
