@@ -140,7 +140,7 @@ pub fn sway_leaf_vertex(point:[f32;3], cell:[i32;3], weight:f32,
 }
 /// Game foliage consists only of standard 1m hexagonal-prism cells:
 /// one metre across opposite flats, and one metre vertically.
-pub const self.voxel_size: f32 = 1.0;
+pub const WORLD_HEXEL_SIZE_METRES: f32 = 1.0;
 
 /// Artist-selectable shape variation for standard-grid trees.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -971,22 +971,19 @@ mod tests {
     }
 
     #[test]
-    fn exported_voxel_data_matches_geometry_and_is_deterministic() {
-        for shape in [VoxelShape::Cube, VoxelShape::HexPrism] {
-            let mut tree = FoliageProject::from_preset(PlantPreset::Willow);
-            tree.shape = shape;
-            let a = tree.generate().unwrap();
-            let b = tree.generate().unwrap();
-            assert_eq!(a.voxel_json(&tree).unwrap(), b.voxel_json(&tree).unwrap());
-            assert_eq!(a.obj(), b.obj());
-            let json: serde_json::Value =
-                serde_json::from_str(&a.voxel_json(&tree).unwrap()).unwrap();
-            assert_eq!(json["voxels"].as_array().unwrap().len(), a.voxel_count());
-            assert_eq!(json["shape"].as_str(),Some(match shape {
-                VoxelShape::Cube => "Cube",VoxelShape::HexPrism => "HexPrism"}));
-            assert_eq!(a.obj().lines().filter(|l|l.starts_with("f ")).count(),
-                a.triangle_count());
-        }
+    fn exported_voxel_tree_is_deterministic_and_game_grid_only() {
+        let tree = FoliageProject::from_preset(PlantPreset::Willow);
+        let a = tree.generate().unwrap();
+        let b = tree.generate().unwrap();
+        assert_eq!(a.voxel_json(&tree).unwrap(), b.voxel_json(&tree).unwrap());
+        assert_eq!(a.obj(), b.obj());
+        let json: serde_json::Value =
+            serde_json::from_str(&a.voxel_json(&tree).unwrap()).unwrap();
+        assert_eq!(json["voxels"].as_array().unwrap().len(), a.voxel_count());
+        assert_eq!(json["shape"].as_str(), Some("HexPrism"));
+        assert_eq!(json["voxel_size"].as_f64(), Some(1.0));
+        assert_eq!(a.obj().lines().filter(|l|l.starts_with("f ")).count(),
+            a.triangle_count());
     }
 
     #[test]
