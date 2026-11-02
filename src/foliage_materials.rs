@@ -228,6 +228,23 @@ mod tests {
     }
 
     #[test]
+    fn an_opacity_graph_can_punch_holes_without_filling_outside_silhouette() {
+        let mut mat=FoliageMaterials::default();
+        let original=mat.bake_leaf(32,[60,170,80]).unwrap();
+        let mut black=Graph::default();
+        black.nodes[0].kind=crate::NodeKind::Color{rgb:[0,0,0]};
+        mat.set_graph(MaterialRole::Opacity,black);
+        let cut=mat.bake_leaf(32,[60,170,80]).unwrap();
+        assert!(cut.chunks_exact(4).all(|p|p[3]==0));
+        mat.cutout_threshold=0.0;
+        let restored=mat.bake_leaf(32,[60,170,80]).unwrap();
+        assert_eq!(restored,original);
+        let json=serde_json::to_string(&mat).unwrap();
+        let again:FoliageMaterials=serde_json::from_str(&json).unwrap();
+        assert!(again.leaf_opacity.is_some());
+    }
+
+    #[test]
     fn legacy_materials_and_invalid_thresholds() {
         let old:FoliageMaterials=serde_json::from_str("{}").unwrap();
         assert!(old.bark.is_none());
