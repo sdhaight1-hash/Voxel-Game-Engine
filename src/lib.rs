@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
 pub mod voxel;
+pub mod foliage;
 pub mod presets;
 pub mod node_library;
 pub use node_library::LibraryNode;
