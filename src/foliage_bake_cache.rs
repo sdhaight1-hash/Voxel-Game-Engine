@@ -89,7 +89,8 @@ impl FoliageBakeCache {
             Role::Leaf => serde_json::to_vec(&(
                 materials.leaf.as_ref().map(GraphRecipe::from_graph),
                 materials.leaf_opacity.as_ref().map(GraphRecipe::from_graph),
-                materials.leaf_species, materials.fruit_color,
+                materials.leaf_species, materials.leaf_silhouette,
+                materials.fruit_color,
                 materials.cutout_threshold,
             )),
             Role::Bark => serde_json::to_vec(&(
@@ -173,6 +174,29 @@ mod tests {
         assert_eq!(bark.as_ref(),first.bake_bark(64,[99,76,55]).unwrap().as_slice());
         assert_eq!(cache.stats().hits,2);
         assert_eq!(cache.stats().misses,2);
+    }
+
+    #[test]
+    fn vector_oak_silhouette_is_part_of_leaf_bake_cache_recipe() {
+        use crate::leaf_vector::LeafSilhouetteSource;
+        let mut materials=FoliageMaterials::default();
+        let mut cache=FoliageBakeCache::new(1024*1024);
+        let default=cache.bake_leaf(&materials,64,[80,145,70]).unwrap();
+        materials.leaf_silhouette=LeafSilhouetteSource::VectorOak{
+            lobe_width:1.0,
+        };
+        let vector=cache.bake_leaf(&materials,64,[80,145,70]).unwrap();
+        assert_eq!(cache.stats().misses,2);
+        assert_ne!(default.as_ref(),vector.as_ref());
+        let same=cache.bake_leaf(&materials,64,[80,145,70]).unwrap();
+        assert!(Arc::ptr_eq(&vector,&same));
+        assert_eq!(cache.stats().hits,1);
+        materials.leaf_silhouette=LeafSilhouetteSource::VectorOak{
+            lobe_width:1.25,
+        };
+        let wider=cache.bake_leaf(&materials,64,[80,145,70]).unwrap();
+        assert_ne!(wider.as_ref(),vector.as_ref());
+        assert_eq!(cache.stats().misses,3);
     }
 
     #[test]
