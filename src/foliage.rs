@@ -1216,6 +1216,13 @@ fn paint_line(cells: &mut BTreeMap<[i32; 3], Material>, shape: VoxelShape,
         }
         paint_sphere(cells, shape, s, point, radius, material);
     }
+    // The endpoint of a thin twig can be farther from the center of its
+    // owning 1m cell than the visible twig radius. Make its structural
+    // anchor occupied even when the spherical brush misses that center.
+    if material.is_wood() {
+        cells.insert(grid_key(shape,s,a),material);
+        cells.insert(grid_key(shape,s,b),material);
+    }
 }
 
 fn bridge_hex_wood(cells: &mut BTreeMap<[i32; 3], Material>,
