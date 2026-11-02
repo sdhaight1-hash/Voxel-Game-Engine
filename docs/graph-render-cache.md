@@ -49,7 +49,14 @@ and oversize bypass; and ensure invalid projects fail even after an earlier
 cache hit. The pre-existing frozen legacy 256/512/1024/2048 output hashes and
 1,039 preset graph tests remain unchanged.
 
-Next Phase 3 work needs a dependency-order/required-output analysis,
+The existing CI benchmark command also runs
+`profile_bounded_graph_output_cache` from
+`tests/material_legacy_regression.rs`. It prints cold/warm CPU milliseconds,
+hits/misses, resident/peak bytes and RGBA hashes for 256/512/1024/2048px
+legacy color and 512px warped noise. These numbers measure cache API reuse,
+not GPU throughput or the cost of copying Arc pixels into egui textures.
+
+Next Phase 3 work needs a full per-node execution plan,
 coordinate-aware intermediate execution classes, and profiling of expensive
 shared subgraphs before claiming faster cold renders. This initial cache
 primarily avoids repeated *complete-output* CPU renders; it does not yet
