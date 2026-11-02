@@ -141,6 +141,18 @@ pub fn sway_leaf_vertex(point:[f32;3], cell:[i32;3], weight:f32,
 fn default_voxel_size() -> f32 { 0.4 }
 fn default_shape() -> VoxelShape { VoxelShape::Cube }
 
+/// World hexels measure 1m across opposite flats and 1m vertically.
+pub const WORLD_HEXEL_SIZE_METRES: f32 = 1.0;
+
+/// Classic growth preserves older foliage-project appearances.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BranchGrowth {
+    #[default]
+    Classic,
+    /// Seeded canopy targets steer branch tips (limited space-colonization inspiration).
+    CanopyGuided,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct FoliageProject {
@@ -150,6 +162,8 @@ pub struct FoliageProject {
     pub trunk_radius: f32,
     pub branch_count: u32,
     pub branch_length: f32,
+    #[serde(default)]
+    pub branch_growth: BranchGrowth,
     pub carve_bottom: f32,
     pub carve_top: f32,
     pub gravity: f32,
@@ -180,6 +194,13 @@ impl Default for FoliageProject {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Material { Bark, LeafDark, Leaf, LeafLight }
+
+/// Every bark and leaf entry is a logical, harvestable occupied cell;
+/// item drops and tree-felling policy remain responsibilities of game state.
+impl Material {
+    pub fn is_wood(self) -> bool { self == Self::Bark }
+    pub fn is_foliage(self) -> bool { !self.is_wood() }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VoxelCell {
@@ -232,7 +253,7 @@ impl FoliageProject {
             };
         Self {
             preset, seed: 42, height, trunk_radius: radius, branch_count: branches,
-            branch_length, carve_bottom: 0.15, carve_top: 0.02,
+            branch_length, branch_growth: BranchGrowth::Classic, carve_bottom: 0.15, carve_top: 0.02,
             gravity, phototropism: 0.15, slope: 0.0, overall_scale: 1.0, prune: 0.0,
             leaf_density: density, leaf_scale, leaf_angle: 0.12, leaf_variation: 0.32,
             bark_color: bark, leaf_color: leaves,
@@ -288,6 +309,16 @@ impl FoliageProject {
         Ok(())
     }
 
+    /// Generate 1m solid hexel wood plus textured-card foliage cells.
+    /// Does not alter the editable source project's grid or leaf settings.
+    pub fn generate_world_hexels(&self) -> Result<FoliageMesh, String> {
+        let mut world = self.clone();
+        world.shape = VoxelShape::HexPrism;
+        world.voxel_size = WORLD_HEXEL_SIZE_METRES;
+        world.leaf_render.geometry = LeafGeometry::CrossedCutout;
+        world.generate()
+    }
+
     /// Generate discrete occupied cells, then surface-triangulate exposed faces only.
     pub fn generate(&self) -> Result<FoliageMesh, String> {
         self.validate()?;
@@ -307,6 +338,19 @@ impl FoliageProject {
                 (1.0 - t * 0.80)).max(s * 0.20);
             paint_sphere(&mut cells, self.shape, s, p, radius, Material::Bark);
         }
+        let mut targets = Vec::new();
+        if self.branch_growth == BranchGrowth::CanopyGuided {
+            let crown_radius = self.branch_length * h * 0.75;
+            for k in 0..(self.branch_count * 3) {
+                let angle = TAU * hash01(self.seed, k, 91);
+                let distance = crown_radius * hash01(self.seed, k, 92).sqrt();
+                targets.push([
+                    angle.cos() * distance,
+                    angle.sin() * distance,
+                    h * (0.36 + 0.60 * hash01(self.seed, k, 93)),
+                ]);
+            }
+        }
         for i in 0..self.branch_count {
             let rand = |c| hash01(self.seed, i, c);
             if rand(0) < self.prune { continue; }
@@ -324,11 +368,25 @@ impl FoliageProject {
                 _ => 0.23,
             };
             let rise = reach * (base_rise + 0.65 * self.phototropism - 0.85 * self.gravity);
-            let tip = [
+            let mut tip = [
                 base[0] + reach * angle.cos(),
                 base[1] + reach * angle.sin(),
                 (base[2] + rise).max(s * 0.5),
             ];
+            if !targets.is_empty() {
+                // One-pass canopy guidance, not a complete iterative
+                // space-colonization implementation.
+                let (chosen, _) = targets.iter().enumerate()
+                    .min_by(|(_, a), (_, b)| {
+                        let distance = |target: &&[f32; 3]| {
+                            let d = sub3(**target, tip);
+                            d[0]*d[0] + d[1]*d[1] + d[2]*d[2]
+                        };
+                        distance(a).total_cmp(&distance(b))
+                    }).unwrap();
+                tip = lerp3(tip, targets.swap_remove(chosen), 0.75);
+                tip[2] = tip[2].max(s * 0.5);
+            }
             let mid = lerp3(base, tip, 0.56);
             let thickness = (self.trunk_radius * self.overall_scale *
                 (0.28 + 0.25 * (1.0 - t))).max(s * 0.17);
@@ -466,12 +524,46 @@ fn paint_line(cells: &mut BTreeMap<[i32; 3], Material>, shape: VoxelShape,
     let d = sub3(b, a);
     let distance = (d[0]*d[0] + d[1]*d[1] + d[2]*d[2]).sqrt();
     let steps = (distance / (s * 0.32)).ceil().max(1.0) as u32;
+    let mut previous = None;
     for i in 0..=steps {
-        paint_sphere(cells, shape, s, lerp3(a, b, i as f32 / steps as f32),
-            radius, material);
+        let point = lerp3(a, b, i as f32 / steps as f32);
+        // Diagonal hex-and-height jumps do not share a full face. Bridge
+        // consecutive wood positions with face-adjacent, harvestable cells.
+        if shape == VoxelShape::HexPrism && material.is_wood() {
+            let key = grid_key(shape, s, point);
+            if let Some(last) = previous { bridge_hex_wood(cells, last, key); }
+            previous = Some(key);
+        }
+        paint_sphere(cells, shape, s, point, radius, material);
+    }
+}
+
+fn bridge_hex_wood(cells: &mut BTreeMap<[i32; 3], Material>,
+                   mut from: [i32; 3], to: [i32; 3]) {
+    const DIRECTIONS: [[i32; 2]; 6] =
+        [[0, 1], [-1, 1], [-1, 0], [0, -1], [1, -1], [1, 0]];
+    while from != to {
+        if from[2] != to[2] {
+            from[2] += (to[2] - from[2]).signum();
+        } else {
+            let distance = |q: i32, r: i32| {
+                let dq = (q - to[0]).abs();
+                let dr = (r - to[1]).abs();
+                let ds = ((q + r) - (to[0] + to[1])).abs();
+                (dq + dr + ds) / 2
+            };
+            let current = distance(from[0], from[1]);
+            let step = DIRECTIONS.iter()
+                .find(|d| distance(from[0] + d[0], from[1] + d[1]) < current)
+                .expect("one hex neighbour reduces axial distance");
+            from[0] += step[0];
+            from[1] += step[1];
+        }
+        cells.insert(from, Material::Bark);
     }
 }
 #[allow(clippy::too_many_arguments)]
+fn paint_leaf_cluster#[allow(clippy::too_many_arguments)]
 fn paint_leaf_cluster(
     cells: &mut BTreeMap<[i32; 3], Material>, shape: VoxelShape, s: f32,
     center: [f32; 3], radius: f32, radius_z: f32,
@@ -911,15 +1003,82 @@ mod tests {
     }
 
     #[test]
+    fn world_hexels_are_one_metre_and_keep_harvestable_leaf_cards() {
+        let mut project = FoliageProject::from_preset(PlantPreset::Oak);
+        project.shape = VoxelShape::Cube;
+        project.voxel_size = 0.4;
+        project.leaf_render.geometry = LeafGeometry::SolidVoxel;
+        let world = project.generate_world_hexels().unwrap();
+        assert_eq!(project.shape, VoxelShape::Cube);
+        assert_eq!(world.shape, VoxelShape::HexPrism);
+        assert_eq!(world.voxel_size, WORLD_HEXEL_SIZE_METRES);
+        assert_eq!(world.leaf_render.geometry, LeafGeometry::CrossedCutout);
+        assert!(world.voxels.iter().any(|v| v.material.is_wood()));
+        assert!(world.voxels.iter().any(|v| v.material.is_foliage()));
+        let leaves: std::collections::HashSet<_> = world.voxels.iter()
+            .filter(|v| v.material.is_foliage())
+            .map(|v| [v.x, v.y, v.z]).collect();
+        assert!(world.triangles.iter().any(|t| t.cutout && leaves.contains(&t.cell)));
+        let a = grid_position(VoxelShape::HexPrism, 1.0, [0, 0, 0]);
+        let b = grid_position(VoxelShape::HexPrism, 1.0, [1, 0, 0]);
+        assert!((b[0] - a[0] - 1.0).abs() < 1e-5);
+        assert_eq!(a[2], b[2]);
+    }
+
+    #[test]
+    fn canopy_guidance_changes_branches_but_remains_deterministic() {
+        let mut project = FoliageProject::from_preset(PlantPreset::Oak);
+        let classic = project.generate_world_hexels().unwrap();
+        project.branch_growth = BranchGrowth::CanopyGuided;
+        let first = project.generate_world_hexels().unwrap();
+        let again = project.generate_world_hexels().unwrap();
+        assert_eq!(first.voxels, again.voxels);
+        assert_ne!(classic.voxels, first.voxels);
+    }
+
+    #[test]
+    fn generated_world_wood_is_face_connected() {
+        for growth in [BranchGrowth::Classic, BranchGrowth::CanopyGuided] {
+            let mut project = FoliageProject::from_preset(PlantPreset::Oak);
+            project.branch_growth = growth;
+            let tree = project.generate_world_hexels().unwrap();
+            let wood: std::collections::HashSet<_> = tree.voxels.iter()
+                .filter(|v| v.material.is_wood())
+                .map(|v| [v.x, v.y, v.z]).collect();
+            let start = *wood.iter().next().unwrap();
+            let mut visited = std::collections::HashSet::from([start]);
+            let mut pending = vec![start];
+            while let Some(at) = pending.pop() {
+                for direction in [
+                    [0,1,0],[-1,1,0],[-1,0,0],[0,-1,0],[1,-1,0],[1,0,0],
+                    [0,0,-1],[0,0,1],
+                ] {
+                    let adjacent = [
+                        at[0] + direction[0],
+                        at[1] + direction[1],
+                        at[2] + direction[2],
+                    ];
+                    if wood.contains(&adjacent) && visited.insert(adjacent) {
+                        pending.push(adjacent);
+                    }
+                }
+            }
+            assert_eq!(wood.len(), visited.len(), "disconnected wood: {growth:?}");
+        }
+    }
+
+    #[test]
     fn old_foliage_projects_load_with_default_voxel_grid_settings() {
         let mut old = serde_json::to_value(FoliageProject::default()).unwrap();
         let value = old.as_object_mut().unwrap();
         value.remove("shape");
         value.remove("voxel_size");
+        value.remove("branch_growth");
         value.insert("radial_segments".into(),serde_json::json!(6));
         let loaded: FoliageProject = serde_json::from_value(old).unwrap();
         assert_eq!(loaded.shape,VoxelShape::Cube);
         assert_eq!(loaded.voxel_size,0.4);
+        assert_eq!(loaded.branch_growth, BranchGrowth::Classic);
         loaded.generate().unwrap();
     }
 
