@@ -312,6 +312,8 @@ struct Studio {
     season_preview: f32,
     /// GPU preview only; never changes saved foliage geometry or textures.
     leaf_aa_mode: LeafAaMode,
+    /// Preview-only mip selection; legacy sample level zero remains the default.
+    leaf_mipmaps: bool,
     leaf_texture: Option<TextureHandle>,
     bark_texture: Option<TextureHandle>,
     asset_leaf_texture: Option<TextureHandle>,
@@ -386,6 +388,7 @@ impl Default for Studio {
             foliage_yaw: 0.8,
             season_preview: 1.0,
             leaf_aa_mode: LeafAaMode::Legacy,
+            leaf_mipmaps: false,
             leaf_texture: None,
             bark_texture: None,
             asset_leaf_texture: None,
@@ -1504,6 +1507,8 @@ impl Studio {
         ui.small("0 Spring • 1 Summer • 2 Autumn • 3 Winter • 4 Spring");
         leaf_aa_editor(ui,&mut self.leaf_aa_mode,
             self.gpu.as_ref().is_some_and(|gpu|gpu.msaa4_supported));
+        ui.checkbox(&mut self.leaf_mipmaps,"Preview foliage mipmapping")
+            .on_hover_text("Off by default. Enable trilinear alpha-weighted 64/128px foliage mip levels for distant tree-card filtering. Does not modify materials or exported textures.");
         let available=ui.available_size();
         let desired=Vec2::new(available.x.max(50.0),available.y.max(240.0));
         let (rect,response)=ui.allocate_exact_size(desired,Sense::click_and_drag());
@@ -1512,7 +1517,7 @@ impl Studio {
         if let (Some(gpu),Some(scene))=(&self.gpu,&self.asset_gpu_scene) {
             gpu.paint(ui,rect,Arc::clone(scene),self.asset_yaw,self.asset_zoom,
                 ui.ctx().input(|i|i.time as f32),self.season_preview,
-                self.leaf_aa_mode);
+                self.leaf_aa_mode,self.leaf_mipmaps);
         }
         if response.dragged_by(egui::PointerButton::Secondary) {
             self.asset_yaw=(self.asset_yaw+
@@ -2015,6 +2020,8 @@ impl Studio {
         ui.small("0 Spring • 1 Summer • 2 Autumn • 3 Winter • 4 Spring");
         leaf_aa_editor(ui,&mut self.leaf_aa_mode,
             self.gpu.as_ref().is_some_and(|gpu|gpu.msaa4_supported));
+        ui.checkbox(&mut self.leaf_mipmaps,"Preview foliage mipmapping")
+            .on_hover_text("Off by default. Enable trilinear alpha-weighted 64/128px foliage mip levels for distant tree-card filtering. Does not modify materials or exported textures.");
         let available=ui.available_size();
         let desired=Vec2::new(available.x.max(50.0),available.y.max(250.0));
         let (rect,_) = ui.allocate_exact_size(desired,Sense::hover());
@@ -2023,7 +2030,7 @@ impl Studio {
         if let (Some(gpu),Some(scene))=(&self.gpu,&self.foliage_gpu_scene) {
             gpu.paint(ui,rect,Arc::clone(scene),self.foliage_yaw,1.0,
                 ui.ctx().input(|i|i.time as f32),self.season_preview,
-                self.leaf_aa_mode);
+                self.leaf_aa_mode,self.leaf_mipmaps);
         }
         let Some(mesh)=&self.foliage_mesh else {
             painter.text(rect.center(),Align2::CENTER_CENTER,
@@ -3642,6 +3649,7 @@ mod wire_interaction_tests {
     fn leaf_edge_preview_mode_defaults_to_original_cutout() {
         let app=Studio::default();
         assert_eq!(app.leaf_aa_mode,LeafAaMode::Legacy);
+        assert!(!app.leaf_mipmaps);
     }
 
     #[test]
