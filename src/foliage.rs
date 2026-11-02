@@ -254,6 +254,19 @@ fn leaf_blade(u:f32,v:f32,cx:f32,cy:f32,dir:[f32;2],
     across.abs()<=width*taper*teeth
 }
 
+/// Broad deltoid Populus blades versus Black Cottonwood's ovate blades.
+fn cottonwood_blade(u:f32,v:f32,cx:f32,cy:f32,rx:f32,ry:f32,ovate:bool)->bool {
+    let dx=(u-cx)/rx;
+    let dy=(v-cy)/ry;
+    if dy.abs()>1.0 {return false;}
+    let width=if ovate {
+        (1.0-dy*dy).max(0.0).sqrt()*(1.0+0.11*dy)
+    } else {
+        (0.06+0.94*((dy+1.0)*0.5).powf(0.68)).min(1.0)
+    };
+    dx.abs()<=width*(1.0+0.06*(dy*29.0).sin().abs())
+}
+
 fn leaf_pixel(species:PlantPreset,u:f32,v:f32)->(bool,bool) {
     // The twig is drawn darker; the second value is the leafy silhouette.
     let twig=leaf_segment(u,v,[0.50,0.90],[0.50,0.14],0.009);
@@ -297,6 +310,22 @@ fn leaf_pixel(species:PlantPreset,u:f32,v:f32)->(bool,bool) {
                 ||leaf_segment(u,v,[0.50,0.55],[0.35,0.49],0.010)
                 ||leaf_segment(u,v,[0.50,0.55],[0.65,0.49],0.010)
         }
+        PlantPreset::KentuckyCoffeetree => {
+            // Twice-compound rachises with paired secondary leaflets.
+            (0..5).any(|i| {
+                let y=0.21+i as f32*0.135;
+                [-1.0_f32,1.0].iter().any(|&side| {
+                    let end=[0.50+side*0.25,y-0.032];
+                    leaf_segment(u,v,[0.50,y],end,0.008)
+                        ||(0..3).any(|j| {
+                            let t=0.27+j as f32*0.30;
+                            let x=0.50+side*0.25*t;
+                            leaf_oval(u,v,x,y-0.032*t-0.027,0.026,0.027)
+                                ||leaf_oval(u,v,x,y-0.032*t+0.025,0.027,0.026)
+                        })
+                })
+            })
+        }
         PlantPreset::Walnut|PlantPreset::Lychee => {
             (0..6).any(|i| {
                 let y=0.23+i as f32*0.108;
@@ -338,6 +367,34 @@ fn leaf_pixel(species:PlantPreset,u:f32,v:f32)->(bool,bool) {
                 leaf_blade(u,v,0.35,y,[-0.85,-0.53],0.15,0.028,false)
                     ||leaf_blade(u,v,0.65,y+0.04,[0.85,-0.53],0.15,0.028,false)
             })
+        }
+        PlantPreset::ArabicaCoffee|PlantPreset::CaturraCoffee|
+        PlantPreset::MaragogipeCoffee|PlantPreset::CastilloCoffee|
+        PlantPreset::TabiCoffee => {
+            // Glossy opposite elliptical Coffea leaves with pointed tips.
+            let large=species==PlantPreset::MaragogipeCoffee;
+            let (length,width)=if large {(0.135,0.067)} else {(0.105,0.050)};
+            (0..4).any(|i| {
+                let y=0.23+i as f32*0.175;
+                leaf_blade(u,v,0.36,y,[-0.62,-0.78],
+                    length,width,false)
+                    ||leaf_blade(u,v,0.64,y,[0.62,-0.78],
+                        length,width,false)
+                    ||leaf_segment(u,v,[0.50,y],[0.36,y],0.006)
+                    ||leaf_segment(u,v,[0.50,y],[0.64,y],0.006)
+            })
+        }
+        PlantPreset::EasternCottonwood|PlantPreset::FremontCottonwood|
+        PlantPreset::BlackCottonwood => {
+            // Eastern/Fremont deltoid blades; Western black cottonwood ovate.
+            let black=species==PlantPreset::BlackCottonwood;
+            let fremont=species==PlantPreset::FremontCottonwood;
+            [[0.35,0.30],[0.67,0.47],[0.34,0.63],[0.66,0.77]]
+                .iter().any(|p| {
+                    cottonwood_blade(u,v,p[0],p[1],
+                        if fremont {0.105} else if black {0.080} else {0.095},
+                        if black {0.125} else {0.099},black)
+                })
         }
         PlantPreset::Ebony|PlantPreset::Mango|PlantPreset::Orange|
         PlantPreset::RedApple|PlantPreset::PinkApple|PlantPreset::YellowApple|
