@@ -7,7 +7,7 @@ use crate::tree_growth_rules::{LeafPlacement, Phyllotaxy, TreeGrowthRules, Trunk
 use crate::foliage_materials::FoliageMaterials;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
-use std::f32::consts::{PI, TAU};
+use std::f32::consts::TAU;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PlantPreset {
@@ -1039,8 +1039,8 @@ impl FoliageProject {
                 let root=lerp3(mid,tip,0.34+0.28*rand(23));
                 let a=angle+0.5+(rand(24)-0.5)*1.3;
                 let length=reach*(0.16+0.18*rand(25));
-                let pitch=(rules.secondary_pitch[0]+
-                    (rules.secondary_pitch[1]-rules.secondary_pitch[0])*rand(26));
+                let pitch=rules.secondary_pitch[0]+
+                    (rules.secondary_pitch[1]-rules.secondary_pitch[0])*rand(26);
                 let end=[root[0]+length*a.cos(),root[1]+length*a.sin(),
                     (root[2]+length*pitch).max(s*0.5)];
                 let id=major_id+2;
