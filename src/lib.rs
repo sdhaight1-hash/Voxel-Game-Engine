@@ -15,6 +15,8 @@ pub mod foliage_materials;
 pub mod presets;
 pub mod node_library;
 pub mod node_definitions;
+pub mod sdf;
+pub use sdf::SdfBoolean;
 pub mod color_ramp;
 pub mod curve_remap;
 pub use curve_remap::{CurveRemap, CurvePoint, MAX_CURVE_POINTS};
@@ -137,6 +139,13 @@ pub enum NodeKind {
     CurveRemap { curve: CurveRemap },
     /// Typed wire organization; preserves incoming f32 samples exactly.
     Reroute { kind: SocketType },
+    /// Signed UV distance (negative inside), never implicitly RGB.
+    SdfCircle { center:[f32;2], radius:f32 },
+    SdfEllipse { center:[f32;2], radii:[f32;2] },
+    SdfCapsule { start:[f32;2], end:[f32;2], radius:f32 },
+    SdfCombine { operation:SdfBoolean, smoothing:f32 },
+    /// Explicit signed Distance -> normalized coverage Mask conversion.
+    SdfToMask { edge_width:f32 },
     Invert,
     Blend { factor: f32 },
     Bricks { columns: u32, rows: u32, mortar: f32 },
@@ -160,6 +169,11 @@ impl NodeKind {
             Self::ColorRamp { .. } => "Color Ramp",
             Self::CurveRemap { .. } => "Curve Remap",
             Self::Reroute { .. } => "Reroute",
+            Self::SdfCircle{..}=>"SDF Circle",
+            Self::SdfEllipse{..}=>"SDF Ellipse",
+            Self::SdfCapsule{..}=>"SDF Capsule",
+            Self::SdfCombine{..}=>"SDF Boolean",
+            Self::SdfToMask{..}=>"Distance to Mask",
             Self::Invert => "Invert",
             Self::Blend { .. } => "Blend",
             Self::Bricks { .. } => "Bricks",
@@ -175,12 +189,13 @@ impl NodeKind {
         match self {
             Self::Noise { .. } | Self::Checker { .. } | Self::Color { .. }
                 | Self::Scalar { .. } | Self::Bricks { .. } | Self::Voronoi { .. }
-                | Self::Strata { .. } => 0,
+                | Self::Strata { .. } | Self::SdfCircle{..}
+                | Self::SdfEllipse{..} | Self::SdfCapsule{..} => 0,
             Self::Invert | Self::Colorize { .. } | Self::Luminance
                 | Self::Levels { .. } | Self::ThresholdMask { .. }
                 | Self::ColorRamp { .. } | Self::CurveRemap { .. }
-                | Self::Reroute { .. } => 1,
-            Self::Blend { .. } => 2,
+                | Self::Reroute { .. } | Self::SdfToMask{..} => 1,
+            Self::Blend { .. } | Self::SdfCombine{..} => 2,
             Self::Library { operation, .. } => operation.input_count(),
             Self::Output => 4,
         }
@@ -198,6 +213,9 @@ impl NodeKind {
                 | Self::CurveRemap { .. }, 0) => "Scalar",
             (Self::Luminance,0) => "Color",
             (Self::Reroute { .. },0) => "Input",
+            (Self::SdfCombine{..},0) => "Distance A",
+            (Self::SdfCombine{..},1) => "Distance B",
+            (Self::SdfToMask{..},0) => "Distance",
             (Self::Invert | Self::Colorize { .. }, 0) => "Image",
             (Self::Library { operation, .. }, i) => operation.input_name(i),
             _ => "",
@@ -218,6 +236,11 @@ impl NodeKind {
             Self::ColorRamp{..}=>"color_ramp".into(),
             Self::CurveRemap{..}=>"curve_remap".into(),
             Self::Reroute{kind}=>format!("reroute.{kind:?}").to_lowercase(),
+            Self::SdfCircle{..}=>"sdf_circle".into(),
+            Self::SdfEllipse{..}=>"sdf_ellipse".into(),
+            Self::SdfCapsule{..}=>"sdf_capsule".into(),
+            Self::SdfCombine{..}=>"sdf_boolean".into(),
+            Self::SdfToMask{..}=>"sdf_to_mask".into(),
             Self::Invert=>"invert".into(),
             Self::Blend{..}=>"blend".into(),
             Self::Bricks{..}=>"bricks".into(),
@@ -233,7 +256,9 @@ impl NodeKind {
         match self {
             Self::Scalar{..}|Self::Luminance|Self::Levels{..}
                 |Self::CurveRemap{..}=>SocketType::Scalar,
-            Self::ThresholdMask{..}=>SocketType::Mask,
+            Self::ThresholdMask{..}|Self::SdfToMask{..}=>SocketType::Mask,
+            Self::SdfCircle{..}|Self::SdfEllipse{..}|Self::SdfCapsule{..}
+                |Self::SdfCombine{..}=>SocketType::Distance,
             Self::Reroute{kind}=>*kind,
             _=>SocketType::Color, // Existing RGB evaluation semantics.
         }
@@ -242,7 +267,9 @@ impl NodeKind {
     pub fn input_type(&self, index:usize) -> Option<SocketType> {
         if index>=self.input_count() {return None;}
         Some(if let Self::Reroute{kind}=self { *kind }
-            else if matches!(self,Self::Levels{..}|Self::ThresholdMask{..}
+            else if matches!(self,Self::SdfCombine{..}|Self::SdfToMask{..}) {
+                SocketType::Distance
+            } else if matches!(self,Self::Levels{..}|Self::ThresholdMask{..}
             |Self::ColorRamp{..}|Self::CurveRemap{..}) {
             SocketType::Scalar
         } else {
@@ -426,6 +453,24 @@ impl Graph {
                 NodeKind::Reroute{kind} if !matches!(kind,
                     SocketType::Color|SocketType::Scalar|SocketType::Mask) =>
                     return Err("Reroute supports Color, Scalar and Mask only".into()),
+                NodeKind::SdfCircle{center,radius}
+                    if !sdf::valid_uv(center)||!radius.is_finite()
+                        || !(0.001..=0.5).contains(&radius) =>
+                    return Err("SDF Circle requires normalized center and radius 0.001..0.5".into()),
+                NodeKind::SdfEllipse{center,radii}
+                    if !sdf::valid_uv(center)||!radii.iter().all(|r|
+                        r.is_finite() && (0.001..=0.5).contains(r)) =>
+                    return Err("SDF Ellipse requires normalized center and radii 0.001..0.5".into()),
+                NodeKind::SdfCapsule{start,end,radius}
+                    if !sdf::valid_uv(start)||!sdf::valid_uv(end)
+                        ||!radius.is_finite()||!(0.001..=0.5).contains(&radius) =>
+                    return Err("SDF Capsule requires normalized endpoints and radius 0.001..0.5".into()),
+                NodeKind::SdfCombine{smoothing,..}
+                    if !smoothing.is_finite()||!(0.0..=0.25).contains(&smoothing) =>
+                    return Err("SDF Boolean smoothing must be 0..0.25 UV units".into()),
+                NodeKind::SdfToMask{edge_width}
+                    if !edge_width.is_finite()||!(0.0..=0.25).contains(&edge_width) =>
+                    return Err("Distance to Mask edge width must be 0..0.25 UV units".into()),
                 _ => {}
             }
         }
@@ -660,6 +705,24 @@ impl Graph {
                 [curve.sample(value);3]
             }
             NodeKind::Reroute { .. } => self.sample_input_memo(id,0,u,v,memo),
+            NodeKind::SdfCircle{center,radius} => {
+                [sdf::circle(u,v,center,radius);3]
+            }
+            NodeKind::SdfEllipse{center,radii} => {
+                [sdf::ellipse(u,v,center,radii);3]
+            }
+            NodeKind::SdfCapsule{start,end,radius} => {
+                [sdf::capsule(u,v,start,end,radius);3]
+            }
+            NodeKind::SdfCombine{operation,smoothing} => {
+                let a=self.sample_input_memo(id,0,u,v,memo)[0];
+                let b=self.sample_input_memo(id,1,u,v,memo)[0];
+                [sdf::combine(a,b,operation,smoothing);3]
+            }
+            NodeKind::SdfToMask{edge_width} => {
+                let distance=self.sample_input_memo(id,0,u,v,memo)[0];
+                [sdf::to_mask(distance,edge_width);3]
+            }
             NodeKind::Invert => self.sample_input_memo(id, 0, u, v,memo).map(|c| 1.0 - c),
             NodeKind::Blend { factor } => {
                 let a = self.sample_input_memo(id, 0, u, v,memo);
@@ -1068,6 +1131,60 @@ mod tests {
             kind:SocketType::Vector2,
         };
         assert!(graph.validate().is_err());
+    }
+
+    #[test]
+    fn signed_distance_composes_to_mask_without_implicit_rgb_cast() {
+        let mut graph=Graph::default();
+        let circle=graph.add_node(NodeKind::SdfCircle{
+            center:[0.5,0.5],radius:0.25,
+        },[20.0,20.0]);
+        let ellipse=graph.add_node(NodeKind::SdfEllipse{
+            center:[0.65,0.5],radii:[0.1,0.18],
+        },[20.0,160.0]);
+        let boolean=graph.add_node(NodeKind::SdfCombine{
+            operation:SdfBoolean::Subtract,smoothing:0.01,
+        },[160.0,75.0]);
+        let mask=graph.add_node(NodeKind::SdfToMask{
+            edge_width:0.01,
+        },[300.0,75.0]);
+        assert!(graph.connect(circle,2,0).is_err(),"raw distance must not feed RGB");
+        assert!(graph.connect(circle,mask,0).is_ok());
+        graph.connect(circle,boolean,0).unwrap();
+        graph.connect(ellipse,boolean,1).unwrap();
+        graph.connect(boolean,mask,0).unwrap();
+        graph.connect(mask,2,0).unwrap();
+        graph.connect(mask,2,3).unwrap();
+        assert_eq!(graph.node(circle).unwrap().kind.output_type(),SocketType::Distance);
+        assert_eq!(graph.node(mask).unwrap().kind.output_type(),SocketType::Mask);
+        graph.validate().unwrap();
+        for size in [64,256] {
+            let independent=graph.render_rgba(size,size).unwrap();
+            let (memoized,_)=graph.render_channels_memoized_rgba(
+                &[0,3],size,size).unwrap();
+            assert_eq!(memoized[0],independent);
+            assert_eq!(memoized[1],independent);
+            let restored:Graph=serde_json::from_str(
+                &serde_json::to_string(&graph).unwrap()).unwrap();
+            assert_eq!(restored.render_rgba(size,size).unwrap(),independent);
+            let index=((size/2*size+size/2)*4) as usize;
+            assert_eq!(independent[index+3],255);
+        }
+    }
+
+    #[test]
+    fn malformed_distance_parameters_fail_validation() {
+        for kind in [
+            NodeKind::SdfCircle{center:[f32::NAN,0.5],radius:0.2},
+            NodeKind::SdfEllipse{center:[0.5,0.5],radii:[0.0,0.2]},
+            NodeKind::SdfCapsule{start:[-1.0,0.0],end:[0.5,0.5],radius:0.2},
+            NodeKind::SdfCombine{operation:SdfBoolean::Union,smoothing:f32::NAN},
+            NodeKind::SdfToMask{edge_width:-0.01},
+        ] {
+            let mut graph=Graph::default();
+            graph.add_node(kind,[0.0,0.0]);
+            assert!(graph.validate().is_err(),"{kind:?} should be invalid");
+        }
     }
 
     #[test]

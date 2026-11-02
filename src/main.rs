@@ -5,7 +5,7 @@ use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, Str
 use std::{collections::HashMap, path::{Path, PathBuf}, time::Instant};
 use texture_studio::{Graph, NodeKind, LibraryNode, VoxelShape, SideMapping};
 use texture_studio::node_definitions::{SocketType, ParameterControl};
-use texture_studio::{ColorRamp,MAX_COLOR_STOPS,CurveRemap,MAX_CURVE_POINTS};
+use texture_studio::{ColorRamp,MAX_COLOR_STOPS,CurveRemap,MAX_CURVE_POINTS,SdfBoolean};
 use texture_studio::render_cache::GraphRenderCache;
 use texture_studio::foliage_bake_cache::FoliageBakeCache;
 use texture_studio::presets::{builtin_presets, Preset};
@@ -2037,6 +2037,17 @@ impl Studio {
                     threshold:0.5,softness:0.0
                 }),
             ]),
+            ("SIGNED DISTANCE", vec![
+                ("SDF Circle", NodeKind::SdfCircle{
+                    center:[0.5,0.5],radius:0.22}),
+                ("SDF Ellipse", NodeKind::SdfEllipse{
+                    center:[0.5,0.5],radii:[0.28,0.14]}),
+                ("SDF Capsule", NodeKind::SdfCapsule{
+                    start:[0.3,0.5],end:[0.7,0.5],radius:0.07}),
+                ("SDF Boolean", NodeKind::SdfCombine{
+                    operation:SdfBoolean::Union,smoothing:0.0}),
+                ("Distance to Mask", NodeKind::SdfToMask{edge_width:0.01}),
+            ]),
             ("MIX & ROUTING", vec![
                 ("Blend", NodeKind::Blend { factor: 0.5 }),
                 ("Color Reroute", NodeKind::Reroute {kind:SocketType::Color}),
@@ -2358,6 +2369,55 @@ impl Studio {
                 }
                 ui.small("2–8 points. The 0% and 100% input positions remain fixed.");
             }
+            NodeKind::SdfCircle{center,radius} => {
+                ui.small("Tileable signed distance: negative inside. Convert to Mask before PBR output.");
+                for i in 0..2 {
+                    changed |= ui.add(egui::Slider::new(&mut center[i],0.0..=1.0)
+                        .text(if i==0 {"Center X"} else {"Center Y"})).changed();
+                }
+                changed |= ui.add(egui::Slider::new(radius,0.001..=0.5)
+                    .text("Radius")).changed();
+            }
+            NodeKind::SdfEllipse{center,radii} => {
+                ui.small("Periodic ellipse: exact contour, approximate distance away from the edge.");
+                for i in 0..2 {
+                    changed |= ui.add(egui::Slider::new(&mut center[i],0.0..=1.0)
+                        .text(if i==0 {"Center X"} else {"Center Y"})).changed();
+                    changed |= ui.add(egui::Slider::new(&mut radii[i],0.001..=0.5)
+                        .text(if i==0 {"Radius X"} else {"Radius Y"})).changed();
+                }
+            }
+            NodeKind::SdfCapsule{start,end,radius} => {
+                ui.small("Tileable rounded stroke on the shortest wrapped endpoint path.");
+                for i in 0..2 {
+                    changed |= ui.add(egui::Slider::new(&mut start[i],0.0..=1.0)
+                        .text(if i==0 {"Start X"} else {"Start Y"})).changed();
+                    changed |= ui.add(egui::Slider::new(&mut end[i],0.0..=1.0)
+                        .text(if i==0 {"End X"} else {"End Y"})).changed();
+                }
+                changed |= ui.add(egui::Slider::new(radius,0.001..=0.5)
+                    .text("Radius")).changed();
+            }
+            NodeKind::SdfCombine{operation,smoothing} => {
+                ui.small("Combine two signed Distance inputs before converting to coverage.");
+                egui::ComboBox::from_id_salt("sdf_operation")
+                    .selected_text(format!("{operation:?}"))
+                    .show_ui(ui,|ui|{
+                        for option in [SdfBoolean::Union,SdfBoolean::Intersection,
+                            SdfBoolean::Subtract] {
+                            changed |= ui.selectable_value(operation,option,
+                                format!("{option:?}")).changed();
+                        }
+                    });
+                changed |= ui.add(egui::Slider::new(smoothing,0.0..=0.25)
+                    .text("Smooth width")).changed();
+            }
+            NodeKind::SdfToMask{edge_width} => {
+                ui.small("Explicit signed Distance to Mask conversion. Negative distance is inside.");
+                changed |= ui.add(egui::Slider::new(edge_width,0.0..=0.25)
+                    .text("Coverage width")).changed();
+                ui.small("0: hard threshold; positive width softens edges in normalized UV units.");
+            }
             NodeKind::Reroute { kind } => {
                 ui.label(format!("{kind:?} pass-through"));
                 ui.small("Organize cables without changing values, texture sampling or material ownership.");
@@ -2399,6 +2459,8 @@ impl Studio {
                         format!("{min}..{max} color stops, default {default}"),
                     ParameterControl::CurvePoints{min,max,default} =>
                         format!("{min}..{max} curve points, default {default}"),
+                    ParameterControl::Choice{options,default} =>
+                        format!("{}; default {default}",options.join(" / ")),
                 };
                 ui.small(format!("{} [{}]: {details}",param.label,param.id));
             }
@@ -3134,6 +3196,7 @@ fn port_type_color(kind: SocketType)->Color32 {
         SocketType::Color => Color32::from_rgb(103,170,233),
         SocketType::Scalar => Color32::from_rgb(116,212,190),
         SocketType::Mask => Color32::from_rgb(240,196,107),
+        SocketType::Distance => Color32::from_rgb(222,142,222),
         SocketType::Vector2 | SocketType::Vector3 => Color32::from_rgb(178,156,233),
         SocketType::Gradient | SocketType::Curve => Color32::from_rgb(233,147,191),
     }
@@ -3154,6 +3217,9 @@ fn node_accent(kind: NodeKind) -> Color32 {
             | NodeKind::ThresholdMask { .. } | NodeKind::ColorRamp { .. }
             | NodeKind::CurveRemap { .. } | NodeKind::Reroute { .. }
             => Color32::from_rgb(115, 64, 127),
+        NodeKind::SdfCircle{..}|NodeKind::SdfEllipse{..}|NodeKind::SdfCapsule{..}
+            |NodeKind::SdfCombine{..}|NodeKind::SdfToMask{..}
+            => Color32::from_rgb(119,70,140),
         NodeKind::Output => Color32::from_rgb(43, 105, 77),
     }
 }
