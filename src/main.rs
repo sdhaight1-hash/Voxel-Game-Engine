@@ -1,6 +1,6 @@
 use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, TextureHandle, Vec2};
 use std::{collections::HashMap, path::{Path, PathBuf}};
-use texture_studio::{Graph, NodeKind, VoxelShape, SideMapping};
+use texture_studio::{Graph, NodeKind, LibraryNode, VoxelShape, SideMapping};
 use texture_studio::presets::{builtin_presets, Preset};
 use texture_studio::voxel::{render_atlas, render_voxel_preview, export_obj};
 
@@ -297,6 +297,7 @@ impl Studio {
         ui.add(egui::TextEdit::singleline(&mut self.library_search).hint_text("Search nodes..."));
         ui.separator();
         let query = self.library_search.trim().to_lowercase();
+        egui::ScrollArea::vertical().max_height(430.0).id_salt("node_library_scroll").show(ui, |ui| {
         for (section, entries) in [
             ("GENERATORS", vec![
                 ("Noise", NodeKind::Noise { scale: 6, octaves: 4, seed: 42 }),
@@ -324,6 +325,27 @@ impl Studio {
                 ui.add_space(8.0);
             }
         }
+        // The full Material Maker-inspired 2D node set. Each entry is a
+        // functional Rust evaluator, not a decorative placeholder.
+        for category in [
+            "Shapes & Gradients", "Noise", "Patterns", "Color & Tones",
+            "Filters", "Math & Mix", "Transforms",
+        ] {
+            let matching: Vec<LibraryNode> = LibraryNode::ALL.iter().copied()
+                .filter(|operation| operation.category() == category &&
+                    operation.name().to_lowercase().contains(&query))
+                .collect();
+            if matching.is_empty() { continue; }
+            ui.label(egui::RichText::new(format!("{category} ({})", matching.len()))
+                .strong().color(Color32::from_rgb(165, 174, 193)));
+            for operation in matching {
+                if ui.button(format!("＋ {}", operation.name())).clicked() {
+                    self.spawn(NodeKind::Library { operation, amount: 0.5, seed: 42 });
+                }
+            }
+            ui.add_space(8.0);
+        }
+        });
         ui.separator();
         if ui.button("Load bricks example").clicked() { self.demo_material(); }
         ui.add_space(12.0);
@@ -467,6 +489,14 @@ impl Studio {
                 changed |= ui.add(egui::Slider::new(bands, 1..=64).text("Bands")).changed();
                 changed |= ui.add(egui::Slider::new(warp, 0.0..=1.0).text("Warp")).changed();
                 changed |= ui.add(egui::DragValue::new(seed).prefix("Seed: ")).changed();
+            }
+            NodeKind::Library { operation, amount, seed } => {
+                ui.label(egui::RichText::new(operation.category()).strong());
+                ui.small(format!("{} input socket(s)", operation.input_count()));
+                changed |= ui.add(egui::Slider::new(amount, 0.0..=1.0)
+                    .text("Amount / scale")).changed();
+                changed |= ui.add(egui::DragValue::new(seed).speed(1).prefix("Seed: ")).changed();
+                ui.small("Rendered by the Rust CPU engine. No shader or plugin needed.");
             }
             NodeKind::Colorize { dark, light } => {
                 ui.label("Dark color");
@@ -997,6 +1027,12 @@ fn node_accent(kind: NodeKind) -> Color32 {
     match kind {
         NodeKind::Noise { .. } | NodeKind::Checker { .. } | NodeKind::Color { .. }
             | NodeKind::Bricks { .. } | NodeKind::Voronoi { .. } | NodeKind::Strata { .. } => Color32::from_rgb(43, 95, 131),
+        NodeKind::Library { operation, .. } => match operation.category() {
+            "Shapes & Gradients" | "Noise" | "Patterns" => Color32::from_rgb(43, 95, 131),
+            "Transforms" => Color32::from_rgb(107, 80, 148),
+            "Math & Mix" => Color32::from_rgb(143, 96, 58),
+            _ => Color32::from_rgb(115, 64, 127),
+        },
         NodeKind::Invert | NodeKind::Blend { .. } | NodeKind::Colorize { .. } => Color32::from_rgb(115, 64, 127),
         NodeKind::Output => Color32::from_rgb(43, 105, 77),
     }
