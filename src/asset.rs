@@ -88,6 +88,9 @@ impl VoxelAsset {
     }
 
     pub fn mesh(&self) -> Result<FoliageMesh, String> {
+        if let Some(tree)=&self.tree_structure {
+            tree.validate(&self.voxels)?;
+        }
         Ok(FoliageMesh::from_voxels_with_render(self.shape,self.voxel_size,
             self.voxels.clone(),self.leaf_render)?
             .with_tree_structure(self.tree_structure.clone()))
