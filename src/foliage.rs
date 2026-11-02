@@ -749,12 +749,14 @@ impl FoliageMesh {
     /// Explicit per-voxel representation: the fundamental export.
     /// OBJ is a view of these blocks for traditional mesh software.
     pub fn voxel_json(&self, project: &FoliageProject) -> Result<String, String> {
-        let grid = match self.shape {
-            VoxelShape::Cube => "x/y/z Cartesian unit grid",
-            VoxelShape::HexPrism => "axial q/r hex grid plus integer z layer",
-        };
+        if self.shape != VoxelShape::HexPrism || self.voxel_size != WORLD_HEXEL_SIZE_METRES ||
+            self.leaf_render.geometry != LeafGeometry::CrossedCutout {
+            return Err("Game tree export requires 1m hexels and card foliage".into());
+        }
+        let grid = "axial q/r hex grid plus integer z layer";
         serde_json::to_string_pretty(&serde_json::json!({
-            "format": "texture-studio-voxel-tree-v1",
+            "format": "hexel-game-tree-v1",
+            "cell_dimensions_m": {"across_flats": 1.0, "height": 1.0},
             "shape": self.shape,
             "voxel_size": self.voxel_size,
             "coordinate_system": grid,
@@ -980,8 +982,10 @@ mod tests {
         let json: serde_json::Value =
             serde_json::from_str(&a.voxel_json(&tree).unwrap()).unwrap();
         assert_eq!(json["voxels"].as_array().unwrap().len(), a.voxel_count());
+        assert_eq!(json["format"].as_str(), Some("hexel-game-tree-v1"));
         assert_eq!(json["shape"].as_str(), Some("HexPrism"));
         assert_eq!(json["voxel_size"].as_f64(), Some(1.0));
+        assert_eq!(json["cell_dimensions_m"]["height"].as_f64(), Some(1.0));
         assert_eq!(a.obj().lines().filter(|l|l.starts_with("f ")).count(),
             a.triangle_count());
     }
