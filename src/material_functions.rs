@@ -7,6 +7,7 @@ use std::collections::HashSet;
 
 const MAX_FUNCTIONS:usize=128;
 const MAX_PARAMETERS:usize=16;
+const MAX_NESTED_CALLS:usize=16;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FunctionParameterKind { NoiseScale }
@@ -57,6 +58,15 @@ impl MaterialFunctionInstance {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// A nested versioned function replaces an unconnected-input Color
+/// placeholder in a parent graph. Its child Albedo source becomes the
+/// placeholder's outgoing signal when the parent is instantiated.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MaterialFunctionCall {
+    pub placeholder_node_id:u64,
+    pub reference:MaterialFunctionInstance,
+}
+
 pub struct MaterialFunction {
     pub id:String,
     pub version:u32,
@@ -66,6 +76,9 @@ pub struct MaterialFunction {
     /// variant adjusts existing Noise.scale without changing evaluator types.
     #[serde(default)]
     pub parameters:Vec<FunctionParameter>,
+    /// Authored-only nested calls; resolved Graph snapshots contain no calls.
+    #[serde(default)]
+    pub calls:Vec<MaterialFunctionCall>,
 }
 
 impl MaterialFunction {
@@ -78,7 +91,7 @@ impl MaterialFunction {
                 key:"frequency".into(),node_id:node.id,
                 kind:FunctionParameterKind::NoiseScale,
             }]).unwrap_or_default();
-        let result=Self{name:id.clone(),id,version,graph,parameters};
+        let result=Self{name:id.clone(),id,version,graph,parameters,calls:Vec::new()};
         result.validate()?;
         Ok(result)
     }
@@ -86,7 +99,8 @@ impl MaterialFunction {
     pub fn validate(&self)->Result<(),String> {
         if !valid_key(&self.id)||self.version==0||
             self.name.trim().is_empty()||self.name.len()>120||
-            self.parameters.len()>MAX_PARAMETERS {
+            self.parameters.len()>MAX_PARAMETERS||
+            self.calls.len()>MAX_NESTED_CALLS {
             return Err("Invalid material function ID, version, name, or parameter count".into());
         }
         self.graph.validate()?;
@@ -104,10 +118,22 @@ impl MaterialFunction {
                 _=>return Err("Material function parameter targets wrong node kind".into()),
             }
         }
+        let mut placeholders=HashSet::new();
+        for call in &self.calls {
+            call.reference.validate()?;
+            if !placeholders.insert(call.placeholder_node_id) {
+                return Err("Duplicate nested function placeholder".into());
+            }
+            let placeholder=self.graph.node(call.placeholder_node_id)
+                .ok_or("Nested function placeholder node does not exist")?;
+            if !matches!(placeholder.kind,NodeKind::Color{..}) {
+                return Err("Nested function call must replace a Color node".into());
+            }
+        }
         Ok(())
     }
 
-    fn instantiate(&self,reference:&MaterialFunctionInstance)->Result<Graph,String> {
+    pub(crate) fn instantiate(&self,reference:&MaterialFunctionInstance)->Result<Graph,String> {
         self.validate()?;
         reference.validate()?;
         if self.id!=reference.function_id||self.version!=reference.version {
@@ -158,6 +184,13 @@ impl MaterialFunctionLibrary {
                 return Err("Duplicate material function ID and version".into());
             }
         }
+        // These are authoring dependencies; detect missing versions and
+        // cycles before a library is considered valid.
+        for f in &self.functions {
+            self.resolve(&MaterialFunctionInstance{
+                function_id:f.id.clone(),version:f.version,overrides:vec![]
+            })?;
+        }
         Ok(())
     }
 
@@ -175,11 +208,7 @@ impl MaterialFunctionLibrary {
     }
 
     pub fn resolve(&self,reference:&MaterialFunctionInstance)->Result<Graph,String> {
-        reference.validate()?;
-        self.functions.iter()
-            .find(|f|f.id==reference.function_id&&f.version==reference.version)
-            .ok_or("Material function version not present in authoring library")?
-            .instantiate(reference)
+        crate::material_function_nesting::resolve(self,reference)
     }
 }
 
