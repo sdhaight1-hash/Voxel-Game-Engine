@@ -19,6 +19,17 @@ use texture_studio::foliage_materials::{FoliageMaterials, MaterialRole,
     SeasonalPalettes, MATERIAL_SIZE};
 use texture_studio::voxel::{render_atlas, render_voxel_preview, export_obj};
 
+/// Use the function's authored Noise frequency as the initial override;
+/// selecting or importing a template must not silently change its appearance.
+fn authored_function_noise_scale(function:&MaterialFunction)->Option<u32> {
+    let param=function.parameters.iter().find(|param|
+        param.kind==FunctionParameterKind::NoiseScale)?;
+    match function.graph.node(param.node_id)?.kind {
+        NodeKind::Noise{scale,..}=>Some(scale),
+        _=>None,
+    }
+}
+
 const NODE_W: f32 = 170.0;
 const PREVIEW_SIZE: u32 = 256;
 
@@ -980,9 +991,13 @@ impl Studio {
                                             .map_err(|e|e.to_string()));
                                     match result {
                                         Ok(())=>{
+                                            let default_scale=authored_function_noise_scale(&function);
                                             let index=self.material_functions.insert(function)
                                                 .expect("validated and unique export");
                                             self.selected_material_function=Some(index);
+                                            if let Some(scale)=default_scale {
+                                                self.function_noise_scale=scale;
+                                            }
                                             self.status=format!("Saved material function {}",path.display());
                                         }
                                         Err(err)=>self.status=format!("Function save failed: {err}"),
@@ -1005,12 +1020,17 @@ impl Studio {
                     match result {
                         Ok(index)=>{
                             self.selected_material_function=Some(index);
+                            if let Some(scale)=self.material_functions.functions.get(index)
+                                .and_then(authored_function_noise_scale) {
+                                self.function_noise_scale=scale;
+                            }
                             self.status=format!("Imported material function {}",path.display());
                         }
                         Err(err)=>self.status=format!("Function import failed: {err}"),
                     }
                 }
             }
+            let mut function_selection_changed=false;
             egui::ComboBox::from_id_salt("material_function_selection")
                 .selected_text(self.selected_material_function
                     .and_then(|i|self.material_functions.functions.get(i))
@@ -1018,10 +1038,18 @@ impl Studio {
                         |f|format!("{} v{}",f.name,f.version)))
                 .show_ui(ui,|ui|{
                     for (index,f) in self.material_functions.functions.iter().enumerate() {
-                        ui.selectable_value(&mut self.selected_material_function,
-                            Some(index),format!("{} v{}",f.name,f.version));
+                        function_selection_changed |= ui.selectable_value(
+                            &mut self.selected_material_function,
+                            Some(index),format!("{} v{}",f.name,f.version)).changed();
                     }
                 });
+            if function_selection_changed {
+                if let Some(scale)=self.selected_material_function
+                    .and_then(|index|self.material_functions.functions.get(index))
+                    .and_then(authored_function_noise_scale) {
+                    self.function_noise_scale=scale;
+                }
+            }
             if let Some(index)=self.selected_material_function {
                 if let Some(function)=self.material_functions.functions.get(index) {
                     let frequency=function.parameters.iter().find(|p|
