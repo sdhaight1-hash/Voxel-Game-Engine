@@ -489,7 +489,7 @@ impl LibraryNode {
             Add | Subtract | Multiply | Divide | Min | Max | Difference | Screen |
             Overlay | SoftLight | HardLight | Mask | Lerp | Switch => {
                 let a=source();let b=input(1,u,v);
-                std::array::from_fn(|i| match self {
+                std::array::from_fn(|i| (match self {
                     Add => (a[i]+b[i]*amount).min(1.0),
                     Subtract => (a[i]-b[i]*amount).max(0.0),
                     Multiply => a[i]*b[i],
