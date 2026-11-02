@@ -230,10 +230,14 @@ impl GpuViewport {
         let info=rs.adapter.get_info();
         // The legacy single-sample preview remains available on adapters
         // without 4x MSAA support for *both* color and depth formats.
-        let msaa4_supported=[
-            wgpu::TextureFormat::Rgba8Unorm,wgpu::TextureFormat::Depth24Plus,
-        ].iter().all(|format|rs.adapter.get_texture_format_features(*format)
-            .flags.contains(wgpu::TextureFormatFeatureFlags::MULTISAMPLE_X4));
+        let color_flags=rs.adapter.get_texture_format_features(
+            wgpu::TextureFormat::Rgba8Unorm).flags;
+        let depth_flags=rs.adapter.get_texture_format_features(
+            wgpu::TextureFormat::Depth24Plus).flags;
+        let msaa4_supported=color_flags.contains(
+            wgpu::TextureFormatFeatureFlags::MULTISAMPLE_X4 |
+            wgpu::TextureFormatFeatureFlags::MULTISAMPLE_RESOLVE)
+            && depth_flags.contains(wgpu::TextureFormatFeatureFlags::MULTISAMPLE_X4);
 
         let shader=device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label:Some("voxel-game-engine-wgsl"),
