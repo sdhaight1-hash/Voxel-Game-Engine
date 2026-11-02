@@ -101,7 +101,8 @@ impl PlantPreset {
             _ => "Fruit trees",
         }
     }
-    /// Material-catalog titles use sentence-case species names.
+    /// Material-catalog titles match each species' own bark/leaf recipes.
+    /// Legacy saved projects still retain their stored graph snapshots.
     pub fn material_name(self) -> &'static str {
         match self {
             Self::CrimsonKingMaple=>"Crimson King maple",
@@ -110,15 +111,6 @@ impl PlantPreset {
             Self::RedApple=>"Red apple", Self::PinkApple=>"Pink apple",
             Self::YellowApple=>"Yellow apple",
             Self::GreenBamboo=>"Green bamboo", Self::BrownBamboo=>"Brown bamboo",
-            Self::CherryBlossom=>"Cherry", // Reuse the Cherry material recipes.
-            Self::KentuckyCoffeetree=>"Walnut",
-            Self::EasternCottonwood|Self::FremontCottonwood|
-            Self::BlackCottonwood=>"Birch",
-            Self::ArabicaCoffee|Self::CaturraCoffee|Self::MaragogipeCoffee|
-            Self::CastilloCoffee|Self::TabiCoffee=>"Orange",
-            Self::CoconutPalm|Self::DatePalm|Self::FanPalm=>"Mango",
-            // Reuse available tropical bark/leaf graphs; silhouettes are unique.
-            Self::Shrub=>"Oak",
             _ => self.name(),
         }
     }
