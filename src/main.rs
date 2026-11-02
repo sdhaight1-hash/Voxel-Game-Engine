@@ -2459,6 +2459,8 @@ impl Studio {
                         format!("{min}..{max} color stops, default {default}"),
                     ParameterControl::CurvePoints{min,max,default} =>
                         format!("{min}..{max} curve points, default {default}"),
+                    ParameterControl::Choice{options,default} =>
+                        format!("{}; default {default}",options.join(" / ")),
                 };
                 ui.small(format!("{} [{}]: {details}",param.label,param.id));
             }
