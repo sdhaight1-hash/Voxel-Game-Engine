@@ -101,11 +101,15 @@ impl VoxelAsset {
         Ok(())
     }
 
+    /// Remove one actual occupied cell and return its material for future
+    /// harvest/drop resolution. Visual leaf cards are not separate fake blocks.
+    pub fn harvest_cell(&mut self, pos: [i32; 3]) -> Option<Material> {
+        let i = self.voxels.iter().position(|v| [v.x, v.y, v.z] == pos)?;
+        Some(self.voxels.remove(i).material)
+    }
+
     pub fn erase(&mut self, pos: [i32; 3]) -> bool {
-        if let Some(i) = self.voxels.iter().position(|v| [v.x, v.y, v.z] == pos) {
-            self.voxels.remove(i);
-            true
-        } else { false }
+        self.harvest_cell(pos).is_some()
     }
 
     pub fn paint(&mut self, pos: [i32; 3], material: Material) -> bool {
@@ -213,6 +217,26 @@ mod tests {
             assert!(obj.contains("mtllib asset.mtl"));
             assert!(obj.contains("usemtl"));
         }
+    }
+
+    #[test]
+    fn world_hexel_tree_has_removable_wood_and_foliage_cells() {
+        let project = FoliageProject::from_preset(PlantPreset::Oak);
+        let mesh = project.generate_world_hexels().unwrap();
+        let mut asset = VoxelAsset::from_tree(&project, &mesh, &Graph::default());
+        assert_eq!(asset.shape, VoxelShape::HexPrism);
+        assert_eq!(asset.voxel_size, 1.0);
+        assert_eq!(asset.leaf_render.geometry, LeafRenderSettings::default().geometry);
+        for wood in [true, false] {
+            let cell = asset.voxels.iter().copied()
+                .find(|v| v.material.is_wood() == wood).unwrap();
+            let pos = [cell.x, cell.y, cell.z];
+            let harvested = asset.harvest_cell(pos).unwrap();
+            assert_eq!(harvested.is_wood(), wood);
+            assert!(!asset.contains(pos));
+            assert_eq!(asset.harvest_cell(pos), None);
+        }
+        assert!(VoxelAsset::from_json(&asset.to_json().unwrap()).is_ok());
     }
 
     #[test]
