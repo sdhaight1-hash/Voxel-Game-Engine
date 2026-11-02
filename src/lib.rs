@@ -507,8 +507,13 @@ mod tests {
         let mut graph = Graph::default();
         let first = graph.add_node(NodeKind::Invert, [0.0, 0.0]);
         let second = graph.add_node(NodeKind::Invert, [1.0, 1.0]);
+        let third = graph.add_node(NodeKind::Invert, [2.0, 2.0]);
         graph.connect(first, second, 0).unwrap();
-        assert!(graph.rewire(second, 0, second, first, 0).is_err());
+        graph.connect(second, third, 0).unwrap();
+        // Rewire the independent output cable to third -> first: this would
+        // create first -> second -> third -> first, so it must be rejected.
+        assert!(graph.rewire(2, 0, third, first, 0).is_err());
+        assert!(graph.links.iter().any(|l| l.from == 1 && l.to == 2));
         assert!(graph.links.iter().any(|l| l.from == first && l.to == second));
         graph.validate().unwrap();
     }
