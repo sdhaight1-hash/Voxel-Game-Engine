@@ -1600,7 +1600,8 @@ fn apply_pipe_model(
         let wanted=old*(1.0-blend)+target*blend;
         let factor=(wanted/old).clamp(0.65,1.35);
         let start=(old*factor).clamp(0.026,0.5);
-        let end=(span.end_radius_mm as f32/1000.0*factor).clamp(0.026,0.5);
+        let end=(span.end_radius_mm as f32/1000.0*factor)
+            .clamp(0.020,start*0.96);
         let grew=start>old+0.001 || end>span.end_radius_mm as f32/1000.0+0.001;
         span.start_radius_mm=(start*1000.0).round() as u16;
         span.end_radius_mm=(end*1000.0).round() as u16;
