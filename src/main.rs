@@ -289,6 +289,8 @@ struct Studio {
     foliage_yaw: f32,
     /// 0 Spring, 1 Summer, 2 Autumn, 3 Winter; 4 loops to Spring.
     season_preview: f32,
+    /// GPU preview only; never changes saved foliage geometry or textures.
+    ordered_leaf_coverage: bool,
     leaf_texture: Option<TextureHandle>,
     bark_texture: Option<TextureHandle>,
     asset_leaf_texture: Option<TextureHandle>,
@@ -362,6 +364,7 @@ impl Default for Studio {
             foliage_stage: FoliageStage::PresetLoader,
             foliage_yaw: 0.8,
             season_preview: 1.0,
+            ordered_leaf_coverage: false,
             leaf_texture: None,
             bark_texture: None,
             asset_leaf_texture: None,
@@ -1465,6 +1468,9 @@ impl Studio {
         ui.add(egui::Slider::new(&mut self.season_preview,0.0..=4.0)
             .text("Season preview").fixed_decimals(2));
         ui.small("0 Spring • 1 Summer • 2 Autumn • 3 Winter • 4 Spring");
+        ui.checkbox(&mut self.ordered_leaf_coverage,
+            "Experimental ordered leaf edge coverage")
+            .on_hover_text("GPU preview only: deterministic 4×4 screen-door coverage. May show a dither pattern at some zoom levels; material exports and legacy alpha stay unchanged.");
         let available=ui.available_size();
         let desired=Vec2::new(available.x.max(50.0),available.y.max(240.0));
         let (rect,response)=ui.allocate_exact_size(desired,Sense::click_and_drag());
@@ -1472,7 +1478,8 @@ impl Studio {
         painter.rect_filled(rect,4.0,Color32::from_rgb(23,27,35));
         if let (Some(gpu),Some(scene))=(&self.gpu,&self.asset_gpu_scene) {
             gpu.paint(ui,rect,Arc::clone(scene),self.asset_yaw,self.asset_zoom,
-                ui.ctx().input(|i|i.time as f32),self.season_preview);
+                ui.ctx().input(|i|i.time as f32),self.season_preview,
+                self.ordered_leaf_coverage);
         }
         if response.dragged_by(egui::PointerButton::Secondary) {
             self.asset_yaw=(self.asset_yaw+
@@ -1973,6 +1980,9 @@ impl Studio {
         ui.add(egui::Slider::new(&mut self.season_preview,0.0..=4.0)
             .text("Season preview").fixed_decimals(2));
         ui.small("0 Spring • 1 Summer • 2 Autumn • 3 Winter • 4 Spring");
+        ui.checkbox(&mut self.ordered_leaf_coverage,
+            "Experimental ordered leaf edge coverage")
+            .on_hover_text("GPU preview only: deterministic 4×4 screen-door coverage. May show a dither pattern at some zoom levels; material exports and legacy alpha stay unchanged.");
         let available=ui.available_size();
         let desired=Vec2::new(available.x.max(50.0),available.y.max(250.0));
         let (rect,_) = ui.allocate_exact_size(desired,Sense::hover());
@@ -1980,7 +1990,8 @@ impl Studio {
         painter.rect_filled(rect,4.0,Color32::from_rgb(22,27,35));
         if let (Some(gpu),Some(scene))=(&self.gpu,&self.foliage_gpu_scene) {
             gpu.paint(ui,rect,Arc::clone(scene),self.foliage_yaw,1.0,
-                ui.ctx().input(|i|i.time as f32),self.season_preview);
+                ui.ctx().input(|i|i.time as f32),self.season_preview,
+                self.ordered_leaf_coverage);
         }
         let Some(mesh)=&self.foliage_mesh else {
             painter.text(rect.center(),Align2::CENTER_CENTER,
