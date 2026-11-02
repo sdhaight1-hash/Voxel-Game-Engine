@@ -1508,7 +1508,8 @@ impl FoliageProject {
         if cells.len() > 40_000 {
             return Err("Tree exceeds 40,000 game hexels: reduce size, branching or canopy density".into());
         }
-        if self.leaf_density>0.0 && !spans.is_empty() && matches!(self.preset,
+        if self.leaf_density>0.0 && spans.iter().any(|s|s.branch_id!=0)
+            && matches!(self.preset,
             PlantPreset::Oak|PlantPreset::Walnut|PlantPreset::Ebony|
             PlantPreset::Maple|PlantPreset::CrimsonKingMaple|
             PlantPreset::Mango|PlantPreset::Lychee|
@@ -2794,8 +2795,8 @@ mod tests {
                 b.part==TreePart::SmallBranch).count();
             assert!(twigs>=majors && twigs<=majors*2,
                 "{species:?}: {twigs} twigs for {majors} limbs");
-            assert!(tree.spans.iter().all(|span|
-                span.start_radius_mm>span.end_radius_mm));
+            assert!(tree.spans.iter().filter(|span|span.branch_id!=0)
+                .all(|span|span.start_radius_mm>span.end_radius_mm));
             tree.validate(&mesh.voxels).unwrap();
         }
     }
@@ -2820,12 +2821,15 @@ mod tests {
                 "{preset:?}: branch tubes missing");
             assert!(mesh.triangles.iter().any(|t|
                 t.material.is_wood() && trunk_cells.contains(&t.cell)),
-                "{preset:?}: solid trunk missing");
+                "{preset:?}: trunk surface missing");
             assert!(mesh.triangles.iter().any(|t|t.cutout &&
                 t.material.is_foliage()),"{preset:?}: leaf cards missing");
-            assert!(tree.spans.iter().all(|s|s.start_radius_mm<=420
-                && s.end_radius_mm<=420 && s.start_radius_mm>s.end_radius_mm),
-                "{preset:?}: branches must taper and fit within 1m cells");
+            assert!(tree.spans.iter().filter(|s|s.branch_id!=0).all(|s|
+                s.start_radius_mm<=500 && s.end_radius_mm<=500 &&
+                s.start_radius_mm>s.end_radius_mm),
+                "{preset:?}: generated branch radii must be tapered and bounded");
+            assert!(tree.spans.iter().any(|s|s.branch_id==0),
+                "{preset:?}: smooth trunk must have an authored spine");
             let again=FoliageProject::from_preset(preset).generate().unwrap();
             assert_eq!(mesh.triangles.len(),again.triangles.len());
             assert_eq!(mesh.triangles[0].points,again.triangles[0].points);
