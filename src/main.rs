@@ -14,7 +14,7 @@ use texture_studio::foliage::{FoliageProject, FoliageMesh, FoliageStage, PlantPr
 use texture_studio::asset::VoxelAsset;
 use texture_studio::flora_prefab::FloraPrefab;
 use texture_studio::material_functions::{MaterialFunction,MaterialFunctionLibrary,
-    MaterialFunctionInstance,FunctionOverride,FunctionParameterKind};
+    MaterialFunctionInstance,MaterialFunctionCall,FunctionOverride,FunctionParameterKind};
 use texture_studio::foliage_materials::{FoliageMaterials, MaterialRole,
     SeasonalPalettes, MATERIAL_SIZE};
 use texture_studio::voxel::{render_atlas, render_voxel_preview, export_obj};
@@ -295,6 +295,7 @@ struct Studio {
     function_id_input: String,
     function_version_input: u32,
     selected_material_function: Option<usize>,
+    function_placeholder_node: Option<u64>,
     function_noise_scale: u32,
     editing_material: Option<(bool,MaterialRole)>,
     asset: VoxelAsset,
@@ -367,6 +368,7 @@ impl Default for Studio {
             function_id_input:"shared_bark".into(),
             function_version_input:1,
             selected_material_function:None,
+            function_placeholder_node:None,
             function_noise_scale:6,
             editing_material: None,
             asset: VoxelAsset::default(),
@@ -1076,6 +1078,99 @@ impl Studio {
                             Err(err)=>self.status=format!("Function apply failed: {err}"),
                         }
                     }
+                }
+            }
+            // Nested functions compile into the parent graph at authoring time.
+            // Color placeholders are ordinary serializable nodes; no runtime
+            // Group/Call enum variants or shader branch handling are required.
+            let selected_child=self.selected_material_function
+                .and_then(|index|self.material_functions.functions.get(index))
+                .cloned();
+            let slot_graph=if for_asset {&self.asset.materials}
+                else {&self.foliage.materials};
+            let slot_graph=slot_graph.graph(role).cloned();
+            if let (Some(child),Some(parent_graph))=(selected_child,slot_graph) {
+                let placeholders:Vec<_>=parent_graph.nodes.iter()
+                    .filter(|node|matches!(node.kind,NodeKind::Color{..}))
+                    .map(|node|node.id).collect();
+                if !placeholders.is_empty() {
+                    ui.separator();
+                    ui.label("Nested material function");
+                    ui.small("Replace a Color node in the assigned graph with the selected function's Albedo output.");
+                    if !placeholders.contains(
+                        &self.function_placeholder_node.unwrap_or(u64::MAX)) {
+                        self.function_placeholder_node=placeholders.first().copied();
+                    }
+                    egui::ComboBox::from_id_salt("nested_material_placeholder")
+                        .selected_text(format!("Color node #{}",
+                            self.function_placeholder_node.unwrap_or_default()))
+                        .show_ui(ui,|ui| {
+                            for id in &placeholders {
+                                ui.selectable_value(&mut self.function_placeholder_node,
+                                    Some(*id),format!("Color node #{id}"));
+                            }
+                        });
+                    if ui.button("Export slot as nested function…").clicked() {
+                        let result=(|| ->Result<MaterialFunction,String> {
+                            let mut parent=MaterialFunction::from_graph(
+                                self.function_id_input.clone(),
+                                self.function_version_input,parent_graph)?;
+                            let overrides=child.parameters.iter().find(|param|
+                                param.kind==FunctionParameterKind::NoiseScale)
+                                .map(|param|vec![FunctionOverride{
+                                    key:param.key.clone(),
+                                    value:self.function_noise_scale,
+                                }]).unwrap_or_default();
+                            let reference=MaterialFunctionInstance{
+                                function_id:child.id,version:child.version,overrides,
+                            };
+                            parent.calls.push(MaterialFunctionCall{
+                                placeholder_node_id:self.function_placeholder_node
+                                    .ok_or("Select a Color placeholder node")?,
+                                reference,
+                            });
+                            parent.validate()?;
+                            // Resolve and validate before showing the save dialog.
+                            // Failed references/cycles never produce a file.
+                            let mut candidate=self.material_functions.clone();
+                            candidate.insert(parent.clone())?;
+                            candidate.resolve(&MaterialFunctionInstance{
+                                function_id:parent.id.clone(),
+                                version:parent.version,overrides:Vec::new(),
+                            })?;
+                            Ok(parent)
+                        })();
+                        match result {
+                            Err(err)=>self.status=format!("Nested function: {err}"),
+                            Ok(parent)=>{
+                                if let Some(path)=rfd::FileDialog::new()
+                                    .add_filter("Material function",&["json"])
+                                    .set_file_name(format!("{}-v{}.json",
+                                        parent.id,parent.version)).save_file() {
+                                    if path.exists() {
+                                        self.status="Nested function file already exists; choose a new version".into();
+                                    } else {
+                                        let saved=serde_json::to_string_pretty(&parent)
+                                            .map_err(|err|err.to_string())
+                                            .and_then(|json|std::fs::write(&path,json)
+                                                .map_err(|err|err.to_string()));
+                                        match saved {
+                                            Err(err)=>self.status=format!("Nested function save failed: {err}"),
+                                            Ok(())=>{
+                                                let index=self.material_functions.insert(parent)
+                                                    .expect("prevalidated and unique nested function");
+                                                self.selected_material_function=Some(index);
+                                                self.status=format!(
+                                                    "Saved nested material function {}",path.display());
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    ui.small("To author a nested function, connect a Color placeholder node to the slot graph and apply it first.");
                 }
             }
         });
