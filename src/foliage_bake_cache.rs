@@ -1,8 +1,30 @@
 //! Bounded reuse of final Bark and Leaf RGBA bakes between Tree Designer and
 //! editable Asset previews. Generation, occupancy and GPU resources are not
 //! owned by this cache; FoliageMaterials remains the source of appearance.
+use crate::{Graph, NodeKind};
 use crate::foliage_materials::FoliageMaterials;
+use serde::Serialize;
 use std::{collections::VecDeque, sync::Arc};
+
+/// Normalize the graph's *executed* data, excluding canvas locations and
+/// the voxel display mode, which never participate in Graph::render_rgba.
+#[derive(Serialize)]
+struct GraphRecipe {
+    nodes: Vec<(u64, NodeKind)>,
+    links: Vec<(u64, u64, usize)>,
+}
+
+impl GraphRecipe {
+    fn from_graph(graph:&Graph)->Self {
+        let mut nodes:Vec<_>=graph.nodes.iter().map(|node|
+            (node.id,node.kind)).collect();
+        nodes.sort_by_key(|(id,_)|*id);
+        let mut links:Vec<_>=graph.links.iter().map(|link|
+            (link.from,link.to,link.input)).collect();
+        links.sort_unstable();
+        Self{nodes,links}
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Role { Bark, Leaf }
@@ -65,11 +87,14 @@ impl FoliageBakeCache {
         }
         let recipe=match role {
             Role::Leaf => serde_json::to_vec(&(
-                &materials.leaf, &materials.leaf_opacity, materials.leaf_species,
-                materials.fruit_color, materials.cutout_threshold,
+                materials.leaf.as_ref().map(GraphRecipe::from_graph),
+                materials.leaf_opacity.as_ref().map(GraphRecipe::from_graph),
+                materials.leaf_species, materials.fruit_color,
+                materials.cutout_threshold,
             )),
             Role::Bark => serde_json::to_vec(&(
-                &materials.bark, materials.bark_tint_strength,
+                materials.bark.as_ref().map(GraphRecipe::from_graph),
+                materials.bark_tint_strength,
             )),
         }.map_err(|err|err.to_string())?;
         let key=BakeKey{role,size,tint,recipe};
@@ -106,7 +131,7 @@ impl FoliageBakeCache {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Graph, NodeKind};
+    use crate::NodeKind;
     use crate::foliage::PlantPreset;
     use crate::foliage_materials::SeasonalPalettes;
 
@@ -137,13 +162,31 @@ mod tests {
         let a=cache.bake_leaf(&first,64,[80,150,70]).unwrap();
         let b=cache.bake_leaf(&second,64,[80,150,70]).unwrap();
         assert!(Arc::ptr_eq(&a,&b));
-        assert_eq!(a.as_ref(),first.bake_leaf(64,[80,150,70]).unwrap());
+        assert_eq!(a.as_ref(),first.bake_leaf(64,[80,150,70]).unwrap().as_slice());
         let bark=cache.bake_bark(&first,64,[99,76,55]).unwrap();
         let second_bark=cache.bake_bark(&second,64,[99,76,55]).unwrap();
         assert!(Arc::ptr_eq(&bark,&second_bark));
-        assert_eq!(bark.as_ref(),first.bake_bark(64,[99,76,55]).unwrap());
+        assert_eq!(bark.as_ref(),first.bake_bark(64,[99,76,55]).unwrap().as_slice());
         assert_eq!(cache.stats().hits,2);
         assert_eq!(cache.stats().misses,2);
+    }
+
+    #[test]
+    fn graph_layout_voxel_mode_and_order_are_not_bake_inputs() {
+        let mut materials=FoliageMaterials::default();
+        let mut graph=Graph::demo_bricks();
+        materials.bark=Some(graph.clone());
+        let mut cache=FoliageBakeCache::new(1024*1024);
+        let original=cache.bake_bark(&materials,32,[115,91,65]).unwrap();
+        graph.nodes.reverse();
+        graph.links.reverse();
+        graph.node_mut(1).unwrap().position=[-500.0,800.0];
+        graph.voxel.geometryless=!graph.voxel.geometryless;
+        materials.bark=Some(graph);
+        let reordered=cache.bake_bark(&materials,32,[115,91,65]).unwrap();
+        assert!(Arc::ptr_eq(&original,&reordered));
+        assert_eq!(cache.stats().hits,1);
+        assert_eq!(cache.stats().misses,1);
     }
 
     #[test]
@@ -196,7 +239,7 @@ mod tests {
         cache.bake_bark(&mats,8,[4,5,6]).unwrap();
         assert_eq!(cache.stats().resident_bytes,256);
         assert_eq!(cache.stats().evictions,1);
-        assert_eq!(first.as_ref(),mats.bake_bark(8,[1,2,3]).unwrap());
+        assert_eq!(first.as_ref(),mats.bake_bark(8,[1,2,3]).unwrap().as_slice());
         cache.bake_bark(&mats,16,[7,8,9]).unwrap();
         assert_eq!(cache.stats().entries,1);
         assert!(cache.stats().peak_resident_bytes<=256);
