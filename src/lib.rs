@@ -917,6 +917,63 @@ mod tests {
     }
 
     #[test]
+    fn memoized_shared_channels_match_unmodified_legacy_pixels() {
+        let mut graph=Graph::demo_bricks();
+        // The same seeded Noise feeds Roughness and Metallic, so its exact
+        // pixel evaluation can be reused without quantizing intermediate RGB.
+        graph.connect(3,4,2).unwrap();
+        for size in [8,32,64] {
+            let (images,stats)=graph.render_channels_memoized_rgba(
+                &[0,1,2,3],size,size).unwrap();
+            for (index,channel) in [0,1,2,3].into_iter().enumerate() {
+                assert_eq!(images[index],
+                    graph.render_output_channel_rgba(channel,size,size).unwrap());
+            }
+            assert!(stats.reused_samples>=size as u64*size as u64,
+                "shared seeded source was recomputed for every output pixel");
+            assert!(stats.evaluated_samples>0);
+            assert!(stats.peak_entries_per_pixel<=MAX_PIXEL_SAMPLE_ENTRIES);
+        }
+    }
+
+    #[test]
+    fn memoized_uv_warps_and_neighborhood_filters_are_byte_exact() {
+        for operation in [LibraryNode::Warp,LibraryNode::Rotate,
+                          LibraryNode::Blur,LibraryNode::EdgeDetect] {
+            let mut graph=Graph::default();
+            let op=graph.add_node(NodeKind::Library{
+                operation,amount:0.4,seed:41
+            },[120.0,10.0]);
+            graph.connect(1,op,0).unwrap();
+            graph.connect(op,2,0).unwrap();
+            graph.connect(op,2,3).unwrap();
+            let (images,stats)=graph.render_channels_memoized_rgba(
+                &[0,3],12,12).unwrap();
+            assert_eq!(images[0],graph.render_rgba(12,12).unwrap(),"{operation:?}");
+            assert_eq!(images[1],
+                graph.render_output_channel_rgba(3,12,12).unwrap(),"{operation:?}");
+            assert!(stats.reused_samples>0,"{operation:?}");
+        }
+    }
+
+    #[test]
+    fn memoized_channels_validate_inputs_and_support_disconnected_outputs() {
+        let mut graph=Graph::default();
+        graph.disconnect(2,0);
+        let (images,stats)=graph.render_channels_memoized_rgba(
+            &[0,1,2,3],4,4).unwrap();
+        assert_eq!(stats.evaluated_samples,0);
+        for channel in 0..4 {
+            assert_eq!(images[channel],
+                graph.render_output_channel_rgba(channel,4,4).unwrap());
+        }
+        assert!(graph.render_channels_memoized_rgba(&[4],4,4).is_err());
+        assert!(graph.render_channels_memoized_rgba(&[0],0,4).is_err());
+        graph.node_mut(1).unwrap().position=[f32::NAN,0.0];
+        assert!(graph.render_channels_memoized_rgba(&[0],4,4).is_err());
+    }
+
+    #[test]
     fn voronoi_is_tileable() {
         let mut graph = Graph::default();
         let id = graph.add_node(NodeKind::Voronoi { cells: 8, seed: 9 }, [0.0, 0.0]);
