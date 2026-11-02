@@ -614,8 +614,9 @@ impl Graph {
             memo.stats.evaluated_samples+=1;
             if memo.values.len()<MAX_PIXEL_SAMPLE_ENTRIES {
                 memo.values.insert(key,rgb);
+                let entry_count=memo.values.len();
                 memo.stats.peak_entries_per_pixel=
-                    memo.stats.peak_entries_per_pixel.max(memo.values.len());
+                    memo.stats.peak_entries_per_pixel.max(entry_count);
             }
         }
         rgb
