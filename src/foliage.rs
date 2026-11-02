@@ -1,6 +1,6 @@
 //! Native voxel-tree generator: occupied cube or hexagonal-prism cells are the
-//! source of truth. No curved tubes, leaf cards, imported assets or GPU shaders.
-//! Branches and canopies are voxelized into the same discrete world grid.
+//! source of truth. Bark is solid grid geometry; foliage cells anchor custom
+//! intersecting cutout cards. There is no dependency on imported game assets.
 
 use crate::voxel::VoxelShape;
 use serde::{Deserialize, Serialize};
@@ -51,6 +51,92 @@ impl FoliageStage {
     }}
 }
 
+pub const LEAF_TEXTURE_SIZE: usize = 64;
+
+/// Each leaf cell has an occupancy coordinate but is free to use custom mesh
+/// geometry instead of a cube. Legacy files without this option get the new
+/// crossed-card default.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LeafGeometry { CrossedCutout, SolidVoxel }
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LeafRenderSettings {
+    pub geometry: LeafGeometry,
+    /// Cosmetic vertex sway; never alters occupied block coordinates.
+    pub wind_strength: f32,
+    pub wind_speed: f32,
+}
+
+impl Default for LeafRenderSettings {
+    fn default() -> Self {
+        Self { geometry: LeafGeometry::CrossedCutout,
+            wind_strength: 0.12, wind_speed: 1.25 }
+    }
+}
+impl LeafRenderSettings {
+    pub fn validate(&self) -> Result<(), String> {
+        if !self.wind_strength.is_finite() || !(0.0..=0.5).contains(&self.wind_strength)
+            || !self.wind_speed.is_finite() || !(0.0..=5.0).contains(&self.wind_speed) {
+            return Err("Wind strength must be 0..0.5 and speed 0..5".into());
+        }
+        Ok(())
+    }
+}
+
+/// Original, self-contained 64x64 RGBA cutout texture: leafy sprigs and a
+/// thin twig in otherwise transparent space. All alpha is binary (0 or 255).
+pub fn leaf_cutout_rgba() -> Vec<u8> {
+    let mut rgba = Vec::with_capacity(LEAF_TEXTURE_SIZE*LEAF_TEXTURE_SIZE*4);
+    let leaf = |x:f32, y:f32, cx:f32, cy:f32, dir:f32| {
+        let dx=x-cx; let dy=y-cy;
+        let longitudinal=dx*dir+dy*(-0.65);
+        let transverse=dx*0.65+dy*dir;
+        let radius=(longitudinal/0.18).powi(2)+(transverse/0.065).powi(2);
+        radius < 1.0 && longitudinal > -0.17
+    };
+    for y in 0..LEAF_TEXTURE_SIZE {
+        for x in 0..LEAF_TEXTURE_SIZE {
+            let u=(x as f32+0.5)/LEAF_TEXTURE_SIZE as f32;
+            let v=(y as f32+0.5)/LEAF_TEXTURE_SIZE as f32;
+            let twig=(u-0.50).abs()<0.011 && (0.18..=0.94).contains(&v);
+            let mut canopy=false;
+            for i in 0..4 {
+                let cy=0.24+i as f32*0.17;
+                let offset=0.12+i as f32*0.014;
+                canopy |= leaf(u,v,0.5-offset,cy,-0.86);
+                canopy |= leaf(u,v,0.5+offset,cy,0.86);
+            }
+            canopy |= ((u-0.50)/0.07).powi(2)+((v-0.14)/0.14).powi(2)<1.0;
+            let alpha=if canopy || twig {255} else {0};
+            let shade=if twig {0.58} else {
+                (0.83+0.14*((x*11+y*7)%17) as f32/16.0) as f32
+            };
+            let value=(shade*255.0_f32) as u8;
+            rgba.extend_from_slice(&[value,value,value,alpha]);
+        }
+    }
+    rgba
+}
+
+/// A separate grayscale image is used for MTL map_d because some OBJ importers
+/// ignore the alpha channel of map_Kd.
+pub fn leaf_opacity_rgba() -> Vec<u8> {
+    leaf_cutout_rgba().chunks_exact(4).flat_map(|px| {
+        let a=px[3]; [a,a,a,255]
+    }).collect()
+}
+
+/// Preview-only vertex motion, anchored at the bottom of each leaf card.
+/// Asset coordinates and static OBJ export are unchanged.
+pub fn sway_leaf_vertex(point:[f32;3], cell:[i32;3], weight:f32,
+                        time:f32, settings:LeafRenderSettings, size:f32) -> [f32;3] {
+    if weight==0.0 || settings.wind_strength==0.0 {return point;}
+    let phase=time*settings.wind_speed*3.0
+        +cell[0] as f32*0.37+cell[1] as f32*0.71+cell[2] as f32*0.19;
+    let shift=(phase.sin()+0.3*(phase*0.6).cos())*settings.wind_strength*size*weight;
+    [point[0]+shift,point[1]+shift*0.45,point[2]]
+}
 fn default_voxel_size() -> f32 { 0.4 }
 fn default_shape() -> VoxelShape { VoxelShape::Cube }
 
@@ -80,6 +166,8 @@ pub struct FoliageProject {
     pub shape: VoxelShape,
     #[serde(default = "default_voxel_size")]
     pub voxel_size: f32,
+    #[serde(default)]
+    pub leaf_render: LeafRenderSettings,
 }
 
 impl Default for FoliageProject {
@@ -103,6 +191,9 @@ pub struct VoxelCell {
 pub struct Triangle {
     pub points: [[f32; 3]; 3],
     pub material: Material,
+    pub uv: [[f32; 2]; 3],
+    pub cutout: bool,
+    pub wind_weight: [f32; 3],
     /// Occupied grid cell this visible face belongs to.
     pub cell: [i32; 3],
     /// Grid-space outward neighbor. Clicking the face adds a cell here.
@@ -116,6 +207,7 @@ pub struct FoliageMesh {
     pub shape: VoxelShape,
     pub voxel_size: f32,
     pub height: f32,
+    pub leaf_render: LeafRenderSettings,
 }
 
 impl FoliageProject {
@@ -142,10 +234,12 @@ impl FoliageProject {
             leaf_density: density, leaf_scale, leaf_angle: 0.12, leaf_variation: 0.32,
             bark_color: bark, leaf_color: leaves,
             shape: VoxelShape::Cube, voxel_size: default_voxel_size(),
+            leaf_render: LeafRenderSettings::default(),
         }
     }
 
     pub fn validate(&self) -> Result<(), String> {
+        self.leaf_render.validate()?;
         for (name, x, min, max) in [
             ("height", self.height, 0.5, 30.0),
             ("trunk radius", self.trunk_radius, 0.02, 2.0),
@@ -278,9 +372,9 @@ impl FoliageProject {
         let voxels = cells.iter().map(|(pos, material)| VoxelCell {
             x: pos[0], y: pos[1], z: pos[2], material: *material,
         }).collect();
-        let triangles = surface_triangles(&cells, self.shape, s);
+        let triangles = surface_triangles(&cells, self.shape, s, self.leaf_render);
         Ok(FoliageMesh { voxels, triangles, shape: self.shape,
-            voxel_size: s, height: h })
+            voxel_size: s, height: h, leaf_render: self.leaf_render })
     }
 }
 
@@ -434,13 +528,62 @@ fn neighbor(shape: VoxelShape, face: usize) -> [i32; 3] {
 }
 fn push_triangle(out: &mut Vec<Triangle>, a: [f32; 3], b: [f32; 3],
                  c: [f32; 3], material: Material, cell: [i32; 3], outward: [i32; 3]) {
-    out.push(Triangle { points: [a, b, c], material, cell, outward });
+    out.push(Triangle { points: [a, b, c], material, cell, outward,
+        uv: [[0.0, 0.0]; 3], cutout: false, wind_weight: [0.0; 3] });
 }
+fn add_leaf_cards(triangles:&mut Vec<Triangle>, pos:[i32;3],
+                  material:Material, shape:VoxelShape, size:f32) {
+    let c=grid_position(shape,size,pos);
+    let id=(pos[0] as u32).wrapping_mul(0x9e3779b9)
+        ^(pos[1] as u32).wrapping_mul(0x85ebca6b)
+        ^(pos[2] as u32).wrapping_mul(0xc2b2ae35);
+    let quarter=(id.wrapping_mul(0x27d4eb2d)>>30) as f32;
+    let rotation=quarter*PI*0.5;
+    let tilt=((id>>8)&31) as f32/31.0*0.16-0.08;
+    let width=size*(0.43+((id>>13)&7) as f32/100.0);
+    let z0=c[2]-size*0.44;
+    let z1=c[2]+size*0.47;
+    for plane in 0..2 {
+        let angle=rotation+PI*0.25+plane as f32*PI*0.5;
+        let d=[angle.cos()*width,angle.sin()*width];
+        let drift=size*tilt*(if plane==0 {1.0} else {-1.0});
+        let quad=[
+            [c[0]-d[0],c[1]-d[1],z0],
+            [c[0]+d[0],c[1]+d[1],z0],
+            [c[0]+d[0]+drift,c[1]+d[1]-drift,z1],
+            [c[0]-d[0]+drift,c[1]-d[1]-drift,z1],
+        ];
+        let uv=[[0.0,1.0],[1.0,1.0],[1.0,0.0],[0.0,0.0]];
+        let weights=[0.0,0.0,1.0,1.0];
+        // Both sides: OBJ and preview work with backface culling enabled.
+        for idx in [[0,1,2],[0,2,3],[2,1,0],[3,2,0]] {
+            triangles.push(Triangle {
+                points:idx.map(|i|quad[i]),
+                material, uv:idx.map(|i|uv[i]),
+                cutout:true, wind_weight:idx.map(|i|weights[i]),
+                cell:pos, outward:[0,0,1],
+            });
+        }
+    }
+}
+
 fn surface_triangles(
     cells: &BTreeMap<[i32; 3], Material>, shape: VoxelShape, s: f32,
+    render: LeafRenderSettings,
 ) -> Vec<Triangle> {
     let mut triangles = Vec::new();
     for (cell, material) in cells {
+        if *material != Material::Bark && render.geometry == LeafGeometry::CrossedCutout {
+            // Solid surrounding blocks completely conceal a leaf. Leaf neighbors
+            // are not opaque and must not cause the cards to disappear.
+            let surrounded=(0..shape.sides() as usize).all(|face| {
+                let d=neighbor(shape,face);
+                cells.get(&[cell[0]+d[0],cell[1]+d[1],cell[2]])==Some(&Material::Bark)
+            }) && [-1,1].iter().all(|dz|
+                cells.get(&[cell[0],cell[1],cell[2]+dz])==Some(&Material::Bark));
+            if !surrounded { add_leaf_cards(&mut triangles,*cell,*material,shape,s); }
+            continue;
+        }
         let c = grid_position(shape, s, *cell);
         let bottom = polygon(shape, c, s, -1.0);
         let top = polygon(shape, c, s, 1.0);
@@ -477,6 +620,11 @@ impl FoliageMesh {
     /// This is shared by procedural foliage and the general-purpose asset editor.
     pub fn from_voxels(shape: VoxelShape, voxel_size: f32,
                        voxels: Vec<VoxelCell>) -> Result<Self, String> {
+        Self::from_voxels_with_render(shape,voxel_size,voxels,LeafRenderSettings::default())
+    }
+    pub fn from_voxels_with_render(shape: VoxelShape, voxel_size: f32,
+                       voxels: Vec<VoxelCell>, render:LeafRenderSettings) -> Result<Self, String> {
+        render.validate()?;
         if !voxel_size.is_finite() || !(0.1..=1.5).contains(&voxel_size) {
             return Err("Voxel size must be between 0.1 and 1.5".into());
         }
@@ -491,8 +639,8 @@ impl FoliageMesh {
             }
         }
         let height = voxels.iter().map(|v| v.z).max().unwrap_or(0) as f32 * voxel_size;
-        let triangles = surface_triangles(&occupied, shape, voxel_size);
-        Ok(Self { voxels, triangles, shape, voxel_size, height })
+        let triangles = surface_triangles(&occupied, shape, voxel_size, render);
+        Ok(Self { voxels, triangles, shape, voxel_size, height, leaf_render:render })
     }
 
     pub fn triangle_count(&self) -> usize { self.triangles.len() }
@@ -512,6 +660,7 @@ impl FoliageMesh {
             "coordinate_system": grid,
             "height": self.height,
             "voxels": self.voxels,
+            "leaf_render": self.leaf_render,
             "settings": project,
         })).map_err(|e| e.to_string())
     }
@@ -530,6 +679,11 @@ impl FoliageMesh {
                     p[0], p[1], p[2]));
             }
         }
+        for face in &self.triangles {
+            for uv in face.uv {
+                output.push_str(&format!("vt {:.6} {:.6}\n",uv[0],1.0-uv[1]));
+            }
+        }
         let mut previous = None;
         for (i, face) in self.triangles.iter().enumerate() {
             if previous != Some(face.material) {
@@ -543,7 +697,7 @@ impl FoliageMesh {
                 previous = Some(face.material);
             }
             let p = i * 3 + 1;
-            output.push_str(&format!("f {p} {} {}\n", p+1, p+2));
+            output.push_str(&format!("f {p}/{p} {}/{} {}/{}\n", p+1,p+1,p+2,p+2));
         }
         output
     }
@@ -561,9 +715,13 @@ pub fn mtl(project: &FoliageProject) -> String {
     let mut text = String::from("# Voxel tree bark and leaf block palette\n");
     for (name, c) in colors {
         text.push_str(&format!(
-            "newmtl {name}\nKd {:.4} {:.4} {:.4}\nKa 0 0 0\n\n",
+            "newmtl {name}\nKd {:.4} {:.4} {:.4}\nKa 0 0 0\n",
             c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0
         ));
+        if name != "bark" && project.leaf_render.geometry == LeafGeometry::CrossedCutout {
+            text.push_str("map_Kd foliage-leaves.png\nmap_d foliage-leaves-alpha.png\n");
+        }
+        text.push('\n');
     }
     text
 }
