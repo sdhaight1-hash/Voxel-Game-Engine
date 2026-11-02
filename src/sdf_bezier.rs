@@ -122,9 +122,15 @@ mod tests {
 
     #[test]
     fn straight_line_approximates_capsule_with_constant_radius() {
-        for x in [0.2,0.4,0.6,0.8] {
-            let actual=stroke(x,0.56,LINE,0.07,0.07,24,true);
-            let capsule=crate::sdf::capsule(x,0.56,LINE[0],LINE[3],0.07);
+        // Capsule connects endpoints along the shortest periodic path.
+        // Keep this Bézier's endpoint span under 0.5 UV to compare the
+        // same actual centerline rather than two different wrapped routes.
+        let short=[
+            [0.30,0.5],[0.40,0.5],[0.50,0.5],[0.60,0.5],
+        ];
+        for x in [0.30,0.40,0.50,0.60] {
+            let actual=stroke(x,0.56,short,0.07,0.07,24,true);
+            let capsule=crate::sdf::capsule(x,0.56,short[0],short[3],0.07);
             assert!((actual-capsule).abs()<0.002);
         }
     }
