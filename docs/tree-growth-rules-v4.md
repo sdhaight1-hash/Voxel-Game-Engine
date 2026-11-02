@@ -5,7 +5,8 @@
 ## Implemented
 - The existing `FoliageProject::generate()` is still the entry point and produces the same 1m axial Q/R/Z hexel occupancy, tapered wood branch spans, species-specific leaf cutouts, source project JSON, and OBJ/MTL exports.
 - `src/tree_growth_rules.rs` defines 30 (29 catalog + Shrub) per-preset bounded growth profiles: spiral/opposite/whorled/node branching arrangements; limb pitch and horizontal reach; extra lateral twig probability; trunk seed lean; foliage sites and cluster scaling.
-- Seeded foliage sites distinguish broadleaf crown tips, compound-leaf twig distributions, Willow curtains, Pine/Redwood needle sprays, Larch spur shoots, Bald Cypress feather sprays and Bamboo upper node branching.
+- Seeded foliage sites distinguish broadleaf crown tips, compound-leaf twig distributions, Willow curtains, Pine/Redwood needle sprays, Larch spur shoots, Bald Cypress feather sprays and Bamboo upper node branching. Lower bamboo nodes remain comparatively clear of leaves.
+- Species trunk taper and base flare are combined with seed-specific height and radius variation. Kapok and Redwood have broader base profiles; Bamboo is nearly cylindrical. These are still solid hexel approximations.
 - Existing branch IDs remain stable for a given seed and project, with child branches assigned deterministic IDs.
 - Red/Pink/Yellow Apple share identical shape parameters and different leaf/fruit colors. Green/Brown Bamboo share identical shape parameters and different culm/foliage colors.
 - The Foliage inspector reports the species' branch and foliage architecture.
