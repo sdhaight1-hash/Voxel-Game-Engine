@@ -197,6 +197,50 @@ fn profile_bounded_graph_output_cache() {
         fnv1a(warm.as_ref()));
 }
 
+#[test]
+fn multi_channel_memo_is_compatible_with_all_catalog_materials() {
+    use texture_studio::presets::builtin_presets;
+    use texture_studio::VoxelSettings;
+    let recipes=builtin_presets().unwrap();
+    assert_eq!(recipes.len(),1039);
+    for preset in recipes {
+        let graph=preset.build_graph(VoxelSettings::default());
+        let (channels,stats)=graph.render_channels_memoized_rgba(&[0,1,2,3],2,2)
+            .unwrap_or_else(|err|panic!("{} / {}: {err}",preset.material,preset.variant));
+        for channel in 0..4 {
+            assert_eq!(channels[channel],
+                graph.render_output_channel_rgba(channel,2,2).unwrap(),
+                "{} / {} channel {channel}",preset.material,preset.variant);
+        }
+        assert!(stats.peak_entries_per_pixel<=4096);
+    }
+}
+
+/// CI's ignored benchmark step measures *CPU* savings from shared channel
+/// sampling. It is a comparative metric, not an assertion of speedup.
+#[test]
+#[ignore = "compare standalone versus exact-UV memoized output baking"]
+fn profile_multi_channel_node_memoization() {
+    use std::time::Instant;
+    let mut graph=Graph::demo_bricks();
+    // Share one Noise graph between two PBR output channels.
+    graph.connect(3,4,2).unwrap();
+    for size in [64,256] {
+        let started=Instant::now();
+        let independent:Vec<_>=(0..4).map(|channel|
+            graph.render_output_channel_rgba(channel,size,size).unwrap()).collect();
+        let independent_ms=started.elapsed().as_secs_f64()*1000.0;
+        let started=Instant::now();
+        let (memoized,stats)=graph.render_channels_memoized_rgba(
+            &[0,1,2,3],size,size).unwrap();
+        let memoized_ms=started.elapsed().as_secs_f64()*1000.0;
+        assert_eq!(independent,memoized);
+        println!("material-node-memo size={size} independent_ms={independent_ms:.3} memoized_ms={memoized_ms:.3} sample_hits={} node_evaluations={} peak_entries_per_pixel={} albedo_fnv64={:016x}",
+            stats.reused_samples,stats.evaluated_samples,stats.peak_entries_per_pixel,
+            fnv1a(&memoized[0]));
+    }
+}
+
 /// Opt-in measurement, never a CI correctness assertion. GitHub Actions can
 /// execute it with `cargo test --test material_legacy_regression -- --ignored --nocapture`.
 /// Record the CPU/runner for meaningful before/after comparisons.
