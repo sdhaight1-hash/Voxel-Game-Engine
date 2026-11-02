@@ -177,6 +177,41 @@ mod tests {
     }
 
     #[test]
+    fn vector_willow_and_cottonwood_settings_have_distinct_bounded_cache_recipes() {
+        use crate::leaf_vector::LeafSilhouetteSource;
+        use crate::foliage::PlantPreset;
+        let mut cache=FoliageBakeCache::new(2*1024*1024);
+        for (species,wide) in [
+            (PlantPreset::Willow,LeafSilhouetteSource::VectorWillow{
+                blade_width:1.25,
+            }),
+            (PlantPreset::EasternCottonwood,
+                LeafSilhouetteSource::VectorCottonwood{blade_width:1.25}),
+            (PlantPreset::FremontCottonwood,
+                LeafSilhouetteSource::VectorCottonwood{blade_width:1.25}),
+            (PlantPreset::BlackCottonwood,
+                LeafSilhouetteSource::VectorCottonwood{blade_width:1.25}),
+        ] {
+            let mut material=FoliageMaterials::for_species(species);
+            let normal=cache.bake_leaf(&material,64,[86,141,62]).unwrap();
+            material.leaf_silhouette=wide;
+            let vector=cache.bake_leaf(&material,64,[86,141,62]).unwrap();
+            assert_ne!(normal.as_ref(),vector.as_ref(),"{species:?}");
+            let reused=cache.bake_leaf(&material,64,[86,141,62]).unwrap();
+            assert!(Arc::ptr_eq(&vector,&reused),"{species:?} should reuse warm cache");
+            material.leaf_silhouette=match wide {
+                LeafSilhouetteSource::VectorWillow{..}=>
+                    LeafSilhouetteSource::VectorWillow{blade_width:0.75},
+                _=>LeafSilhouetteSource::VectorCottonwood{blade_width:0.75},
+            };
+            let narrow=cache.bake_leaf(&material,64,[86,141,62]).unwrap();
+            assert_ne!(narrow.as_ref(),vector.as_ref(),"{species:?}");
+        }
+        assert_eq!(cache.stats().misses,12);
+        assert_eq!(cache.stats().hits,4);
+    }
+
+    #[test]
     fn vector_oak_silhouette_is_part_of_leaf_bake_cache_recipe() {
         use crate::leaf_vector::LeafSilhouetteSource;
         let mut materials=FoliageMaterials::default();
