@@ -44,12 +44,17 @@ impl SeasonalPalettes {
             PlantPreset::Birch=>[224,181,53],
             PlantPreset::Willow=>[198,169,65],
             PlantPreset::Larch|PlantPreset::BaldCypress=>[187,128,43],
+            PlantPreset::CherryBlossom=>[167,98,86],
             PlantPreset::Cherry|PlantPreset::RedApple|PlantPreset::PinkApple|
             PlantPreset::YellowApple=>[197,104,54],
             PlantPreset::Pear|PlantPreset::Peach=>[197,151,56],
             _=>[173,139,56],
         };
-        let spring=if evergreen { Self::blend(summer,[115,177,93],0.13) }
+        let spring=if species==PlantPreset::CherryBlossom {
+            // Light bronze-green emerging leaves beneath a separate, temporary
+            // pink blossom overlay in the GPU spring preview.
+            Self::blend(summer,[153,144,92],0.35)
+        } else if evergreen { Self::blend(summer,[115,177,93],0.13) }
             else {Self::blend(summer,[164,202,81],0.32)};
         let autumn=if evergreen && !matches!(species,
             PlantPreset::Larch|PlantPreset::BaldCypress) {
@@ -369,8 +374,8 @@ mod tests {
 
     #[test]
     fn all_catalog_materials_bake_and_keep_species_and_fruit_data() {
-        assert_eq!(PlantPreset::TREE_CATALOG.len(),29);
-        assert_eq!(PlantPreset::ALL.len(),30);
+        assert_eq!(PlantPreset::TREE_CATALOG.len(),30);
+        assert_eq!(PlantPreset::ALL.len(),31);
         for species in PlantPreset::ALL {
             let mats=FoliageMaterials::for_species(species);
             let baked=mats.bake_leaf(64,[120,155,90]).unwrap();
@@ -395,6 +400,20 @@ mod tests {
             .bake_leaf(64,[120,155,90]).unwrap(),
             FoliageMaterials::for_species(PlantPreset::YellowApple)
             .bake_leaf(64,[120,155,90]).unwrap());
+    }
+
+    #[test]
+    fn ornamental_cherry_has_distinct_fruit_and_foliage_seasons() {
+        let ornamental=crate::foliage::FoliageProject::from_preset(PlantPreset::CherryBlossom);
+        let orchard=crate::foliage::FoliageProject::from_preset(PlantPreset::Cherry);
+        assert_eq!(ornamental.materials.fruit_color,None);
+        assert!(orchard.materials.fruit_color.is_some());
+        let palette=ornamental.materials.effective_palettes(ornamental.leaf_color);
+        let summer=palette.sample(1.0,0.66);
+        let autumn=palette.sample(2.0,0.66);
+        assert!(summer[1]>summer[0] && summer[1]>summer[2]);
+        assert!(autumn[0]>autumn[1]);
+        assert_eq!(palette.sample(0.0,0.5),palette.sample(4.0,0.5));
     }
 
     #[test]
