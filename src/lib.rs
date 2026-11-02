@@ -2,7 +2,7 @@
 //! No UI types are used here, so the graph and renderer can be tested independently.
 
 use serde::{Deserialize, Serialize};
-use std::{cell::RefCell, collections::{HashMap, HashSet}};
+use std::{cell::{Cell,RefCell}, collections::{HashMap, HashSet}};
 
 pub mod voxel;
 pub mod foliage;
@@ -53,12 +53,48 @@ pub struct MultiChannelStats {
     pub peak_entries_per_pixel: usize,
 }
 
-const MAX_PIXEL_SAMPLE_ENTRIES: usize = 4096;
+// A small linear buffer is cheaper than hashing each inexpensive RGB node.
+// On overflow evaluation continues normally without storing new samples.
+const MAX_PIXEL_SAMPLE_ENTRIES: usize = 64;
 
-#[derive(Default)]
 struct SampleMemo {
-    values: HashMap<(u64,u32,u32),[f32;3]>,
-    stats: MultiChannelStats,
+    shared_nodes: Vec<u64>,
+    values: RefCell<Vec<((u64,u32,u32),[f32;3])>>,
+    hits: Cell<u64>,
+    evaluations: Cell<u64>,
+    peak: Cell<usize>,
+}
+
+impl SampleMemo {
+    fn new(shared_nodes:Vec<u64>)->Self {
+        Self{shared_nodes,values:RefCell::new(Vec::new()),
+            hits:Cell::new(0),evaluations:Cell::new(0),peak:Cell::new(0)}
+    }
+
+    fn lookup(&self,id:u64,u:f32,v:f32)->Option<[f32;3]> {
+        if !self.shared_nodes.contains(&id) {return None;}
+        let key=(id,u.to_bits(),v.to_bits());
+        let result=self.values.borrow().iter().find(|(k,_)|*k==key)
+            .map(|(_,rgb)|*rgb);
+        if result.is_some() {self.hits.set(self.hits.get()+1);}
+        result
+    }
+
+    fn record(&self,id:u64,u:f32,v:f32,value:[f32;3]) {
+        self.evaluations.set(self.evaluations.get()+1);
+        if !self.shared_nodes.contains(&id) {return;}
+        let mut values=self.values.borrow_mut();
+        if values.len()<MAX_PIXEL_SAMPLE_ENTRIES {
+            values.push(((id,u.to_bits(),v.to_bits()),value));
+            self.peak.set(self.peak.get().max(values.len()));
+        }
+    }
+
+    fn stats(&self)->MultiChannelStats {
+        MultiChannelStats{reused_samples:self.hits.get(),
+            evaluated_samples:self.evaluations.get(),
+            peak_entries_per_pixel:self.peak.get()}
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -400,10 +436,10 @@ impl Graph {
     /// including transformed/filter sample positions. No upstream raster
     /// interpolation or u8 quantization occurs before the final output.
     ///
-    /// The original one-channel methods retain their independent evaluator.
-    /// Callers can compare byte-equivalence and sample counts before opting
-    /// into this path. At most 4096 node/coordinate values are retained per
-    /// pixel, so pathological neighborhood graphs cannot grow unbounded.
+    /// The original one-channel API does not allocate a memo. The memo stores
+    /// only branches shared by the requested channels, with at most 64
+    /// node/coordinate values per pixel (falling back to evaluation on overflow).
+    /// Compare byte-equivalence and CPU times before opting into this path.
     pub fn render_channels_memoized_rgba(&self, channels:&[usize], width:u32, height:u32)
         -> Result<(Vec<Vec<u8>>, MultiChannelStats),String> {
         self.validate()?;
@@ -421,12 +457,28 @@ impl Graph {
                 sources[link.input]=Some(link.from);
             }
         }
+        // Count each node once per requested channel. Only branches that are
+        // shared across channel closures are candidates for memoization.
+        let mut usage=HashMap::<u64,u32>::new();
+        for &channel in channels {
+            let mut seen=HashSet::new();
+            let mut stack:Vec<u64>=sources[channel].into_iter().collect();
+            while let Some(id)=stack.pop() {
+                if seen.insert(id) {
+                    *usage.entry(id).or_default()+=1;
+                    stack.extend(self.links.iter().filter(|link|link.to==id)
+                        .map(|link|link.from));
+                }
+            }
+        }
+        let shared:Vec<u64>=usage.into_iter().filter(|(_,count)|*count>1)
+            .map(|(id,_)|id).collect();
         let mut images:Vec<Vec<u8>>=channels.iter().map(|_|
             Vec::with_capacity(width as usize*height as usize*4)).collect();
-        let memo=RefCell::new(SampleMemo::default());
+        let memo=SampleMemo::new(shared);
         for y in 0..height {
             for x in 0..width {
-                memo.borrow_mut().values.clear();
+                memo.values.borrow_mut().clear();
                 let u=x as f32/width as f32;
                 let v=y as f32/height as f32;
                 for (slot,&channel) in channels.iter().enumerate() {
@@ -446,7 +498,7 @@ impl Graph {
                 }
             }
         }
-        Ok((images,memo.into_inner().stats))
+        Ok((images,memo.stats()))
     }
 
     pub fn render_normal_rgba(&self, width: u32, height: u32) -> Result<Vec<u8>, String> {
@@ -494,7 +546,7 @@ impl Graph {
     }
 
     fn sample_input_memo(&self,node:u64,input:usize,u:f32,v:f32,
-                         memo:Option<&RefCell<SampleMemo>>)->[f32;3] {
+                         memo:Option<&SampleMemo>)->[f32;3] {
         match self.links.iter().find(|l|l.to==node && l.input==input) {
             Some(link)=>self.sample_memo(link.from,u,v,memo),
             None=>[0.0;3],
@@ -506,14 +558,9 @@ impl Graph {
     }
 
     fn sample_memo(&self,id:u64,u:f32,v:f32,
-                   memo:Option<&RefCell<SampleMemo>>)->[f32;3] {
-        let key=(id,u.to_bits(),v.to_bits());
+                   memo:Option<&SampleMemo>)->[f32;3] {
         if let Some(memo)=memo {
-            let existing=memo.borrow().values.get(&key).copied();
-            if let Some(rgb)=existing {
-                memo.borrow_mut().stats.reused_samples+=1;
-                return rgb;
-            }
+            if let Some(rgb)=memo.lookup(id,u,v) {return rgb;}
         }
         let node=self.node(id).expect("validated graph");
         let rgb=match node.kind {
@@ -610,16 +657,7 @@ impl Graph {
                 |input, su, sv| self.sample_input_memo(id, input, su, sv,memo)),
             NodeKind::Output => self.sample_input_memo(id, 0, u, v,memo),
         };
-        if let Some(memo)=memo {
-            let mut memo=memo.borrow_mut();
-            memo.stats.evaluated_samples+=1;
-            if memo.values.len()<MAX_PIXEL_SAMPLE_ENTRIES {
-                memo.values.insert(key,rgb);
-                let entry_count=memo.values.len();
-                memo.stats.peak_entries_per_pixel=
-                    memo.stats.peak_entries_per_pixel.max(entry_count);
-            }
-        }
+        if let Some(memo)=memo {memo.record(id,u,v,rgb);}
         rgb
     }
 }
