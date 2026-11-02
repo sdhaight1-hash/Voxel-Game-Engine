@@ -757,6 +757,10 @@ impl FoliageProject {
                 PlantPreset::Walnut => (15.0,0.77,42,0.57,0.11,0.80,0.77,[94,76,58],[79,125,61]),
                 PlantPreset::Willow => (12.0,0.72,38,0.61,0.80,0.93,0.70,[91,86,61],[91,156,65]),
                 PlantPreset::CherryBlossom => (9.5,0.48,36,0.58,0.05,0.90,0.74,[107,73,65],[91,147,74]),
+                PlantPreset::KentuckyCoffeetree => (23.0,0.91,40,0.55,0.06,0.74,0.78,[91,84,75],[79,139,67]),
+                PlantPreset::EasternCottonwood => (26.0,1.00,54,0.49,0.04,0.84,0.78,[117,108,94],[75,150,67]),
+                PlantPreset::FremontCottonwood => (23.0,0.93,50,0.53,0.05,0.81,0.75,[132,115,96],[99,167,72]),
+                PlantPreset::BlackCottonwood => (28.0,1.08,55,0.41,0.04,0.78,0.70,[104,99,94],[72,127,79]),
                 PlantPreset::BaldCypress => (19.0,0.75,42,0.39,0.05,0.74,0.47,[119,88,64],[90,128,70]),
                 PlantPreset::MediterraneanCypress => (17.0,0.53,42,0.19,0.02,0.91,0.37,[88,71,52],[39,86,58]),
                 PlantPreset::Larch => (17.0,0.55,42,0.44,0.03,0.69,0.42,[112,90,61],[126,157,70]),
@@ -774,6 +778,11 @@ impl FoliageProject {
                 PlantPreset::Lychee => (11.0,0.62,36,0.58,0.04,0.86,0.72,[103,75,58],[65,131,65]),
                 PlantPreset::Breadfruit => (16.0,0.79,40,0.56,0.08,0.85,0.85,[113,80,59],[79,149,71]),
                 PlantPreset::Pomegranate => (6.5,0.36,30,0.62,0.11,0.78,0.57,[100,83,57],[67,139,65]),
+                PlantPreset::ArabicaCoffee => (5.8,0.27,29,0.43,0.02,0.87,0.55,[101,91,75],[42,108,60]),
+                PlantPreset::CaturraCoffee => (3.5,0.21,27,0.43,0.02,0.91,0.54,[104,93,77],[48,119,63]),
+                PlantPreset::MaragogipeCoffee => (7.5,0.35,30,0.47,0.02,0.86,0.74,[107,94,79],[46,114,65]),
+                PlantPreset::CastilloCoffee => (4.3,0.24,30,0.43,0.02,0.92,0.57,[103,91,75],[47,117,63]),
+                PlantPreset::TabiCoffee => (6.8,0.32,32,0.44,0.02,0.87,0.61,[101,89,71],[44,111,62]),
                 PlantPreset::GreenBamboo => (11.0,0.23,15,0.20,0.03,0.72,0.43,[74,151,64],[86,159,63]),
                 PlantPreset::BrownBamboo => (11.0,0.23,15,0.20,0.03,0.72,0.43,[152,121,69],[113,133,65]),
                 PlantPreset::CoconutPalm => (17.0,0.44,18,0.34,0.08,0.88,0.48,[127,107,77],[64,139,69]),
@@ -805,11 +814,19 @@ impl FoliageProject {
                 PlantPreset::Peach=>(0.19,0.08,0.18,0.13,0.27,BranchGrowth::CanopyGuided),
                 PlantPreset::Cherry=>(0.27,0.05,0.20,0.12,0.30,BranchGrowth::CanopyGuided),
                 PlantPreset::CherryBlossom=>(0.39,0.05,0.21,0.13,0.29,BranchGrowth::CanopyGuided),
+                PlantPreset::KentuckyCoffeetree=>(0.38,0.08,0.16,0.12,0.31,BranchGrowth::Classic),
+                PlantPreset::EasternCottonwood=>(0.29,0.06,0.19,0.12,0.31,BranchGrowth::CanopyGuided),
+                PlantPreset::FremontCottonwood=>(0.32,0.07,0.17,0.12,0.29,BranchGrowth::CanopyGuided),
+                PlantPreset::BlackCottonwood=>(0.42,0.06,0.23,0.11,0.29,BranchGrowth::CanopyGuided),
                 PlantPreset::Mango=>(0.32,0.04,0.15,0.12,0.23,BranchGrowth::CanopyGuided),
                 PlantPreset::Orange=>(0.21,0.06,0.12,0.11,0.27,BranchGrowth::CanopyGuided),
                 PlantPreset::Lychee=>(0.30,0.05,0.16,0.11,0.28,BranchGrowth::CanopyGuided),
                 PlantPreset::Breadfruit=>(0.42,0.06,0.21,0.12,0.28,BranchGrowth::CanopyGuided),
                 PlantPreset::Pomegranate=>(0.06,0.07,0.12,0.13,0.30,BranchGrowth::Classic),
+                PlantPreset::ArabicaCoffee|PlantPreset::CaturraCoffee|
+                PlantPreset::MaragogipeCoffee|PlantPreset::CastilloCoffee|
+                PlantPreset::TabiCoffee=>
+                    (0.12,0.08,0.14,0.10,0.22,BranchGrowth::Classic),
                 PlantPreset::GreenBamboo|PlantPreset::BrownBamboo=>
                     (0.53,0.04,0.10,0.08,0.25,BranchGrowth::Classic),
                 PlantPreset::CoconutPalm|PlantPreset::DatePalm|PlantPreset::FanPalm=>
@@ -823,7 +840,12 @@ impl FoliageProject {
             gravity, phototropism, slope: 0.0, overall_scale: 1.0, prune: 0.0,
             leaf_density: density, leaf_scale, leaf_angle, leaf_variation,
             bark_color: bark, leaf_color: leaves,
-            leaf_render: LeafRenderSettings::default(),
+            leaf_render: if preset.is_cottonwood() {
+                // Flattened Populus petioles flutter in wind; visual sway
+                // approximates this without changing the harvestable cells.
+                LeafRenderSettings{wind_strength:0.18,wind_speed:2.0,
+                    ..LeafRenderSettings::default()}
+            } else {LeafRenderSettings::default()},
             materials: FoliageMaterials::for_species(preset),
         }
     }
@@ -929,12 +951,19 @@ impl FoliageProject {
             PlantPreset::MediterraneanCypress => 0.20+0.24*(1.0-crown_t),
             PlantPreset::Birch|PlantPreset::Pear => 0.66+0.24*(1.0-crown_t),
             PlantPreset::CherryBlossom => 0.63+0.80*crown_t,
+            PlantPreset::KentuckyCoffeetree => 0.73+0.48*(1.0-center*center),
+            PlantPreset::EasternCottonwood => 0.62+0.75*(1.0-center*center),
+            PlantPreset::FremontCottonwood => 0.75+0.65*(1.0-center*center),
+            PlantPreset::BlackCottonwood => 0.44+0.69*(1.0-center*center),
             PlantPreset::Willow => 1.22-0.16*crown_t,
             PlantPreset::Purpleheart|PlantPreset::Mango|PlantPreset::Breadfruit =>
                 0.80+0.46*(1.0-center*center),
             PlantPreset::RedApple|PlantPreset::PinkApple|PlantPreset::YellowApple|
             PlantPreset::Peach|PlantPreset::Cherry|PlantPreset::Orange|
             PlantPreset::Lychee => 0.88+0.31*(1.0-center*center),
+            PlantPreset::ArabicaCoffee|PlantPreset::CaturraCoffee|
+            PlantPreset::MaragogipeCoffee|PlantPreset::CastilloCoffee|
+            PlantPreset::TabiCoffee => 0.73+0.26*(1.0-center*center),
             PlantPreset::Olive|PlantPreset::Pomegranate|PlantPreset::Shrub =>
                 1.14-0.18*crown_t,
             PlantPreset::GreenBamboo|PlantPreset::BrownBamboo =>
@@ -1288,7 +1317,9 @@ impl FoliageProject {
                 PlantPreset::Maple|PlantPreset::CrimsonKingMaple|
                 PlantPreset::Mango|PlantPreset::Lychee|
                 PlantPreset::RedApple|PlantPreset::PinkApple|PlantPreset::YellowApple|
-                PlantPreset::Cherry|PlantPreset::CherryBlossom|PlantPreset::Orange);
+                PlantPreset::Cherry|PlantPreset::CherryBlossom|PlantPreset::Orange|
+                PlantPreset::EasternCottonwood|PlantPreset::FremontCottonwood|
+                PlantPreset::BlackCottonwood);
             let mut leaf_sites=vec![(tip,major_id),(fork,fork_id)];
             if broad_crown && i%3==0 {
                 leaf_sites.push((lerp3(mid,tip,0.68),major_id));
@@ -1380,7 +1411,9 @@ impl FoliageProject {
             PlantPreset::Maple|PlantPreset::CrimsonKingMaple|
             PlantPreset::Mango|PlantPreset::Lychee|
             PlantPreset::RedApple|PlantPreset::PinkApple|PlantPreset::YellowApple|
-            PlantPreset::Cherry|PlantPreset::CherryBlossom|PlantPreset::Orange) {
+            PlantPreset::Cherry|PlantPreset::CherryBlossom|PlantPreset::Orange|
+            PlantPreset::EasternCottonwood|PlantPreset::FremontCottonwood|
+            PlantPreset::BlackCottonwood) {
             // Hide the otherwise exposed top of the full-height trunk within
             // a connected crown cap. No independent decorative leaf objects.
             let mut crown_cap=BTreeMap::new();
