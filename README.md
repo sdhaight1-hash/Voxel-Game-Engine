@@ -1,6 +1,6 @@
 # Voxel Game Engine — Procedural Voxel Asset Editor
 
-**World-generation foundation:** [InfiniteDiffusion-inspired infinite, deterministic terrain and climate architecture](docs/world-generation-foundation.md). This is a design decision; the chunked world runtime and learned terrain integration are not yet implemented.
+**World-generation foundations:** [Option 1 — InfiniteDiffusion-inspired synthetic worlds](docs/world-generation-foundation.md) and [Option 2 — Tellus-inspired real-Earth worlds](docs/real-earth-world-generation.md). Both are candidate terrain-data providers for **one** chunked Rust/wgpu engine, not two separate engines. Neither world mode is implemented yet.
 
 An offline, standalone **Rust desktop application** for voxel asset creation, procedural tree modeling, and editable PBR material maps. Material Maker inspired, but independently implemented — no Material Maker code is copied and Blender/Godot are not required.
 
