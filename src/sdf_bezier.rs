@@ -56,10 +56,16 @@ pub fn stroke(u:f32,v:f32,points:[[f32;2];4],
         let r0=start_radius+(end_radius-start_radius)*(i-1) as f32/count as f32;
         let r1=start_radius+(end_radius-start_radius)*t;
         if tiled {
+            // The unwrapped curve can travel beyond one tile even though
+            // each saved control point lies in [0,1]. Center the searched
+            // copies on this segment, not on an arbitrary origin tile.
+            let tile_x=(u-previous[0]).round();
+            let tile_y=(v-previous[1]).round();
             for y_shift in -1..=1 {
                 for x_shift in -1..=1 {
                     best=best.min(segment_distance(
-                        u-x_shift as f32,v-y_shift as f32,previous,next,r0,r1));
+                        u-tile_x-x_shift as f32,
+                        v-tile_y-y_shift as f32,previous,next,r0,r1));
                 }
             }
         } else {
@@ -102,6 +108,16 @@ mod tests {
         assert!((a-b).abs()<1e-6,"opposing texture edges must match");
         let clamped=stroke(0.0,0.5,cross,0.06,0.06,24,false);
         assert!(clamped>a,"non-tiled mode must keep authored unwrapped path");
+    }
+
+    #[test]
+    fn long_unwrapped_control_chain_still_tiles_at_seams() {
+        let control=[
+            [0.1,0.1],[0.55,0.55],[0.01,0.01],[0.46,0.46],
+        ];
+        let at_zero=stroke(0.0,0.0,control,0.05,0.05,16,true);
+        let at_one=stroke(1.0,1.0,control,0.05,0.05,16,true);
+        assert!((at_zero-at_one).abs()<1e-5);
     }
 
     #[test]
