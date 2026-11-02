@@ -2114,6 +2114,10 @@ fn emit_continuous_span_chain(
     if segments.is_empty(){return;}
     let mut positions:Vec<[f32;3]>=Vec::new();
     let mut radii:Vec<f32>=Vec::new();
+    // A restrained branch collar around the parent attachment.
+    // This is render-only, and can never extend into an unowned cell.
+    let collar=if segments[0].branch_id==0 {0.0} else {0.07};
+    let mut travelled=0.0_f32;
     for span in segments {
         let a=span.from_mm.map(|x|x as f32/1000.0);
         let b=span.to_mm.map(|x|x as f32/1000.0);
@@ -2126,9 +2130,12 @@ fn emit_continuous_span_chain(
         for i in 0..steps {
             let t=i as f32/steps as f32;
             positions.push(lerp3(a,b,t));
-            radii.push(((1.0-t)*span.start_radius_mm as f32+
-                t*span.end_radius_mm as f32)/1000.0);
+            let r=((1.0-t)*span.start_radius_mm as f32+
+                t*span.end_radius_mm as f32)/1000.0;
+            let swelling=1.0+collar*(1.0-(travelled+t*distance)/0.75).max(0.0);
+            radii.push(r*swelling);
         }
+        travelled+=distance;
     }
     let Some(last)=segments.last() else {return;};
     positions.push(last.to_mm.map(|x|x as f32/1000.0));
