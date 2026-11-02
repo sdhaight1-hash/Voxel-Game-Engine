@@ -5,7 +5,7 @@ use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, Str
 use std::{collections::HashMap, path::{Path, PathBuf}, time::Instant};
 use texture_studio::{Graph, NodeKind, LibraryNode, VoxelShape, SideMapping};
 use texture_studio::node_definitions::{SocketType, ParameterControl};
-use texture_studio::{ColorRamp,MAX_COLOR_STOPS};
+use texture_studio::{ColorRamp,MAX_COLOR_STOPS,CurveRemap,MAX_CURVE_POINTS};
 use texture_studio::render_cache::GraphRenderCache;
 use texture_studio::foliage_bake_cache::FoliageBakeCache;
 use texture_studio::presets::{builtin_presets, Preset};
@@ -1764,6 +1764,7 @@ impl Studio {
                 ("Luminance", NodeKind::Luminance),
                 ("Colorize", NodeKind::Colorize { dark: [24, 37, 54], light: [204, 175, 130] }),
                 ("Color Ramp", NodeKind::ColorRamp { ramp: ColorRamp::default() }),
+                ("Curve Remap", NodeKind::CurveRemap { curve: CurveRemap::default() }),
                 ("Levels", NodeKind::Levels { black: 0.0, white: 1.0, gamma: 1.0 }),
                 ("Threshold Mask", NodeKind::ThresholdMask {
                     threshold:0.5,softness:0.0
@@ -2033,6 +2034,59 @@ impl Studio {
                 }
                 ui.small("Up to 8 ordered stops; endpoints stay at 0% and 100%.");
                 ui.small("Static baked appearance — seasonal GPU palettes are edited separately.");
+            }
+            NodeKind::CurveRemap { curve } => {
+                ui.small("Input/Output: Scalar 0–1. Smooth cubic remap.");
+                let (preview,_) = ui.allocate_exact_size(
+                    Vec2::new(ui.available_width().min(240.0),90.0),
+                    Sense::hover());
+                ui.painter().rect_stroke(preview,0.0,
+                    Stroke::new(1.0,Color32::DARK_GRAY),StrokeKind::Inside);
+                let mut previous=None;
+                for x in 0..=64 {
+                    let t=x as f32/64.0;
+                    let sample=curve.sample(t);
+                    let point=Pos2::new(preview.left()+preview.width()*t,
+                        preview.bottom()-preview.height()*sample);
+                    if let Some(prev)=previous {
+                        ui.painter().line_segment([prev,point],
+                            Stroke::new(2.0,Color32::from_rgb(116,212,190)));
+                    }
+                    previous=Some(point);
+                }
+                let count=curve.count as usize;
+                let mut remove=None;
+                for index in 0..count {
+                    let lower=if index>0 {
+                        curve.points[index-1].position+0.001
+                    } else {0.0};
+                    let upper=if index+1<count {
+                        curve.points[index+1].position-0.001
+                    } else {1.0};
+                    ui.horizontal(|ui| {
+                        ui.label(format!("{}",index+1));
+                        if index>0 && index+1<count {
+                            changed |= ui.add(egui::Slider::new(
+                                &mut curve.points[index].position,lower..=upper)
+                                .fixed_decimals(3).text("X")).changed();
+                        } else {
+                            ui.small(format!("{:.0}%",curve.points[index].position*100.0));
+                        }
+                        changed |= ui.add(egui::Slider::new(
+                            &mut curve.points[index].value,0.0..=1.0)
+                            .fixed_decimals(3).text("Y")).changed();
+                        if index>0 && index+1<count
+                            && ui.small_button("Remove").clicked() {
+                            remove=Some(index);
+                        }
+                    });
+                }
+                if let Some(index)=remove {changed |= curve.remove_point(index);}
+                if ui.add_enabled(count<MAX_CURVE_POINTS,
+                    egui::Button::new("Add control point")).clicked() {
+                    changed |= curve.add_point();
+                }
+                ui.small("2–8 points. The 0% and 100% input positions remain fixed.");
             }
             NodeKind::Invert => { ui.label("Inverts the RGB channels of its input."); }
             NodeKind::Luminance => {
@@ -2821,6 +2875,7 @@ fn node_accent(kind: NodeKind) -> Color32 {
         NodeKind::Invert | NodeKind::Luminance | NodeKind::Blend { .. }
             | NodeKind::Colorize { .. } | NodeKind::Levels { .. }
             | NodeKind::ThresholdMask { .. } | NodeKind::ColorRamp { .. }
+            | NodeKind::CurveRemap { .. }
             => Color32::from_rgb(115, 64, 127),
         NodeKind::Output => Color32::from_rgb(43, 105, 77),
     }
