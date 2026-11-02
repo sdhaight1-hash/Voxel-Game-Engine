@@ -292,11 +292,24 @@ impl FoliageMaterials {
                         // don't create physical or harvestable fruit objects.
                         let u=(x as f32+0.5)/size as f32;
                         let v=(y as f32+0.5)/size as f32;
-                        let on_fruit=[[0.37,0.39],[0.63,0.52],[0.37,0.65],
-                            [0.63,0.78]].iter().any(|p| {
-                                (u-p[0])*(u-p[0])+(v-p[1])*(v-p[1])<0.034*0.034
-                            });
-                        if on_fruit { rgba[dst..dst+3].copy_from_slice(&fruit); }
+                        for (index,p) in [[0.37,0.39],[0.63,0.52],
+                            [0.37,0.65],[0.63,0.78]].iter().enumerate() {
+                            if (u-p[0])*(u-p[0])+(v-p[1])*(v-p[1])<0.034*0.034 {
+                                // Coffee cherries on one branch can be at
+                                // different ripeness stages. Static card art,
+                                // not simulated per-fruit growth or harvesting.
+                                let color=if self.leaf_species.is_coffee() {
+                                    match index {
+                                        0=>[85,141,66], // unripe green
+                                        1=>[205,170,45], // yellow
+                                        2=>[220,112,43], // orange
+                                        _=>fruit, // ripe red
+                                    }
+                                } else {fruit};
+                                rgba[dst..dst+3].copy_from_slice(&color);
+                                break;
+                            }
+                        }
                     }
                 }
                 rgba[dst+3]=alpha;
