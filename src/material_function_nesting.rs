@@ -34,6 +34,9 @@ fn resolve_nested(library:&MaterialFunctionLibrary,
             let child=resolve_nested(library,&call.reference,stack)?;
             splice_child_albedo(&mut graph,call.placeholder_node_id,child)?;
         }
+        if graph.nodes.len()>MAX_RESOLVED_NODES {
+            return Err("Resolved material function exceeds 2048 nodes".into());
+        }
         graph.validate()?;
         Ok(graph)
     })();
@@ -203,6 +206,36 @@ mod tests {
         broken.insert(with_placeholder("parent","child")).unwrap();
         assert!(broken.resolve(&inst("parent",1,None)).unwrap_err()
             .contains("Albedo"));
+    }
+
+    #[test]
+    fn legacy_function_json_without_calls_remains_valid() {
+        let function=MaterialFunction::from_graph(
+            "legacy".into(),1,Graph::default()).unwrap();
+        let mut json=serde_json::to_value(&function).unwrap();
+        json.as_object_mut().unwrap().remove("calls");
+        let restored:MaterialFunction=serde_json::from_value(json).unwrap();
+        assert!(restored.calls.is_empty());
+        let mut library=MaterialFunctionLibrary::default();
+        library.insert(restored).unwrap();
+        library.validate().unwrap();
+        assert_eq!(library.resolve(&inst("legacy",1,None)).unwrap()
+            .render_rgba(8,8).unwrap(),Graph::default().render_rgba(8,8).unwrap());
+    }
+
+    #[test]
+    fn bounded_recursion_depth_blocks_excessive_dependency_chains() {
+        let mut library=MaterialFunctionLibrary::default();
+        library.insert(MaterialFunction::from_graph("leaf".into(),1,
+            Graph::default()).unwrap()).unwrap();
+        let mut previous="leaf".to_string();
+        for index in 0..8 {
+            let next=format!("layer_{index}");
+            library.insert(with_placeholder(&next,&previous)).unwrap();
+            previous=next;
+        }
+        assert!(library.resolve(&inst(&previous,1,None)).unwrap_err()
+            .contains("eight levels"));
     }
 
     #[test]
