@@ -796,7 +796,7 @@ mod tests {
             assert!(model.triangles.iter().any(|t|t.wind_weight.contains(&0.0)));
             assert!(model.obj().contains("vt 0.000000"));
             assert!(model.obj().contains("f 1/1"));
-            let first=model.triangles[0];
+            let first=&model.triangles[0];
             let changed=sway_leaf_vertex(first.points[2],first.cell,
                 1.0,0.37,model.leaf_render,model.voxel_size);
             assert_ne!(changed,first.points[2]);
