@@ -545,12 +545,17 @@ impl TreeStructure {
                 return Err("Branch parent must precede its child".into());
             }
         }
+        if self.spans.len()>self.branches.len()*3 {
+            return Err("Too many branch segments for the tree".into());
+        }
         for span in &self.spans {
             if !by_id.contains_key(&span.branch_id) ||
                 span.branch_id==0 ||
                 span.start_radius_mm==0 || span.end_radius_mm==0 ||
                 span.start_radius_mm>500 || span.end_radius_mm>500 ||
-                span.from_mm==span.to_mm {
+                span.from_mm==span.to_mm ||
+                span.from_mm.iter().chain(span.to_mm.iter())
+                    .any(|&v|!(-129_000..=129_000).contains(&v)) {
                 return Err("Invalid tapered branch segment".into());
             }
         }
