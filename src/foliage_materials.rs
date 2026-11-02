@@ -140,9 +140,9 @@ impl FoliageMaterials {
         out
     }
 
-    /// Turn the original cutout silhouette into tinted, fully procedural RGBA
-    /// foliage. RGB comes from the leaf graph; an optional opacity graph can
-    /// punch extra holes but never fill transparent background.
+    /// Bake cutout foliage with the authored species tint as the base color.
+    /// Graphs contribute surface light/dark variation, not a replacement
+    /// palette that can turn green Oak foliage into brown bark.
     pub fn bake_leaf(&self, size:u32, leaf_tint:[u8;3]) -> Result<Vec<u8>,String> {
         self.validate()?;
         if size==0 || size>1024 {return Err("Foliage bake must be 1..1024 px".into());}
@@ -162,18 +162,19 @@ impl FoliageMaterials {
                     Some(mask) if mask[dst] as f32/255.0 < self.cutout_threshold => 0,
                     _=>silhouette,
                 };
-                if let Some(color)=&graph {
-                    for ch in 0..3 {
-                        // The source leaf design retains its finely varied
-                        // brightness, and the preset supplies the RGB palette.
-                        rgba[dst+ch]=((color[dst+ch] as f32)*
-                            (0.72+0.28*base[src] as f32/255.0)).round() as u8;
-                    }
-                } else {
-                    for ch in 0..3 {
-                        rgba[dst+ch]=((leaf_tint[ch] as f32)*
-                            (0.72+0.28*base[src] as f32/255.0)).round() as u8;
-                    }
+                // The species tint owns the base leaf color. The node graph
+                // controls luminance/detail while keeping seasonal/species
+                // green, red or purple foliage recognizable.
+                let graph_light=graph.as_ref().map(|color| {
+                    (0.25*color[dst] as f32 +
+                     0.60*color[dst+1] as f32 +
+                     0.15*color[dst+2] as f32)/255.0
+                }).unwrap_or(1.0);
+                let shade=(0.76+0.24*base[src] as f32/255.0)
+                    *(0.72+0.28*graph_light);
+                for ch in 0..3 {
+                    rgba[dst+ch]=((leaf_tint[ch] as f32)*shade)
+                        .round().clamp(0.0,255.0) as u8;
                 }
                 if alpha!=0 {
                     if let Some(fruit)=self.fruit_color {
@@ -249,11 +250,21 @@ mod tests {
         assert_eq!(rgba.len(),32*32*4);
         assert!(rgba.chunks_exact(4).any(|p|p[3]==0));
         assert!(rgba.chunks_exact(4).any(|p|p[3]==255));
-        assert!(rgba.chunks_exact(4).any(|p|p[3]==255 && p[0]!=0));
+        assert!(rgba.chunks_exact(4).any(|p|p[3]==255 && p[0]==0 && p[1]>0));
         let mask=mat.bake_leaf_opacity(32,[0,255,0]).unwrap();
         assert!(mask.chunks_exact(4).all(|p|p[0]==p[1]&&p[1]==p[2]&&p[3]==255));
         assert_eq!(mat.bake_bark(16,[0;3]).unwrap().len(),16*16*4);
         assert!(!mat.bake_pbr(8).unwrap().is_empty());
+    }
+
+    #[test]
+    fn leaf_material_graph_cannot_replace_oak_green_with_bark_brown() {
+        let project=crate::foliage::FoliageProject::from_preset(PlantPreset::Oak);
+        let baked=project.materials.bake_leaf(64,project.leaf_color).unwrap();
+        let samples:Vec<_>=baked.chunks_exact(4).filter(|p|p[3]==255).collect();
+        assert!(!samples.is_empty());
+        assert!(samples.iter().all(|p|p[1]>p[0] && p[1]>p[2]),
+            "Oak leaf graph overrode the green species palette");
     }
 
     #[test]
