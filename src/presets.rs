@@ -1,7 +1,7 @@
 //! Data-driven natural-material presets built from the user's descriptive catalog.
 //! These are original procedural approximations, not imported game texture assets.
 
-use crate::{Graph, Link, Node, NodeKind, VoxelSettings};
+use crate::{Graph, LibraryNode, Link, Node, NodeKind, VoxelSettings};
 use serde::Deserialize;
 use std::collections::HashSet;
 
@@ -162,29 +162,72 @@ impl Preset {
         colors
     }
 
+    /// Build a distinct, editable material network from the expanded node library.
+    /// Every preset gets its own seeded geometry-independent texture pipeline:
+    /// primary pattern -> filter -> Colorize -> detail blend -> Material Output,
+    /// plus independently adjustable roughness and metallic channels.
     pub fn build_graph(&self, voxel: VoxelSettings) -> Graph {
         let (dark, light) = self.colors();
-        let seed = self.seed;
         let variant = self.variant.to_lowercase();
-        let texture = if variant.contains("bark") || variant.contains("log")
-            || variant.contains("stem") || variant.contains("branch")
-            || matches!(self.profile.as_str(), "wood" | "shell" | "fluid" | "lava") {
-            NodeKind::Strata { bands: match self.profile.as_str() {
-                "wood" => 18, "shell" => 24, _ => 9,
-            }, warp: 0.25, seed }
-        } else if variant.contains("fragment") || variant.contains("stone")
-            || variant.contains("crystal") || matches!(self.profile.as_str(),
-                "gravel" | "fungus" | "flower" | "fruit" | "foliage") {
-            NodeKind::Voronoi { cells: match self.profile.as_str() {
-                "flower" => 8, "foliage" => 15, "gravel" => 23, _ => 12,
-            }, seed }
+        let profile = self.profile.as_str();
+        let seed = self.seed;
+
+        let primary = if variant.contains("bark") || variant.contains("log")
+            || variant.contains("branch") || variant.contains("wood")
+            || variant.contains("stem") || variant.contains("stalk")
+            || matches!(profile, "wood" | "shell") {
+            NodeKind::Strata {
+                bands: if profile == "shell" { 22 } else { 16 },
+                warp: 0.2 + (seed % 20) as f32 / 100.0,
+                seed,
+            }
         } else {
-            NodeKind::Noise { scale: match self.profile.as_str() {
-                "sand" => 26, "soil" => 14, "rock" => 9, "ice" => 5,
-                "snow" => 10, "grass" => 18, "crop" => 11, _ => 12,
-            }, octaves: if self.profile == "sand" { 2 } else { 4 }, seed }
+            let operation = if variant.contains("fragment") || variant.contains("loose")
+                || variant.contains("boulder") || variant.contains("crystal")
+                || matches!(profile, "gravel" | "crystal" | "fungus" | "flower") {
+                LibraryNode::Crystal
+            } else {
+                match profile {
+                    "ore" => LibraryNode::Crystal,
+                    "sand" | "soil" | "clay" => LibraryNode::Dirt,
+                    "foliage" | "fruit" => LibraryNode::Spots,
+                    "grass" | "crop" => LibraryNode::Fibers,
+                    "fluid" | "lava" => LibraryNode::SineWave,
+                    "ice" => LibraryNode::Crystal,
+                    "snow" => LibraryNode::Clouds,
+                    "organic" => LibraryNode::Dirt,
+                    "bone" => LibraryNode::ValueNoise,
+                    _ => LibraryNode::FractalNoise,
+                }
+            };
+            NodeKind::Library {
+                operation,
+                amount: 0.20 + (seed % 36) as f32 / 100.0,
+                seed,
+            }
         };
-        let rough = match self.profile.as_str() {
+
+        // Pick a filter that enhances each material family without introducing
+        // expensive neighborhood sampling on a graph rendered repeatedly by the UI.
+        let filter = if matches!(profile, "wood" | "shell" | "fluid" | "lava") {
+            LibraryNode::WaveDistort
+        } else if matches!(profile, "ore" | "crystal" | "gravel" | "foliage" | "flower" | "ice") {
+            LibraryNode::Smoothstep
+        } else if matches!(profile, "sand" | "soil" | "clay" | "rock" | "snow") {
+            LibraryNode::BrightnessContrast
+        } else {
+            LibraryNode::Gamma
+        };
+
+        let detail = match profile {
+            "wood" | "shell" | "grass" => LibraryNode::Fibers,
+            "ore" | "crystal" | "gravel" | "flower" | "fungus" => LibraryNode::Spots,
+            "sand" | "soil" | "clay" | "organic" => LibraryNode::Dirt,
+            "fluid" | "lava" | "snow" | "ice" => LibraryNode::Clouds,
+            _ => LibraryNode::ValueNoise,
+        };
+
+        let rough = match profile {
             "fluid" => 0.14, "lava" => 0.39, "ice" => 0.23,
             "crystal" => 0.25, "ore" => 0.52, "rock" => 0.75,
             "wood" => 0.82, "snow" => 0.84, "sand" => 0.94,
@@ -192,27 +235,59 @@ impl Preset {
             "flower" => 0.66, "fruit" => 0.58, "shell" => 0.54,
             _ => 0.79,
         };
-        let metallic = if self.profile == "ore" {
+        let metallic = if profile == "ore" {
             if variant.contains("host rock") { 0.08 } else { 0.56 }
         } else { 0.0 };
+
+        // Separate positions leave room for all inputs and make the network
+        // editable using the existing draggable-node/cable interface.
         let nodes = vec![
-            Node { id: 1, position: [45.0, 130.0], kind: texture },
-            Node { id: 2, position: [283.0, 106.0],
+            Node { id: 1, position: [35.0, 90.0], kind: primary },
+            Node { id: 2, position: [250.0, 100.0],
+                kind: NodeKind::Library {
+                    operation: filter,
+                    amount: 0.38 + (seed % 23) as f32 / 100.0,
+                    seed: seed.wrapping_add(7),
+                } },
+            Node { id: 3, position: [250.0, 400.0],
+                kind: NodeKind::Library {
+                    operation: detail,
+                    amount: 0.18 + (seed % 34) as f32 / 100.0,
+                    seed: seed.wrapping_add(83),
+                } },
+            Node { id: 4, position: [475.0, 95.0],
                 kind: NodeKind::Colorize { dark, light } },
-            Node { id: 3, position: [292.0, 360.0],
+            Node { id: 5, position: [700.0, 115.0],
+                kind: NodeKind::Library {
+                    operation: LibraryNode::Lerp,
+                    amount: if profile == "ore" || profile == "flower" { 0.22 } else { 0.11 },
+                    seed,
+                } },
+            Node { id: 6, position: [35.0, 670.0],
                 kind: NodeKind::Color { rgb: [to_byte(rough); 3] } },
-            Node { id: 4, position: [294.0, 565.0],
+            Node { id: 7, position: [470.0, 615.0],
+                kind: NodeKind::Library {
+                    operation: LibraryNode::Lerp,
+                    amount: 0.06,
+                    seed,
+                } },
+            Node { id: 8, position: [255.0, 685.0],
                 kind: NodeKind::Color { rgb: [to_byte(metallic); 3] } },
-            Node { id: 5, position: [615.0, 145.0], kind: NodeKind::Output },
+            Node { id: 9, position: [935.0, 140.0], kind: NodeKind::Output },
         ];
         Graph {
             nodes,
             links: vec![
-                Link { from: 1, to: 2, input: 0 },
-                Link { from: 2, to: 5, input: 0 }, // albedo
-                Link { from: 3, to: 5, input: 1 }, // roughness
-                Link { from: 4, to: 5, input: 2 }, // metallic
-                Link { from: 1, to: 5, input: 3 }, // height / normals
+                Link { from: 1, to: 2, input: 0 }, // primary -> filter
+                Link { from: 2, to: 4, input: 0 }, // filtered pattern -> colorize
+                Link { from: 4, to: 5, input: 0 }, // colorized base
+                Link { from: 3, to: 5, input: 1 }, // fine secondary detail
+                Link { from: 6, to: 7, input: 0 }, // roughness baseline
+                Link { from: 2, to: 7, input: 1 }, // subtle roughness variation
+                Link { from: 5, to: 9, input: 0 }, // final albedo
+                Link { from: 7, to: 9, input: 1 }, // final roughness
+                Link { from: 8, to: 9, input: 2 }, // metallic
+                Link { from: 2, to: 9, input: 3 }, // height / derived normals
             ],
             voxel,
         }
@@ -296,12 +371,51 @@ mod tests {
         let voxel = VoxelSettings {
             shape: VoxelShape::HexPrism,
             side_mapping: SideMapping::Repeat,
+            geometryless: false,
         };
         let graph = preset.build_graph(voxel);
         let saved = serde_json::to_string(&graph).unwrap();
         let restored: Graph = serde_json::from_str(&saved).unwrap();
         assert_eq!(restored.voxel, voxel);
-        assert_eq!(restored.nodes.len(), 5);
+        assert_eq!(restored.nodes.len(), 9);
+        assert_eq!(restored.links.len(), 10);
+    }
+
+    #[test]
+    fn material_presets_use_expanded_node_operations_and_have_distinct_profiles() {
+        let presets = builtin_presets().unwrap();
+        let profiles = [
+            ("Basalt", "rock", LibraryNode::FractalNoise),
+            ("Native copper", "ore", LibraryNode::Crystal),
+            ("Blue clay", "clay", LibraryNode::Dirt),
+            ("Lake ice", "ice", LibraryNode::Crystal),
+            ("Scallop", "shell", LibraryNode::Fibers),
+            ("Willow", "wood", LibraryNode::Fibers),
+        ];
+        for (name, profile, detail) in profiles {
+            let p = presets.iter().find(|p|p.material == name).unwrap();
+            assert_eq!(p.profile, profile);
+            let graph = p.build_graph(VoxelSettings::default());
+            assert!(graph.nodes.iter().any(|n|matches!(n.kind,
+                NodeKind::Library { operation, .. } if operation==detail)),
+                "No {detail:?} node for {name}");
+            graph.validate().unwrap();
+            assert_eq!(graph.render_rgba(8,8).unwrap().len(),8*8*4);
+        }
+    }
+
+    #[test]
+    fn presets_support_geometryless_and_voxel_modes() {
+        let p = builtin_presets().unwrap().into_iter()
+            .find(|p|p.material=="Willow").unwrap();
+        for geometryless in [true, false] {
+            let settings = VoxelSettings { geometryless, ..Default::default() };
+            let graph = p.build_graph(settings);
+            graph.validate().unwrap();
+            assert_eq!(graph.voxel.geometryless,geometryless);
+            let round_trip:Graph=serde_json::from_str(&serde_json::to_string(&graph).unwrap()).unwrap();
+            assert_eq!(round_trip.voxel,settings);
+        }
     }
 
     #[test]
