@@ -2067,9 +2067,8 @@ fn emit_owned_wood(
     size:f32, visualized:&mut BTreeSet<[i32;3]>,
 ) {
     use crate::hexel_clip::{Vertex, triangle_candidates, clip_to_hex_prism};
-    let source=raw.points.map(|position| Vertex{position,uv:[0.0;2]});
     let source=std::array::from_fn::<_,3,_>(|i| Vertex {
-        position:source[i].position,uv:raw.uv[i],
+        position:raw.points[i],uv:raw.uv[i],
     });
     // Convexity gives us an inexpensive exact fast path: all three corners
     // inside one hexel implies the entire triangle lies inside it.
