@@ -5,7 +5,8 @@ edition = "2021"
 description = "Voxel Game Engine: procedural voxel assets, foliage and node-based materials"
 
 [dependencies]
-eframe = "0.37"
+eframe = { version = "0.37", features = ["wgpu"] }
+bytemuck = { version = "1.25", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 png = "0.18"
