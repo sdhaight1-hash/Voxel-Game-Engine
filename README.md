@@ -12,7 +12,10 @@ An offline, standalone **Rust desktop application** for building procedural text
 - **Inspector:** edit generator, color, and filter parameters in real time.
 - **Material Output:** connect Albedo, Roughness, Metallic, and Height. An OpenGL-style tangent-space Normal map is derived from Height at export. Unconnected roughness/metallic/height use neutral defaults.
 - **Export:** single PNG or five-map PBR set (albedo, roughness, metallic, height, normal). Export sizes: 256–2048 square pixels.
-- **Projects:** save/load JSON node graphs; older projects with a single Output input remain readable.
+- **Native voxel modes:** use a true six-face cube or eight-face hexagonal prism (six walls, top and bottom), with an orbitable textured 3D preview.
+- **Voxel UV mapping:** wrap the texture continuously around side walls or repeat it per face; caps use planar UVs and hex-cap pixels outside the shape are transparent.
+- **Voxel export:** generate five per-face RGBA texture atlases, a UV-unwrapped `voxel.obj`, `voxel.mtl` and machine-readable `voxel_layout.json`. The OBJ material connects albedo; other PBR maps can be assigned in the target renderer.
+- **Projects:** save/load JSON node graphs *including voxel shape and side UV mode*; older projects without voxel settings load as cubes.
 
 ## Build and run
 
@@ -41,8 +44,10 @@ GitHub **Actions → Desktop builds → Run workflow** produces downloadable **u
 2. Select Bricks and adjust row/column counts and mortar.
 3. Select Colorize and change the two colors.
 4. Use the 3D / 2D / Node preview tabs to examine the material.
-5. From the top bar choose an export resolution and **Export PBR maps**; select a destination folder.
-6. Save your editable project with **Save**.
+5. In the **Voxel Geometry** section, select **Cube** or **Hexagonal prism**, then select either **Wrap around perimeter** or **Repeat per face**.
+6. Use **Voxel 3D** to inspect the shape, **Atlas** to inspect the face layout and **Orbit** to rotate the preview.
+7. Choose an export size and click **Export voxel OBJ + atlases**. Choose an empty destination folder.
+8. Save your editable project with **Save**.
 
 **Connecting and moving cables**
 
@@ -54,6 +59,25 @@ GitHub **Actions → Desktop builds → Run workflow** produces downloadable **u
 - **Move nodes:** drag their top title bar. Middle mouse pans; mouse wheel zooms.
 
 A destination input supports only one incoming cable. Reconnecting replaces the prior cable at that input. Cyclic connections are rejected without deleting the original link.
+
+## Native voxel atlas convention
+
+A *voxel* is a block occupying a spatial cell. Hexagonal cells are modeled as **extruded hexagonal prisms**, not flat 2D hexagons.
+
+| Geometry | Side walls | Caps | Atlas tiles | Atlas resolution |
+|---|---:|---:|---|---|
+| Cube | 4 | 2 | 3 × 2 | `3T × 2T` |
+| Hexagonal prism | 6 | 2 | 4 × 2 | `4T × 2T` |
+
+`T` is the chosen **pixels per face** (256, 512, 1024, or 2048). Face tiles are ordered in rows: `side_0...` followed by `top` and `bottom`. `voxel_layout.json` includes each face's normalized UV rectangle, row, column, shape, and repeat/wrap mode. Normals are tangent-space and based on height.
+
+The `voxel.obj` file already contains UVs corresponding to `voxel_albedo.png`. Keep the exported files together. This is an **individual voxel mesh/material**, not a voxel terrain generator, chunk mesher, or hex-grid placement system. You can instance the mesh in your target application.
+
+Side mapping affects all exported channels and the preview:
+- **Wrap:** texture coordinate U advances continuously around the full perimeter (one repeat per voxel circumference).
+- **Repeat:** the entire tile is repeated once on each face (best for repeated seamless patterns).
+
+The OBJ/MTL format directly links the albedo map. Roughness, metallic, height, and normal maps are exported as extra atlas images, but usually require manual assignment in a game engine or material renderer.
 
 ## Current limitations
 
