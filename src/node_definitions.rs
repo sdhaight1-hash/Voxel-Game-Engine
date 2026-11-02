@@ -43,6 +43,7 @@ pub enum ParameterControl {
     Color {default:[u8;3]},
     ColorStops {min:u8,max:u8,default:u8},
     CurvePoints {min:u8,max:u8,default:u8},
+    Choice {options:&'static [&'static str],default:&'static str},
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -83,6 +84,8 @@ const SDF_CAPSULE: &[ParameterDefinition]=&[
         min:0.001,max:0.5,default:0.07,unit:"tile UV"}},
 ];
 const SDF_BOOLEAN: &[ParameterDefinition]=&[
+    ParameterDefinition{id:"operation",label:"Boolean operation",control:ParameterControl::Choice{
+        options:&["Union","Intersection","Subtract"],default:"Union"}},
     ParameterDefinition{id:"smoothing",label:"Smooth width",control:ParameterControl::Float{
         min:0.0,max:0.25,default:0.0,unit:"tile UV"}},
 ];
@@ -260,6 +263,9 @@ mod tests {
                             assert_eq!((default-min)%step,0);
                         }
                         ParameterControl::Seed{..}|ParameterControl::Color{..}=>{},
+                        ParameterControl::Choice{options,default}=> {
+                            assert!(!options.is_empty()&&options.contains(&default));
+                        },
                         ParameterControl::ColorStops{min,max,default}
                         | ParameterControl::CurvePoints{min,max,default} => {
                             assert!(min>=2&&min<=default&&default<=max&&max<=8);
@@ -292,6 +298,7 @@ mod tests {
         assert_eq!(parameters(&circle).iter().map(|p|p.id).collect::<Vec<_>>(),
             vec!["center_x","center_y","radius"]);
         assert_eq!(parameters(&mask)[0].id,"edge_width");
+        assert_eq!(parameters(&boolean)[0].id,"operation");
     }
 
     #[test]
