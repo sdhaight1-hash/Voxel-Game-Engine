@@ -15,3 +15,5 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libwayland-dev pkg-config
       - name: Test engine and compile desktop UI
         run: cargo test --all-targets
+      - name: Record material graph CPU baseline (non-gating timings)
+        run: cargo test --test material_legacy_regression -- --ignored --nocapture

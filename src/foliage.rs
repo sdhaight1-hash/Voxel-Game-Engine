@@ -2514,7 +2514,7 @@ mod tests {
         use crate::asset::VoxelAsset;
         let project=FoliageProject::from_preset(PlantPreset::Oak);
         let mesh=project.generate().unwrap();
-        let mut asset=VoxelAsset::from_tree(&project,&mesh,&crate::Graph::default());
+        let mut asset=VoxelAsset::from_tree(&project,&mesh);
         let remove=mesh.triangles.iter().find(|t|
             t.material.is_wood() && mesh.structure.as_ref().unwrap().cells
             .iter().any(|c|c.cell==t.cell&&c.part==TreePart::MajorBranch))

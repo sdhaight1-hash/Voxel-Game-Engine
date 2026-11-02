@@ -52,7 +52,7 @@ impl Default for VoxelAsset {
 }
 
 impl VoxelAsset {
-    pub fn from_tree(project: &FoliageProject, mesh: &FoliageMesh, graph: &Graph) -> Self {
+    pub fn from_tree(project: &FoliageProject, mesh: &FoliageMesh) -> Self {
         Self {
             format_version: 1,
             name: format!("{} voxel tree", project.preset.name()),
@@ -63,7 +63,9 @@ impl VoxelAsset {
             leaf_color: project.leaf_color,
             leaf_render: project.leaf_render,
             materials: project.materials.clone(),
-            material_graph: Some(graph.clone()),
+            // Tree appearance belongs to the role-aware material slots.
+            // The Nodes workspace may be editing an unrelated graph.
+            material_graph: None,
             tree_structure: mesh.structure.clone(),
         }
     }
@@ -260,7 +262,7 @@ mod tests {
     fn generated_tree_is_editable_1m_hexel_asset() {
         let project = FoliageProject::from_preset(PlantPreset::Willow);
         let tree = project.generate().unwrap();
-        let mut asset = VoxelAsset::from_tree(&project, &tree, &Graph::default());
+        let mut asset = VoxelAsset::from_tree(&project, &tree);
         assert_eq!(asset.materials.leaf_species, PlantPreset::Willow);
         let willow_mask=asset.materials.bake_leaf(64,asset.leaf_color).unwrap();
         let oak_mask=FoliageMaterials::for_species(PlantPreset::Oak)
@@ -273,7 +275,7 @@ mod tests {
         assert_eq!(asset.voxel_size, 1.0);
         assert_eq!(asset.voxels.len(), tree.voxels.len());
         assert!(asset.tree_structure.is_some());
-        assert!(asset.material_graph.is_some());
+        assert!(asset.material_graph.is_none());
         let first = asset.voxels[0];
         asset.erase([first.x, first.y, first.z]);
         assert_eq!(asset.voxels.len() + 1, tree.voxels.len());
@@ -289,10 +291,25 @@ mod tests {
     }
 
     #[test]
+    fn old_asset_material_graph_still_roundtrips_after_tree_import_change() {
+        let mut asset=VoxelAsset::default();
+        let mut graph=Graph::default();
+        graph.nodes[0].kind=crate::NodeKind::Color{rgb:[30,80,120]};
+        asset.material_graph=Some(graph);
+        let json=asset.to_json().unwrap();
+        let loaded=VoxelAsset::from_json(&json).unwrap();
+        assert!(loaded.material_graph.is_some());
+        assert_eq!(
+            loaded.material_graph.unwrap().render_rgba(2,2).unwrap(),
+            asset.material_graph.unwrap().render_rgba(2,2).unwrap()
+        );
+    }
+
+    #[test]
     fn world_hexel_tree_has_removable_wood_and_foliage_cells() {
         let project = FoliageProject::from_preset(PlantPreset::Oak);
         let mesh = project.generate().unwrap();
-        let mut asset = VoxelAsset::from_tree(&project, &mesh, &Graph::default());
+        let mut asset = VoxelAsset::from_tree(&project, &mesh);
         assert_eq!(asset.shape, VoxelShape::HexPrism);
         assert_eq!(asset.voxel_size, 1.0);
         assert_eq!(asset.leaf_render.geometry, LeafRenderSettings::default().geometry);
@@ -339,7 +356,7 @@ mod tests {
     fn chopping_one_branch_hexel_removes_its_tapered_mesh_and_survives_reload() {
         let project=FoliageProject::from_preset(PlantPreset::Oak);
         let original=project.generate().unwrap();
-        let mut asset=VoxelAsset::from_tree(&project,&original,&Graph::default());
+        let mut asset=VoxelAsset::from_tree(&project,&original);
         let branch_cell=original.triangles.iter()
             .find(|face| face.material.is_wood() && original.structure.as_ref()
                 .unwrap().cells.iter().any(|part|
@@ -363,7 +380,7 @@ mod tests {
     fn manually_edited_tree_keeps_valid_structure_and_origin() {
         let project=FoliageProject::from_preset(PlantPreset::Oak);
         let mesh=project.generate().unwrap();
-        let mut asset=VoxelAsset::from_tree(&project,&mesh,&Graph::default());
+        let mut asset=VoxelAsset::from_tree(&project,&mesh);
         let original=asset.tree_structure.as_ref().unwrap().clone();
         assert!(original.fits_site(|_|true,|_|true));
         assert!(!original.root_footprint.is_empty());

@@ -1,0 +1,57 @@
+{
+  "nodes": [
+    {
+      "id": 1,
+      "position": [
+        0,
+        0
+      ],
+      "kind": {
+        "Color": {
+          "rgb": [
+            32,
+            96,
+            160
+          ]
+        }
+      }
+    },
+    {
+      "id": 2,
+      "position": [
+        0,
+        140
+      ],
+      "kind": {
+        "Checker": {
+          "tiles": 2
+        }
+      }
+    },
+    {
+      "id": 3,
+      "position": [
+        250,
+        65
+      ],
+      "kind": "Output"
+    }
+  ],
+  "links": [
+    {
+      "from": 1,
+      "to": 3,
+      "input": 0
+    },
+    {
+      "from": 2,
+      "to": 3,
+      "input": 1
+    },
+    {
+      "from": 2,
+      "to": 3,
+      "input": 3
+    }
+  ]
+}
