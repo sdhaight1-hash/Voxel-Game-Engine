@@ -22,6 +22,7 @@ pub mod render_cache;
 pub use color_ramp::{ColorRamp, ColorStop, MAX_COLOR_STOPS};
 pub mod foliage_bake_cache;
 pub mod material_functions;
+pub mod material_function_nesting;
 pub use node_library::LibraryNode;
 use node_definitions::{PortDefinition, SocketType};
 pub use voxel::{VoxelSettings, VoxelShape, SideMapping};
