@@ -3,6 +3,7 @@
 //! intersecting cutout cards. There is no dependency on imported game assets.
 
 use crate::voxel::VoxelShape;
+use crate::tree_growth_rules::{LeafPlacement, Phyllotaxy};
 use crate::foliage_materials::FoliageMaterials;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -217,32 +218,67 @@ fn leaf_pixel(species:PlantPreset,u:f32,v:f32)->(bool,bool) {
                     ||leaf_oval(u,v,0.70,y-0.043,0.020,0.026)
             })
         }
-        PlantPreset::Kapok|PlantPreset::Breadfruit => {
-            [[0.34,0.35],[0.66,0.51],[0.35,0.72]].iter().any(|p| {
-                leaf_oval(u,v,p[0],p[1],0.060,0.074)
-                    ||(0..5).any(|i|{
-                        let angle=i as f32/5.0*TAU;
-                        leaf_blade(u,v,p[0]+angle.cos()*0.056,
-                            p[1]+angle.sin()*0.056,
-                            [angle.cos(),angle.sin()],0.090,0.033,false)
+        PlantPreset::Kapok => {
+            // Palmately compound leaves: leaflets radiate from one petiole.
+            [[0.37,0.35],[0.64,0.61]].iter().any(|p| {
+                (0..7).any(|i| {
+                    let a=i as f32/7.0*TAU;
+                    leaf_blade(u,v,p[0]+a.cos()*0.062,
+                        p[1]+a.sin()*0.062,[a.cos(),a.sin()],
+                        0.120,0.031,false)
+                })
+            })
+        }
+        PlantPreset::Breadfruit => {
+            // One large, deeply lobed simple leaf, not Kapok leaflets.
+            [[0.35,0.35],[0.66,0.61]].iter().any(|p| {
+                leaf_oval(u,v,p[0],p[1],0.085,0.13)
+                    ||(0..5).any(|i| {
+                        let side=if i%2==0 {-1.0} else {1.0};
+                        let y=p[1]-0.085+i as f32*0.037;
+                        leaf_blade(u,v,p[0]+side*0.065,y,
+                            [side,0.05],0.088,0.028,false)
                     })
             })
         }
-        PlantPreset::Purpleheart|PlantPreset::Walnut|PlantPreset::Lychee => {
+        PlantPreset::Purpleheart => {
+            // Peltogyne leaves typically have one paired set of leaflets.
+            leaf_oval(u,v,0.36,0.49,0.12,0.074)
+                ||leaf_oval(u,v,0.64,0.49,0.12,0.074)
+                ||leaf_segment(u,v,[0.50,0.55],[0.35,0.49],0.010)
+                ||leaf_segment(u,v,[0.50,0.55],[0.65,0.49],0.010)
+        }
+        PlantPreset::Walnut|PlantPreset::Lychee => {
             (0..6).any(|i| {
                 let y=0.23+i as f32*0.108;
                 leaf_oval(u,v,0.39,y,0.070,0.037)
                     ||leaf_oval(u,v,0.61,y+0.025,0.070,0.037)
             })
         }
-        PlantPreset::BaldCypress|PlantPreset::Larch|
-        PlantPreset::Redwood|PlantPreset::MediterraneanCypress => {
-            let count=if species==PlantPreset::MediterraneanCypress {18} else {13};
-            (0..count).any(|i| {
+        PlantPreset::Larch => {
+            // Tufts of needles on short spur shoots, unlike flat cypress sprays.
+            (0..5).any(|i| {
+                let y=0.25+i as f32*0.13;
+                (0..9).any(|j| {
+                    let a=TAU*j as f32/9.0;
+                    leaf_segment(u,v,[0.50,y],
+                        [0.50+a.cos()*0.16,y+a.sin()*0.10],0.009)
+                })
+            })
+        }
+        PlantPreset::MediterraneanCypress => {
+            // Dense, fine scale-leaf spray: narrow, upright outer silhouette.
+            (0..21).any(|i| {
+                let y=0.16+i as f32*0.031;
+                let span=0.036+0.032*((i%4) as f32/3.0);
+                leaf_segment(u,v,[0.50,y],[0.50-span,y-0.020],0.012)
+                    ||leaf_segment(u,v,[0.50,y],[0.50+span,y-0.020],0.012)
+            })
+        }
+        PlantPreset::BaldCypress|PlantPreset::Redwood => {
+            (0..13).any(|i| {
                 let y=0.17+i as f32*0.036;
-                let span=if species==PlantPreset::MediterraneanCypress {
-                    0.085
-                } else if species==PlantPreset::Redwood {0.14} else {0.20};
+                let span=if species==PlantPreset::Redwood {0.14} else {0.20};
                 leaf_segment(u,v,[0.50,y],[0.50-span,y-0.055],0.010)
                     ||leaf_segment(u,v,[0.50,y],[0.50+span,y-0.055],0.010)
             })
@@ -643,8 +679,8 @@ impl FoliageProject {
                 PlantPreset::Pine => (18.0,0.53,48,0.46,0.06,0.78,0.44,[89,71,52],[40,94,58]),
                 PlantPreset::Redwood => (27.0,1.28,66,0.36,0.04,0.76,0.52,[121,69,54],[47,91,67]),
                 PlantPreset::RedApple => (8.0,0.40,26,0.58,0.10,0.89,0.67,[102,76,57],[78,144,63]),
-                PlantPreset::PinkApple => (8.3,0.42,27,0.57,0.10,0.88,0.66,[104,78,58],[88,150,66]),
-                PlantPreset::YellowApple => (8.1,0.41,26,0.60,0.12,0.89,0.66,[105,77,57],[107,156,68]),
+                PlantPreset::PinkApple => (8.0,0.40,26,0.58,0.10,0.89,0.67,[104,78,58],[88,150,66]),
+                PlantPreset::YellowApple => (8.0,0.40,26,0.58,0.10,0.89,0.67,[105,77,57],[107,156,68]),
                 PlantPreset::Pear => (9.5,0.44,27,0.44,0.05,0.82,0.63,[114,84,62],[95,154,65]),
                 PlantPreset::Olive => (7.5,0.51,34,0.60,0.14,0.80,0.57,[112,106,84],[106,131,104]),
                 PlantPreset::Peach => (8.0,0.37,27,0.56,0.06,0.78,0.63,[107,73,65],[91,149,77]),
@@ -655,7 +691,7 @@ impl FoliageProject {
                 PlantPreset::Breadfruit => (16.0,0.79,40,0.56,0.08,0.85,0.85,[113,80,59],[79,149,71]),
                 PlantPreset::Pomegranate => (6.5,0.36,30,0.62,0.11,0.78,0.57,[100,83,57],[67,139,65]),
                 PlantPreset::GreenBamboo => (11.0,0.23,15,0.20,0.03,0.72,0.43,[74,151,64],[86,159,63]),
-                PlantPreset::BrownBamboo => (10.0,0.26,15,0.22,0.05,0.66,0.40,[152,121,69],[113,133,65]),
+                PlantPreset::BrownBamboo => (11.0,0.23,15,0.20,0.03,0.72,0.43,[152,121,69],[113,133,65]),
                 PlantPreset::Shrub => (3.5,0.34,20,0.65,0.13,0.86,0.46,[91,70,48],[67,142,51]),
             };
         let (carve_bottom,carve_top,phototropism,leaf_angle,leaf_variation,branch_growth)=
@@ -789,18 +825,34 @@ impl FoliageProject {
         let mut spans=Vec::new();
         let s = WORLD_HEXEL_SIZE_METRES;
         let shape = VoxelShape::HexPrism;
-        let h = self.height * self.overall_scale;
+        let rules = self.preset.growth_rules();
+        let trunk_rules = self.preset.trunk_growth_rules();
+        // Per-individual dimensions vary independently of branch/leaf hashes.
+        // Constrain values to the existing author's 96-level / 8-cell limits.
+        let h=(self.height*self.overall_scale*(1.0+
+            (hash01(self.seed,0,172)*2.0-1.0)*
+            trunk_rules.height_seed_variation)).min(96.0*s);
+        let trunk_radius=(self.trunk_radius*self.overall_scale*(1.0+
+            (hash01(self.seed,0,173)*2.0-1.0)*
+            trunk_rules.radius_seed_variation)).min(8.0*s);
+        // Seed changes individual trunk habit, not its species or material.
+        // Squaring t keeps the trunk anchored at the world-space origin.
+        let seed_lean_x=(hash01(self.seed,0,170)*2.0-1.0)*rules.lean_fraction*h;
+        let seed_lean_y=(hash01(self.seed,0,171)*2.0-1.0)*rules.lean_fraction*h;
         let trunk = |t: f32| -> [f32; 3] {
-            [t * t * self.slope * h * 0.32,
-             0.015 * h * t * t * (self.gravity - self.phototropism),
+            [t * t * (self.slope * h * 0.32 + seed_lean_x),
+             t * t * (0.015*h*(self.gravity-self.phototropism) + seed_lean_y),
              t * h]
         };
         // Trunk and limbs are occupied bark voxels, not smooth cylinder geometry.
         for step in 0..=((h / (s * 0.35)).ceil() as u32) {
             let t = (step as f32 * s * 0.35 / h).min(1.0);
             let p = trunk(t);
-            let radius = (self.trunk_radius * self.overall_scale *
-                (1.0 - t * 0.80)).max(s * 0.20);
+            // Taper is species-defined; some mature trunks broaden near
+            // their base, bamboo stays close to cylindrical.
+            let flare=(1.0-t/0.18).max(0.0).powi(2);
+            let radius=(trunk_radius*(1.0-t*trunk_rules.taper)*
+                (1.0+trunk_rules.base_flare*flare)).clamp(s*0.20,8.0*s);
             paint_sphere(&mut cells, shape, s, p, radius, Material::Bark);
         }
         for cell in cells.keys() { ownership.insert(*cell,(TreePart::Trunk,Some(0))); }
@@ -822,38 +874,43 @@ impl FoliageProject {
         for i in 0..self.branch_count {
             let rand = |c| hash01(self.seed, i, c);
             if rand(0) < self.prune { continue; }
-            let (height_fraction,angle) = if self.preset.is_conifer() {
-                // Six-way whorls staggered between layers instead of a
-                // broadleaf spiral. The conifer envelope tapers upward.
-                let layer=i/6;
-                let layers=self.branch_count.div_ceil(6);
-                let fraction=(layer as f32+0.48+0.12*(rand(1)-0.5))
-                    /layers as f32;
-                let azimuth=(i%6) as f32/6.0+layer as f32*0.083
-                    +0.035*(rand(2)-0.5);
-                (fraction,TAU*azimuth)
-            } else {
-                ((i as f32+0.5+0.25*(rand(1)-0.5))
-                    /self.branch_count as f32,
-                    TAU*(i as f32*0.6180339+rand(2)*0.2))
+            let (height_fraction,angle) = match rules.phyllotaxy {
+                Phyllotaxy::Whorled | Phyllotaxy::CulmNodes => {
+                    // One node layer per tier; bamboo branches at internodes,
+                    // conifers branch in whorls around a leading trunk.
+                    let n=if rules.phyllotaxy==Phyllotaxy::CulmNodes {3} else {6};
+                    let layer=i/n;
+                    let layers=self.branch_count.div_ceil(n);
+                    let fraction=(layer as f32+0.48+0.12*(rand(1)-0.5))
+                        /layers as f32;
+                    let azimuth=(i%n) as f32/n as f32+
+                        layer as f32*0.083+0.035*(rand(2)-0.5);
+                    (fraction,TAU*azimuth)
+                }
+                Phyllotaxy::Opposite => {
+                    let pair=i/2;
+                    let pairs=self.branch_count.div_ceil(2);
+                    let fraction=(pair as f32+0.5+0.12*(rand(1)-0.5))
+                        /pairs as f32;
+                    let azimuth=pair as f32*0.25+(i%2) as f32*0.5
+                        +0.02*(rand(2)-0.5);
+                    (fraction,TAU*azimuth)
+                }
+                Phyllotaxy::Spiral => (
+                    (i as f32+0.5+0.25*(rand(1)-0.5))
+                        /self.branch_count as f32,
+                    TAU*(i as f32*0.6180339+rand(2)*0.2),
+                ),
             };
             let t=self.carve_bottom+
                 (1.0-self.carve_bottom-self.carve_top)*height_fraction;
             let base=trunk(t);
             let reach=self.branch_length*h*(0.38+0.55*rand(3))
-                *self.crown_reach(t);
-            let base_rise=match self.preset {
-                PlantPreset::Pine|PlantPreset::Larch|PlantPreset::BaldCypress|
-                PlantPreset::Redwood|PlantPreset::MediterraneanCypress=>0.12,
-                PlantPreset::Willow=>-0.12,
-                PlantPreset::Birch|PlantPreset::Pear=>0.43,
-                PlantPreset::GreenBamboo|PlantPreset::BrownBamboo=>0.44,
-                PlantPreset::Acacia=>0.08,
-                PlantPreset::Shrub|PlantPreset::Pomegranate=>0.18,
-                PlantPreset::Maple|PlantPreset::CrimsonKingMaple=>0.15,
-                _=>0.23,
-            };
-            let rise = reach * (base_rise + 0.65 * self.phototropism - 0.85 * self.gravity);
+                *self.crown_reach(t)*rules.reach_factor;
+            let preferred=(rules.primary_pitch[0]+rules.primary_pitch[1])*0.5;
+            let rise=reach*(preferred+0.38*self.phototropism-
+                0.42*self.gravity+0.15*(rand(20)-0.5))
+                .clamp(rules.primary_pitch[0],rules.primary_pitch[1]);
             let mut tip = [
                 base[0] + reach * angle.cos(),
                 base[1] + reach * angle.sin(),
@@ -872,6 +929,9 @@ impl FoliageProject {
                     }).unwrap();
                 // Don't erase the species' branch habit when guiding crowns.
                 tip = lerp3(tip, targets.swap_remove(chosen), 0.55);
+                tip[2] = (tip[2]-base[2])
+                    .clamp(reach*rules.primary_pitch[0],
+                        reach*rules.primary_pitch[1])+base[2];
                 tip[2] = tip[2].max(s * 0.5);
             }
             let mut mid=lerp3(base,tip,0.56);
@@ -879,7 +939,7 @@ impl FoliageProject {
                 // Outward-arching limb followed by hanging tips.
                 mid[2]=(mid[2]+0.24*reach).min(h);
             }
-            let thickness = (self.trunk_radius * self.overall_scale *
+            let thickness = (trunk_radius *
                 (0.28 + 0.25 * (1.0 - t))).max(s * 0.17);
             // Visible branch radii are independent of the 1m wood cell.
             // Major branches transition to thin tips, rather than building
@@ -887,7 +947,9 @@ impl FoliageProject {
             let major_radius=(thickness*0.65).clamp(0.12,0.42);
             let tip_radius=(major_radius*0.45).max(0.05);
             let fork_radius=(major_radius*0.35).clamp(0.045,0.16);
-            let major_id=2*i+1;
+            // Reserve IDs even when a twig is omitted, preserving stable
+            // parent/child identity across pruning changes.
+            let major_id=3*i+1;
             let fork_id=major_id+1;
             branches.push(TreeBranch {id:major_id,parent:Some(0),
                 root:grid_key(shape,s,base),tip:grid_key(shape,s,tip),
@@ -907,15 +969,10 @@ impl FoliageProject {
             }
             let fork_angle = angle + (rand(4) - 0.5) * 1.6;
             let fork_reach=reach*(0.28+0.2*rand(5));
-            let fork_rise=match self.preset {
-                PlantPreset::Willow=>-0.82,
-                PlantPreset::Birch|PlantPreset::Pear=>0.45,
-                PlantPreset::GreenBamboo|PlantPreset::BrownBamboo=>0.34,
-                PlantPreset::Pine|PlantPreset::Redwood|PlantPreset::Larch|
-                PlantPreset::BaldCypress|PlantPreset::MediterraneanCypress=>0.10,
-                PlantPreset::Shrub|PlantPreset::Pomegranate=>0.12,
-                _=>0.32+self.phototropism*0.26-self.gravity*0.65,
-            };
+            let fork_rise=(((rules.secondary_pitch[0]+rules.secondary_pitch[1])*0.5)
+                +0.18*(rand(21)-0.5)+0.20*self.phototropism-
+                0.24*self.gravity)
+                .clamp(rules.secondary_pitch[0],rules.secondary_pitch[1]);
             let fork=[
                 mid[0]+fork_reach*fork_angle.cos(),
                 mid[1]+fork_reach*fork_angle.sin(),
@@ -934,6 +991,33 @@ impl FoliageProject {
                     ownership.insert(cell,(TreePart::SmallBranch,Some(fork_id)));
                 }
             }
+            // An optional additional child makes twig topology vary with the
+            // seed. It remains structurally attached to its own parent limb.
+            let extra_fork=if rand(22)<rules.extra_twig_chance {
+                let root=lerp3(mid,tip,0.34+0.28*rand(23));
+                let a=angle+0.5+(rand(24)-0.5)*1.3;
+                let length=reach*(0.16+0.18*rand(25));
+                let pitch=(rules.secondary_pitch[0]+
+                    (rules.secondary_pitch[1]-rules.secondary_pitch[0])*rand(26));
+                let end=[root[0]+length*a.cos(),root[1]+length*a.sin(),
+                    (root[2]+length*pitch).max(s*0.5)];
+                let id=major_id+2;
+                let radius=(fork_radius*0.68).max(0.032);
+                branches.push(TreeBranch{id,parent:Some(major_id),
+                    root:grid_key(shape,s,root),tip:grid_key(shape,s,end),
+                    part:TreePart::SmallBranch});
+                spans.push(BranchSpan::new(id,root,end,radius,
+                    (radius*0.52).max(0.026)));
+                let mut extra_cells=BTreeMap::new();
+                paint_line(&mut extra_cells,shape,s,root,end,radius,Material::Bark);
+                for (cell,material) in extra_cells {
+                    let previous=cells.insert(cell,material);
+                    if previous.is_none() || previous.is_some_and(|m|m.is_foliage()) {
+                        ownership.insert(cell,(TreePart::SmallBranch,Some(id)));
+                    }
+                }
+                Some((end,id))
+            } else {None};
             if self.leaf_density == 0.0 { continue; }
             // Canopy occupancy is a union of overlapping lobes, not two
             // isolated balls at the branch endpoints. Every new foliage cell
@@ -946,25 +1030,50 @@ impl FoliageProject {
                 PlantPreset::Cherry|PlantPreset::Orange);
             let mut leaf_sites=vec![(tip,major_id),(fork,fork_id)];
             if broad_crown && i%3==0 {
-                // A second, staggered row of crown lobes fills the gaps
-                // between exposed scaffolding and outer branch tips.
                 leaf_sites.push((lerp3(mid,tip,0.68),major_id));
                 leaf_sites.push((lerp3(mid,fork,0.58),fork_id));
             }
-            if self.preset==PlantPreset::Willow {
-                // Continuous leaves along the descending shoot give willow
-                // hanging curtains instead of isolated droplets at its tip.
-                for t in [0.26,0.50,0.74] {
-                    leaf_sites.push((lerp3(mid,fork,t),fork_id));
+            match rules.foliage {
+                LeafPlacement::WeepingCurtain => {
+                    for t in [0.20,0.38,0.56,0.74,0.90] {
+                        leaf_sites.push((lerp3(mid,fork,t),fork_id));
+                    }
                 }
-            } else if self.preset.is_conifer() && i%2==0 {
-                // Needles also fill the middle of whorled limbs.
-                leaf_sites.push((lerp3(base,tip,0.72),major_id));
+                LeafPlacement::SpurNeedles => {
+                    for t in [0.26,0.48,0.70,0.86] {
+                        leaf_sites.push((lerp3(base,tip,t),major_id));
+                    }
+                }
+                LeafPlacement::FeatherSprays | LeafPlacement::NeedleSprays => {
+                    if i%2==0 {
+                        leaf_sites.push((lerp3(base,tip,0.50),major_id));
+                        leaf_sites.push((lerp3(base,tip,0.74),major_id));
+                    }
+                }
+                LeafPlacement::AlongTwigs => {
+                    for t in [0.32,0.63] {
+                        leaf_sites.push((lerp3(mid,fork,t),fork_id));
+                    }
+                }
+                LeafPlacement::CulmLeaves => {
+                    if height_fraction>0.38 {
+                        leaf_sites.push((lerp3(mid,fork,0.72),fork_id));
+                    }
+                }
+                LeafPlacement::OuterCrown => {}
+            }
+            if let Some((end,id))=extra_fork {
+                leaf_sites.push((end,id));
+            }
+            // Keep bamboo foliage above the lower clear-culm region.
+            if rules.foliage==LeafPlacement::CulmLeaves && height_fraction<0.38 {
+                leaf_sites.clear();
             }
             for (cluster,(location,owner)) in leaf_sites.into_iter().enumerate() {
-                let base_radius=self.leaf_scale*self.overall_scale*2.3;
+                let base_radius=self.leaf_scale*self.overall_scale*2.3*
+                    rules.foliage_factor;
                 let lobe_scale=if broad_crown && cluster>=2 {1.18}
-                    else if self.preset==PlantPreset::Willow {0.78}
+                    else if rules.foliage==LeafPlacement::WeepingCurtain {0.78}
                     else {1.0};
                 let r=(base_radius*lobe_scale*
                     (0.82+0.35*rand(6+cluster as u32))).max(s*0.82);
@@ -1145,6 +1254,13 @@ fn paint_line(cells: &mut BTreeMap<[i32; 3], Material>, shape: VoxelShape,
             previous = Some(key);
         }
         paint_sphere(cells, shape, s, point, radius, material);
+    }
+    // The endpoint of a thin twig can be farther from the center of its
+    // owning 1m cell than the visible twig radius. Make its structural
+    // anchor occupied even when the spherical brush misses that center.
+    if material.is_wood() {
+        cells.insert(grid_key(shape,s,a),material);
+        cells.insert(grid_key(shape,s,b),material);
     }
 }
 
@@ -1747,6 +1863,89 @@ mod tests {
         assert_eq!(PlantPreset::RedApple.fruit_color(),Some([193,42,38]));
         assert_eq!(PlantPreset::PinkApple.fruit_color(),Some([244,123,151]));
         assert_eq!(PlantPreset::YellowApple.fruit_color(),Some([237,198,45]));
+    }
+
+    #[test]
+    fn all_species_have_stable_seeded_branch_and_leaf_placement() {
+        for species in PlantPreset::TREE_CATALOG {
+            let original=FoliageProject::from_preset(species);
+            let a=original.generate().unwrap();
+            let b=original.generate().unwrap();
+            assert_eq!(a.structure.as_ref().unwrap().branches,
+                b.structure.as_ref().unwrap().branches, "{species:?}");
+            assert_eq!(a.structure.as_ref().unwrap().spans,
+                b.structure.as_ref().unwrap().spans, "{species:?}");
+            assert_eq!(a.voxels,b.voxels, "{species:?}");
+
+            let mut different=original.clone();
+            different.seed=different.seed.wrapping_add(1);
+            let c=different.generate().unwrap();
+            assert_ne!(a.structure.as_ref().unwrap().spans,
+                c.structure.as_ref().unwrap().spans,
+                "{species:?}: different seeds must change individual structure");
+            assert_eq!(a.shape,c.shape);
+            assert_eq!(a.voxel_size,c.voxel_size);
+        }
+    }
+
+    #[test]
+    fn apple_and_bamboo_color_variants_share_seeded_geometry() {
+        let geometry=|preset| {
+            let tree=FoliageProject::from_preset(preset);
+            let mesh=tree.generate().unwrap();
+            (mesh.structure.unwrap(),mesh.voxels)
+        };
+        assert_eq!(geometry(PlantPreset::RedApple),
+            geometry(PlantPreset::PinkApple));
+        assert_eq!(geometry(PlantPreset::PinkApple),
+            geometry(PlantPreset::YellowApple));
+        assert_eq!(geometry(PlantPreset::GreenBamboo),
+            geometry(PlantPreset::BrownBamboo));
+    }
+
+    #[test]
+    fn botanically_distinct_leaf_architectures_have_distinct_cutouts() {
+        let alpha=|species| leaf_cutout_for_species(species)
+            .chunks_exact(4).map(|pixel|pixel[3]).collect::<Vec<_>>();
+        assert_ne!(alpha(PlantPreset::Purpleheart),alpha(PlantPreset::Walnut));
+        assert_ne!(alpha(PlantPreset::Kapok),alpha(PlantPreset::Breadfruit));
+        assert_ne!(alpha(PlantPreset::Larch),alpha(PlantPreset::BaldCypress));
+        assert_ne!(alpha(PlantPreset::Larch),
+            alpha(PlantPreset::MediterraneanCypress));
+    }
+
+    #[test]
+    fn seeded_height_radius_and_base_flare_stay_bounded() {
+        for species in [PlantPreset::Kapok,PlantPreset::Redwood,
+            PlantPreset::Oak,PlantPreset::GreenBamboo] {
+            let project=FoliageProject::from_preset(species);
+            let nominal=project.height*project.overall_scale;
+            let tree=project.generate().unwrap();
+            assert!((tree.height-nominal).abs()<=nominal*0.056);
+            let next=FoliageProject {seed:99,..project.clone()}
+                .generate().unwrap();
+            assert_ne!(tree.height,next.height,"{species:?}");
+            assert_eq!(tree.structure.as_ref().unwrap().origin,[0,0,0]);
+            assert!(tree.structure.as_ref().unwrap().root_footprint.len()>0);
+        }
+    }
+
+    #[test]
+    fn secondary_twig_growth_is_seeded_and_respects_species_limits() {
+        for species in [PlantPreset::Oak,PlantPreset::Willow,PlantPreset::Pine,
+            PlantPreset::Larch,PlantPreset::RedApple,PlantPreset::GreenBamboo] {
+            let mesh=FoliageProject::from_preset(species).generate().unwrap();
+            let tree=mesh.structure.as_ref().unwrap();
+            let majors=tree.branches.iter().filter(|b|
+                b.part==TreePart::MajorBranch).count();
+            let twigs=tree.branches.iter().filter(|b|
+                b.part==TreePart::SmallBranch).count();
+            assert!(twigs>=majors && twigs<=majors*2,
+                "{species:?}: {twigs} twigs for {majors} limbs");
+            assert!(tree.spans.iter().all(|span|
+                span.start_radius_mm>span.end_radius_mm));
+            tree.validate(&mesh.voxels).unwrap();
+        }
     }
 
     #[test]

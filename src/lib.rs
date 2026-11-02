@@ -6,6 +6,7 @@ use std::collections::HashSet;
 
 pub mod voxel;
 pub mod foliage;
+pub mod tree_growth_rules;
 pub mod asset;
 pub mod foliage_materials;
 pub mod presets;
