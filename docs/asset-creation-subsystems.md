@@ -33,19 +33,20 @@ Authoring subsystems (existing)                World systems (future)
 
 **Preserve existing behaviour:** The asset editor currently supports both cube and hex-prism assets, and its existing asset/project JSON files remain valid. The **playable world** has a preferred hexagonal-prism geometry; that does not require removing cube authoring/export support.
 
-## Implemented 1 m harvestable-hexel tree authoring (2026-11-01)
+## Implemented game-specific 1 m hexel foliage authoring
 
-The Foliage subsystem now exposes a **world-ready conversion** via `FoliageProject::generate_world_hexels()` and the Foliage **Output → Create editable 1 m hexel tree** button. The resulting tree opens in **Assets** as a regular editable `VoxelAsset`. This is an **authoring and per-cell edit/harvest foundation**, **not a working game-side tree-felling system or published runtime asset library**.
+**Foliage is no longer a generic cube/hex voxel-tree generator.** All trees created by `FoliageProject::generate()` use the intended **1 m across-flats × 1 m high hexagonal-prism world cells**. The authoring UI no longer offers cube foliage, arbitrary voxel sizes, or solid-leaf tree generation. The separate **Assets** subsystem retains its broader generic modeling tools.
 
-- Wood/trunk and substantial branch geometry consist of **real occupied regular hexagonal-prism cells** on axial Q/R and integer Z. A standard cell is **1 metre across flats and 1 metre high** (approximately **0.866 m³** in volume), not a 1 m³ cube. This size is fixed for the **world-ready conversion**, while old project-specific artistic cell sizes and cube authoring remain available.
-- Leaf cells are real, individually addressable occupancy entries, but their visible geometry is **two crossed UV-textured alpha-cutout cards** with existing visual wind. No solid leaf-cube requirement is introduced; leaves can be removed as logical cells.
-- The world conversion leaves the source `FoliageProject` unchanged; generated wood and leaves are returned as ordinary material-labelled `VoxelCell` entries. `Material::is_wood()` and `Material::is_foliage()` distinguish the two broad harvest categories.
-- `VoxelAsset::harvest_cell(position)` removes exactly one cell and returns its `Material` for later game-side item/drop rules. This presently edits an **asset**, not an actual loaded world chunk; felling, tools, drop quantities, block-state replication, ecology and persistence of instances await the world runtime.
-- Hex-prism branch rasterization now inserts intermediate **face-adjacent wood cells** to bridge diagonal/vertical jumps, supporting connected harvestable branch geometry. No assumption of mesh-only wood is needed.
-- The optional `BranchGrowth::CanopyGuided` mode uses seeded canopy attraction targets to steer branch tips without changing older saved projects' default **Classic** generation. This is **not a full iterative space-colonization implementation**; deeper Shrubbery-like skeletons and growth recipes remain future work.
-- Tests cover the 1m cell scale, retained leaf cards, deterministic guided variation, connected wood, legacy project defaults and per-cell material-returning removal.
+- **Wood:** real, individually addressed and removable axial Q/R/Z hexels with solid wood geometry. Branch rasterization bridges diagonal step gaps with face-adjacent wood, making connected branch blocks suitable for future harvesting.
+- **Foliage:** real occupied leaf hexels that display UV-textured alpha-cutout crossed cards, with the existing visual wind animation. Leaf cards are a render treatment **inside** an actual removable block coordinate, not decorative floating geometry.
+- **Generation:** seeded, species-specific trunk/branch patterns; `CanopyGuided` is the default and guides branch ends toward seeded crown targets. `Classic` remains an optional artistic growth style, **not** a different cell geometry or compatibility mode. This is not yet a full recursive/iterative space-colonization skeleton.
+- **Asset handoff:** the existing **Edit Tree as Asset** command now always produces an ordinary 1 m hex-prism `VoxelAsset`, without any separate game conversion step. Existing Foliage preview and voxel export use the same hexel geometry.
+- **Per-cell authoring removal:** `VoxelAsset::harvest_cell(position)` removes one occupied cell and returns its `Material` (wood vs foliage classification). This is an **asset-editor primitive**, not a working axe/felling, item-drop, save-world or tree-instance system.
+- **Fixed dimensions:** 1 m across opposite hexagon faces × 1 m tall = approximately **0.866 m³** of occupied prism volume. A 1 m hexel does not have the physical volume of a 1 m cube.
+- **No foliage legacy formats:** earlier alternate grid/voxel-size foliage project settings and old standalone tree-JSON import conversion are no longer supported. Do not retain dual paths or hidden UI compatibility switches for foliage.
+- **Verified by intended tests:** standard geometry and export, all species with wood and foliage, card leaves, reproducible generation, face-connected wood, and editing/removing saved tree hexels. Real-world play, physics and world-block persistence are not implemented yet.
 
-**Source-of-truth separation is unchanged:** The foliage/asset editor prepares blocks and visual data; the eventual world runtime owns placements, block edits, harvesting rewards, persistence and ecology. A fabricated game harvesting feature must not be inferred from the new source APIs.
+**Ownership stays explicit:** the Foliage creator produces actual world-block blueprints; world placement, tool requirements, felling traversal, item yields, ecology, multiplayer and authoritative persistence belong to the future runtime.
 
 ## Proposed asset handoff: editable source vs game-ready content
 
@@ -79,7 +80,7 @@ The Foliage subsystem now exposes a **world-ready conversion** via `FoliageProje
 
 - The existing Foliage/Asset code describes hex occupancy using **axial Q/R plus a vertical Z** within local `[i32; 3]` arrays; the future playable world design uses **Q/R/Y**, with Y vertical. Introduce one explicit import/coordinate mapping, not ad hoc axis swapping scattered through renderers and serializers.
 - Existing `FoliageMesh::from_voxels_with_render` validates **asset-scale** coordinates and a 40,000-voxel limit. It is **not** the main renderer/mesher for an entire 1,024 km world or chunk streaming.
-- **World-ready tree hexels now use 1 metre across opposing hex flats and 1 metre vertically**; this does not finalize the geography-to-world sampling scale, asset transforms or all other world-block categories. Normal asset voxel-size values remain independently editable artistic scale parameters.
+- **All Foliage-generated trees** now use 1 metre across opposing hex flats and 1 metre vertically. This does not finalize the geographic raster resolution or physical dimensions of every other asset category; non-foliage Assets models may still have independently editable scale.
 - A finished world chunk needs neighbour-aware face culling across chunk boundaries, levels of detail and persistent sparse edits. Reuse geometry math/UV conventions where correct; make a separately optimized world mesher.
 - Preserve the current editor's cube/hex material workflows for existing projects and external use even if the game defaults to hexels.
 
