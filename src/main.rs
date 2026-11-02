@@ -1099,6 +1099,7 @@ impl Studio {
     }
 
     fn foliage_inspector(&mut self, ui: &mut egui::Ui) {
+        egui::ScrollArea::vertical().id_salt("foliage_inspector").show(ui,|ui|{
         ui.heading("TREE DESIGNER");
         ui.horizontal(|ui| {
             ui.label("Plant");
@@ -1217,6 +1218,7 @@ impl Studio {
         ui.separator();
         ui.small("Tree geometry and material graphs remain independently editable.");
         self.material_controls(ui,false);
+        });
     }
 
     fn foliage_canvas(&mut self, ui: &mut egui::Ui) {
@@ -2288,6 +2290,29 @@ mod wire_interaction_tests {
         assert_eq!(app.asset.voxels.len(),original+1);
         app.edit_asset(|asset|asset.add([0,1,0],Material::Bark));
         assert_eq!(app.asset.voxels.len(),original+1);
+    }
+
+    #[test]
+    fn foliage_material_graphs_transfer_to_asset_and_save() {
+        let mut app=Studio::default();
+        assert!(app.foliage.materials.bark.is_some());
+        assert!(app.foliage.materials.leaf.is_some());
+        app.import_tree_as_asset();
+        assert!(app.asset.materials.bark.is_some());
+        assert!(app.asset.materials.leaf.is_some());
+        let json=app.asset.to_json().unwrap();
+        let saved=VoxelAsset::from_json(&json).unwrap();
+        assert!(saved.materials.bark.is_some());
+        assert!(saved.materials.leaf.is_some());
+        assert!(saved.mtl().contains("bark-albedo.png"));
+        assert!(saved.mtl().contains("foliage-leaves-alpha.png"));
+        app.editing_material=Some((true,MaterialRole::Opacity));
+        let mut graph=Graph::default();
+        graph.nodes[0].kind=NodeKind::Color{rgb:[0,0,0]};
+        app.graph=graph;
+        app.apply_edited_material();
+        assert!(app.asset.materials.leaf_opacity.is_some());
+        assert!(app.asset_mats_dirty);
     }
 
     #[test]
