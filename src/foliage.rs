@@ -85,46 +85,139 @@ impl LeafRenderSettings {
     }
 }
 
-/// Original, self-contained 64x64 RGBA cutout texture: leafy sprigs and a
-/// thin twig in otherwise transparent space. All alpha is binary (0 or 255).
-pub fn leaf_cutout_rgba() -> Vec<u8> {
-    let mut rgba = Vec::with_capacity(LEAF_TEXTURE_SIZE*LEAF_TEXTURE_SIZE*4);
-    let leaf = |x:f32, y:f32, cx:f32, cy:f32, dir:f32| {
-        let dx=x-cx; let dy=y-cy;
-        let longitudinal=dx*dir+dy*(-0.65);
-        let transverse=dx*0.65+dy*dir;
-        let radius=(longitudinal/0.18).powi(2)+(transverse/0.065).powi(2);
-        radius < 1.0 && longitudinal > -0.17
+/// Procedural species-specific cutout art for texture-card foliage. This only
+/// changes the visible alpha mask; leaves remain editable 1m hexel cells.
+fn leaf_segment(u:f32,v:f32,a:[f32;2],b:[f32;2],thickness:f32)->bool {
+    let dx=b[0]-a[0];
+    let dy=b[1]-a[1];
+    let len=(dx*dx+dy*dy).max(1e-6);
+    let t=(((u-a[0])*dx+(v-a[1])*dy)/len).clamp(0.0,1.0);
+    (u-a[0]-t*dx).powi(2)+(v-a[1]-t*dy).powi(2) <= thickness*thickness
+}
+
+fn leaf_oval(u:f32,v:f32,cx:f32,cy:f32,rx:f32,ry:f32)->bool {
+    ((u-cx)/rx).powi(2)+((v-cy)/ry).powi(2) <= 1.0
+}
+
+/// Pointed blade along a unit direction, with optional toothed birch edges.
+fn leaf_blade(u:f32,v:f32,cx:f32,cy:f32,dir:[f32;2],
+              length:f32,width:f32,serrated:bool)->bool {
+    let x=u-cx;
+    let y=v-cy;
+    let along=x*dir[0]+y*dir[1];
+    let across=-x*dir[1]+y*dir[0];
+    if along.abs()>length {return false;}
+    let taper=(1.0-(along/length).powi(2)).max(0.0).sqrt();
+    let teeth=if serrated {1.0+0.15*(along/length*24.0).sin().abs()} else {1.0};
+    across.abs()<=width*taper*teeth
+}
+
+fn leaf_pixel(species:PlantPreset,u:f32,v:f32)->(bool,bool) {
+    // The twig is drawn darker; the second value is the leafy silhouette.
+    let twig=leaf_segment(u,v,[0.50,0.90],[0.50,0.14],0.009);
+    let leaves=match species {
+        PlantPreset::Oak => {
+            // Rounded, lobed broadleaf clusters along a vertical twig.
+            [[0.36,0.33],[0.65,0.46],[0.35,0.61],[0.64,0.76]]
+                .iter().any(|p| {
+                    leaf_oval(u,v,p[0],p[1],0.067,0.104)
+                    || leaf_oval(u,v,p[0]-0.052,p[1]-0.01,0.048,0.052)
+                    || leaf_oval(u,v,p[0]+0.052,p[1]-0.01,0.048,0.052)
+                    || leaf_oval(u,v,p[0],p[1]-0.077,0.038,0.052)
+                })
+        }
+        PlantPreset::Pine => {
+            // Fine needles in repeated diagonal sprays, not broadleaf ovals.
+            (0..14).any(|i| {
+                let y=0.23+i as f32*0.045;
+                let reach=0.15+0.05*((i*7%5) as f32/4.0);
+                leaf_segment(u,v,[0.50,y],[0.50-reach,y-0.085],0.009)
+                    || leaf_segment(u,v,[0.50,y],[0.50+reach,y-0.085],0.009)
+            })
+        }
+        PlantPreset::Birch => {
+            // Sparse pointed, lightly toothed leaves on alternate sides.
+            (0..5).any(|i| {
+                let side=if i%2==0 {-1.0} else {1.0};
+                let y=0.28+i as f32*0.125;
+                leaf_blade(u,v,0.50+side*0.135,y,[side*0.8,-0.6],
+                    0.108,0.053,true)
+            })
+        }
+        PlantPreset::Willow => {
+            // Long, narrow, down-swept blades on a hanging twig.
+            (0..5).any(|i| {
+                let y=0.22+i as f32*0.14;
+                leaf_blade(u,v,0.38,y+0.065,[-0.42,0.91],
+                    0.145,0.024,false)
+                || leaf_blade(u,v,0.62,y+0.085,[0.42,0.91],
+                    0.145,0.024,false)
+            })
+        }
+        PlantPreset::Maple => {
+            // Five pointed lobes radiating from each palmate leaf centre.
+            [[0.36,0.34],[0.65,0.56],[0.37,0.77]]
+                .iter().any(|p| {
+                    leaf_oval(u,v,p[0],p[1],0.038,0.040)
+                    || [[0.0,-1.0],[-0.75,-0.66],[0.75,-0.66],
+                        [-0.94,0.34],[0.94,0.34]].iter().any(|dir| {
+                        leaf_blade(u,v,p[0]+dir[0]*0.061,p[1]+dir[1]*0.061,
+                            *dir,0.076,0.033,false)
+                    })
+                })
+        }
+        PlantPreset::Shrub => {
+            // Clusters of small rounded leaves on short, branching twigs.
+            [[0.31,0.33],[0.42,0.28],[0.57,0.34],[0.70,0.29],
+             [0.28,0.48],[0.39,0.54],[0.62,0.49],[0.75,0.56],
+             [0.34,0.71],[0.46,0.76],[0.59,0.68],[0.70,0.77]]
+                .iter().any(|p| leaf_oval(u,v,p[0],p[1],0.051,0.044))
+        }
     };
+    let side_twigs=match species {
+        PlantPreset::Pine => false,
+        PlantPreset::Shrub => {
+            leaf_segment(u,v,[0.50,0.78],[0.29,0.45],0.008)
+                ||leaf_segment(u,v,[0.50,0.69],[0.70,0.38],0.008)
+        }
+        _ => {
+            leaf_segment(u,v,[0.50,0.40],[0.36,0.33],0.007)
+                ||leaf_segment(u,v,[0.50,0.55],[0.65,0.51],0.007)
+                ||leaf_segment(u,v,[0.50,0.72],[0.35,0.70],0.007)
+        }
+    };
+    (twig||side_twigs,leaves)
+}
+
+/// Original 64×64 RGBA texture-card artwork generated from species geometry.
+/// Binary alpha avoids changing harvestable cells when texture details change.
+pub fn leaf_cutout_for_species(species:PlantPreset)->Vec<u8> {
+    let mut rgba=Vec::with_capacity(LEAF_TEXTURE_SIZE*LEAF_TEXTURE_SIZE*4);
     for y in 0..LEAF_TEXTURE_SIZE {
         for x in 0..LEAF_TEXTURE_SIZE {
             let u=(x as f32+0.5)/LEAF_TEXTURE_SIZE as f32;
             let v=(y as f32+0.5)/LEAF_TEXTURE_SIZE as f32;
-            let twig=(u-0.50).abs()<0.011 && (0.18..=0.94).contains(&v);
-            let mut canopy=false;
-            for i in 0..4 {
-                let cy=0.24+i as f32*0.17;
-                let offset=0.12+i as f32*0.014;
-                canopy |= leaf(u,v,0.5-offset,cy,-0.86);
-                canopy |= leaf(u,v,0.5+offset,cy,0.86);
-            }
-            canopy |= ((u-0.50)/0.07).powi(2)+((v-0.14)/0.14).powi(2)<1.0;
-            let alpha=if canopy || twig {255} else {0};
-            let shade=if twig {0.58} else {
-                (0.83+0.14*((x*11+y*7)%17) as f32/16.0) as f32
-            };
-            let value=(shade*255.0_f32) as u8;
-            rgba.extend_from_slice(&[value,value,value,alpha]);
+            let (twig,leaves)=leaf_pixel(species,u,v);
+            let shade=if leaves {
+                0.83+0.14*((x*11+y*7)%17) as f32/16.0
+            } else {0.58};
+            let value=(shade*255.0) as u8;
+            rgba.extend_from_slice(&[value,value,value,
+                if leaves||twig {255} else {0}]);
         }
     }
     rgba
 }
 
-/// A separate grayscale image is used for MTL map_d because some OBJ importers
-/// ignore the alpha channel of map_Kd.
-pub fn leaf_opacity_rgba() -> Vec<u8> {
+/// Default artwork for an otherwise unspecialized material is oak broadleaf.
+pub fn leaf_cutout_rgba()->Vec<u8> {
+    leaf_cutout_for_species(PlantPreset::Oak)
+}
+
+/// Grayscale alpha export for OBJ/MTL consumers that ignore PNG alpha.
+pub fn leaf_opacity_rgba()->Vec<u8> {
     leaf_cutout_rgba().chunks_exact(4).flat_map(|px| {
-        let a=px[3]; [a,a,a,255]
+        let a=px[3];[a,a,a,255]
     }).collect()
 }
 
@@ -938,6 +1031,25 @@ mod tests {
         let mask=leaf_opacity_rgba();
         assert_eq!(mask.len(),tex.len());
         assert!(mask.chunks_exact(4).all(|p|p[3]==255));
+    }
+
+    #[test]
+    fn species_cutout_art_is_distinct_and_binary_for_all_six_presets() {
+        let masks:Vec<_>=PlantPreset::ALL.iter().map(|&species| {
+            let rgba=leaf_cutout_for_species(species);
+            assert_eq!(rgba.len(),LEAF_TEXTURE_SIZE*LEAF_TEXTURE_SIZE*4);
+            let alphas:Vec<_>=rgba.chunks_exact(4).map(|p|p[3]).collect();
+            assert!(alphas.iter().all(|&a|a==0||a==255),"{species:?}");
+            let filled=alphas.iter().filter(|&&a|a==255).count();
+            assert!(filled>80 && filled<3000,"{species:?}: {filled}");
+            alphas
+        }).collect();
+        for i in 0..masks.len() {
+            for j in 0..i {
+                assert_ne!(masks[i],masks[j],
+                    "{:?} and {:?} share leaf art",PlantPreset::ALL[i],PlantPreset::ALL[j]);
+            }
+        }
     }
 
     #[test]
