@@ -135,6 +135,8 @@ pub enum NodeKind {
     ColorRamp { ramp: ColorRamp },
     /// Editable bounded scalar transfer curve with monotone-segment cubic sampling.
     CurveRemap { curve: CurveRemap },
+    /// Typed wire organization; preserves incoming f32 samples exactly.
+    Reroute { kind: SocketType },
     Invert,
     Blend { factor: f32 },
     Bricks { columns: u32, rows: u32, mortar: f32 },
@@ -157,6 +159,7 @@ impl NodeKind {
             Self::ThresholdMask { .. } => "Threshold Mask",
             Self::ColorRamp { .. } => "Color Ramp",
             Self::CurveRemap { .. } => "Curve Remap",
+            Self::Reroute { .. } => "Reroute",
             Self::Invert => "Invert",
             Self::Blend { .. } => "Blend",
             Self::Bricks { .. } => "Bricks",
@@ -175,7 +178,8 @@ impl NodeKind {
                 | Self::Strata { .. } => 0,
             Self::Invert | Self::Colorize { .. } | Self::Luminance
                 | Self::Levels { .. } | Self::ThresholdMask { .. }
-                | Self::ColorRamp { .. } | Self::CurveRemap { .. } => 1,
+                | Self::ColorRamp { .. } | Self::CurveRemap { .. }
+                | Self::Reroute { .. } => 1,
             Self::Blend { .. } => 2,
             Self::Library { operation, .. } => operation.input_count(),
             Self::Output => 4,
@@ -193,6 +197,7 @@ impl NodeKind {
             (Self::Levels { .. } | Self::ThresholdMask { .. } | Self::ColorRamp { .. }
                 | Self::CurveRemap { .. }, 0) => "Scalar",
             (Self::Luminance,0) => "Color",
+            (Self::Reroute { .. },0) => "Input",
             (Self::Invert | Self::Colorize { .. }, 0) => "Image",
             (Self::Library { operation, .. }, i) => operation.input_name(i),
             _ => "",
@@ -212,6 +217,7 @@ impl NodeKind {
             Self::ThresholdMask{..}=>"threshold_mask".into(),
             Self::ColorRamp{..}=>"color_ramp".into(),
             Self::CurveRemap{..}=>"curve_remap".into(),
+            Self::Reroute{kind}=>format!("reroute.{kind:?}").to_lowercase(),
             Self::Invert=>"invert".into(),
             Self::Blend{..}=>"blend".into(),
             Self::Bricks{..}=>"bricks".into(),
@@ -228,13 +234,15 @@ impl NodeKind {
             Self::Scalar{..}|Self::Luminance|Self::Levels{..}
                 |Self::CurveRemap{..}=>SocketType::Scalar,
             Self::ThresholdMask{..}=>SocketType::Mask,
+            Self::Reroute{kind}=>*kind,
             _=>SocketType::Color, // Existing RGB evaluation semantics.
         }
     }
 
     pub fn input_type(&self, index:usize) -> Option<SocketType> {
         if index>=self.input_count() {return None;}
-        Some(if matches!(self,Self::Levels{..}|Self::ThresholdMask{..}
+        Some(if let Self::Reroute{kind}=self { *kind }
+            else if matches!(self,Self::Levels{..}|Self::ThresholdMask{..}
             |Self::ColorRamp{..}|Self::CurveRemap{..}) {
             SocketType::Scalar
         } else {
@@ -415,6 +423,9 @@ impl Graph {
                     => return Err("Threshold Mask requires threshold and softness in 0..1".into()),
                 NodeKind::ColorRamp { ramp } => ramp.validate()?,
                 NodeKind::CurveRemap { curve } => curve.validate()?,
+                NodeKind::Reroute{kind} if !matches!(kind,
+                    SocketType::Color|SocketType::Scalar|SocketType::Mask) =>
+                    return Err("Reroute supports Color, Scalar and Mask only".into()),
                 _ => {}
             }
         }
@@ -648,6 +659,7 @@ impl Graph {
                 let value=self.sample_input_memo(id,0,u,v,memo)[0];
                 [curve.sample(value);3]
             }
+            NodeKind::Reroute { .. } => self.sample_input_memo(id,0,u,v,memo),
             NodeKind::Invert => self.sample_input_memo(id, 0, u, v,memo).map(|c| 1.0 - c),
             NodeKind::Blend { factor } => {
                 let a = self.sample_input_memo(id, 0, u, v,memo);
@@ -1015,6 +1027,47 @@ mod tests {
             points.points[1].value=0.9;
         } else {panic!("must be Curve Remap");}
         assert_ne!(graph.render_rgba(32,32).unwrap(),original);
+    }
+
+    #[test]
+    fn reroutes_are_typed_and_preserve_float_samples_and_legacy_rgba() {
+        let mut graph=Graph::default();
+        let original=graph.render_rgba(64,64).unwrap();
+        let color=graph.add_node(NodeKind::Reroute{
+            kind:SocketType::Color,
+        },[170.0,100.0]);
+        graph.connect(1,color,0).unwrap();
+        graph.connect(color,2,0).unwrap();
+        assert_eq!(graph.render_rgba(64,64).unwrap(),original);
+        let scalar=graph.add_node(NodeKind::Scalar{value:0.37},[10.0,20.0]);
+        let scalar_route=graph.add_node(NodeKind::Reroute{
+            kind:SocketType::Scalar,
+        },[80.0,20.0]);
+        let mask=graph.add_node(NodeKind::ThresholdMask{
+            threshold:0.3,softness:0.2,
+        },[120.0,20.0]);
+        let mask_route=graph.add_node(NodeKind::Reroute{
+            kind:SocketType::Mask,
+        },[170.0,20.0]);
+        assert!(graph.connect(color,scalar_route,0).is_err());
+        graph.connect(scalar,scalar_route,0).unwrap();
+        graph.connect(scalar_route,mask,0).unwrap();
+        graph.connect(mask,mask_route,0).unwrap();
+        graph.connect(mask_route,2,1).unwrap();
+        assert_eq!(graph.node(mask_route).unwrap().kind.output_type(),SocketType::Mask);
+        assert!(graph.connect(1,mask_route,0).is_err());
+        let independent=graph.render_output_channel_rgba(1,64,64).unwrap();
+        let (multi,_)=graph.render_channels_memoized_rgba(
+            &[0,1],64,64).unwrap();
+        assert_eq!(multi[0],original);
+        assert_eq!(multi[1],independent);
+        let roundtrip:Graph=serde_json::from_str(
+            &serde_json::to_string(&graph).unwrap()).unwrap();
+        assert_eq!(roundtrip.render_output_channel_rgba(1,64,64).unwrap(),independent);
+        graph.node_mut(mask_route).unwrap().kind=NodeKind::Reroute{
+            kind:SocketType::Vector2,
+        };
+        assert!(graph.validate().is_err());
     }
 
     #[test]
