@@ -1,8 +1,12 @@
-# World-generation option 2: Tellus-inspired real-Earth reconstruction
+# Tellus / real-Earth reconstruction — archived research reference
 
-**Status:** Reference architecture and candidate world mode, **not implemented**
+**Status:** **Archived/superseded world-mode proposal**; research reference only, not implemented or on the current roadmap. See [the authoritative procedural-world decisions](procedural-world-design-decisions.md) and [current synthetic generation architecture](world-generation-foundation.md).
 **Project:** Voxel Game Engine (Rust + wgpu)
 **Reference:** [Yucareux/Tellus](https://github.com/Yucareux/Tellus), especially [src/test](https://github.com/Yucareux/Tellus/tree/main/src/test).
+
+> **Current decision (2026-11-01):** Our chosen default is **one finite 1,024 × 1,024 km toroidal synthetic world** built from **periodic tectonics + world-creation Terrain Diffusion**, with 512-block default vertical height, **hexagonal-prism playable voxels as the current preference**, persistent edits, hierarchical ecology, **globally finite/conserved water**, and a proposed reactive authoritative state system. We are **not** using Tellus as an Earth terrain foundation and have **not** selected two playable world modes. This document remains because its geodata handling, hydrology and test patterns may prove useful in the future. Do not interpret the historical mode-comparison table or work plan below as current commitments.
+
+**Repository scope:** This repository currently implements a procedural materials and voxel asset editor; the synthetic world and the Tellus integration are **not implemented**. No external repository is part of this documentation update.
 **Source license:** LGPL-3.0 ([Tellus LICENSE](https://github.com/Yucareux/Tellus/blob/main/LICENSE)); geospatial datasets and third-party assets have separate terms ([THIRD_PARTY_NOTICES.md](https://github.com/Yucareux/Tellus/blob/main/THIRD_PARTY_NOTICES.md)).
 
 ## What Tellus actually does
@@ -21,7 +25,7 @@ Key published source layers (each with distinct provenance/licensing and resolut
 
 Consult [Tellus README](https://github.com/Yucareux/Tellus/blob/main/README.md) for specific data sources, availability, cache budgets and disclaimers. Do not redistribute datasets, tiles or models without checking each source's terms.
 
-## Design decision: two selectable world *modes*, one engine
+## Historical idea (superseded): two selectable world modes
 
 | | Option 1: InfiniteDiffusion | Option 2: Tellus-inspired |
 |---|---|---|
@@ -33,9 +37,11 @@ Consult [Tellus README](https://github.com/Yucareux/Tellus/blob/main/README.md) 
 | Voxel conversion | Deterministic geological detail and biome rules | Deterministic georeferenced terrain, hydrology and settlement conversion |
 | Primary purpose | Large fictional worlds | Explorable real-Earth worlds |
 
-**Do not implement two world engines.** Implement **one** chunk format, asset system, edit persistence layer, gameplay runtime and wgpu renderer. Implement pluggable **surface-data providers**, so synthetic terrain synthesis and real-Earth raster/vector sampling feed the *same* subsequent voxel-generation pipeline. World selection is an explicit project setting (e.g., `WorldMode::Synthetic` or `WorldMode::Earth`), not a guess based on coordinates.
+**Historical proposal only:** the earlier plan was a single game engine with pluggable synthetic or Earth-derived surface-data providers, one chunk format, one renderer and one edit-persistence layer. It proposed a `WorldMode::Synthetic` / `WorldMode::Earth` setting. **Neither the dual-mode selection nor Tellus-backed Earth gameplay is an approved/current design requirement.** The current world uses synthetic periodic geography and does not require real-Earth datasets or a Tellus adapter. If Earth mode is reconsidered someday, it should be evaluated as a separate, explicit feature with its own georeferencing and licensing constraints.
 
-## Shared engine contracts
+## Historical two-provider contract (not active architecture)
+
+The diagram below preserves the older integration proposal for reference. The **current** runtime contract is instead: immutable pre-generated periodic synthetic geography → deterministic on-demand **hexel** chunks → persistent authoritative edits and finite resource state → derived render/simulation caches. Terrain Diffusion is performed at world creation, **not via gameplay tile inference**. Global climate/hydrology are generated and persisted separately; changing player-built dams or waterways changes authoritative water state and invalidates interested systems.
 
 ```text
                     WorldConfig (world mode, source revisions, scale, seed)
@@ -87,16 +93,18 @@ These are regression-test **examples for behavior**, not a library we can import
 
 The test tree also contains tests for water flow, river corridors, geology, coastal transitions, underground generation, buildings, vegetation and LOD. Selectively adapt their *invariants* into independent Rust tests; do not copy their Java implementation.
 
-## Recommended incremental implementation
+**Current-world relevance:** The toroidal world must validate two-axis seams (not merely the Earth's longitude seam), and the hexel grid needs explicit Q/R lattice-period wrapping. Water must be accounted for across oceans, lakes, rivers, aquifers, weather, ice and player storage; published Earth datasets may inform **geometry**, but must never be treated as an unlimited water source. Any future terrain conversion also needs a tested geographic-to-hexel scale and vertical height transform.
 
-1. **Shared world schema first:** signed chunk keys, `SurfaceTile`, source validity/provenance, `WorldMode`, saved generator configuration and persistent user edit deltas. Keep external providers behind a trait. No Earth datasets needed to test this.
-2. **Local fixture-based Earth mode:** implement longitude/latitude projection, elevation transforms, raster resampling and a simple cached tile loader with small **self-generated synthetic fixtures**. Test negative coordinates, antimeridian, source resolution, missing-data semantics and shared tile seams.
-3. **World-to-voxel stage:** classify rock, soil, water and surface materials from normalized terrain; place existing foliage/asset presets by vegetation/biome tags. Use the same rendering and edit path as InfiniteDiffusion mode.
-4. **Network-capable geospatial adapters:** add one data source at a time behind explicit user/network settings, provenance, cache limits, cancellation and source license documentation. Validate real-world accuracy against controlled test coordinates. Only then expand to climate, land cover, ocean depth, canopy, water vectors, roads and buildings.
-5. **Large-world performance:** maintain distinct bounded disk tile, CPU world-tile, chunk mesh and GPU caches, plus LOD terrain prefetch; test long-range teleports without sequential generation.
+## Historical Earth-mode implementation checklist (not the current roadmap)
+
+1. **Historical:** common world schema with signed chunk keys, `SurfaceTile`, provenance and potential `WorldMode`, saved config and player edits. Current implementation priority is instead a **finite periodic** synthetic schema with unique canonical hexel locations and no required Earth mode.
+2. **Future Earth-mode possibility only:** prototype WGS84 projection, elevation transforms, raster resampling and a cached tile loader with synthetic fixtures; verify antimeridian and latitude limits if ever adopted. These do not substitute for the current **two-axis torus** tests.
+3. **Reusable idea:** map normalized geography to rock, soil, water and surface materials, then place existing foliage/asset presets by biome. The chosen playable representation is **hexagonal-prism** cells (provisional), irrespective of the geography source.
+4. **Future Earth mode only:** add real-world data providers individually behind explicit network settings, source provenance, license documentation and bounded caches, after validating coverage and projection behaviour. No such adapter is scheduled by the current plan.
+5. **Still useful for our current world:** keep bounded disk-tile, CPU geographic-tile, hexel chunk, mesh and GPU caches; long-distance teleport should read canonical saved geography without sequentially generating every intervening chunk.
 
 ## Copyright and distribution boundaries
 
 Tellus **source code is LGPL-3.0**, while some constituent data and assets are CC BY, ODbL, Apache 2.0 or other licenses. **Do not copy Java code or sample assets into this repository** as a convenience. Reimplement algorithms from documented interfaces and behavioral requirements, with independent Rust tests. If we later directly reuse Tellus code, review LGPL linking/source and notice obligations first.
 
-This is an **architecture candidate recorded for future implementation**. No Tellus integration or Earth-data download is implemented by this document.
+This is an **archived research candidate, not an active implementation plan**. No Tellus integration, Earth-mode selection or Earth-data download is implemented by this document. The authoritative chosen architecture is linked at the top.
