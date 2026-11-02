@@ -9,15 +9,107 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::f32::consts::{PI, TAU};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum PlantPreset { Oak, Pine, Birch, Willow, Maple, Shrub }
+pub enum PlantPreset {
+    Acacia, Birch, Ebony, Kapok, Maple, CrimsonKingMaple, Oak,
+    Purpleheart, Walnut, Willow,
+    BaldCypress, MediterraneanCypress, Larch, Pine, Redwood,
+    RedApple, PinkApple, YellowApple, Pear, Olive, Peach, Cherry,
+    Mango, Orange, Lychee, Breadfruit, Pomegranate,
+    GreenBamboo, BrownBamboo,
+    Shrub,
+}
 
 impl PlantPreset {
-    pub const ALL: [Self; 6] = [Self::Oak, Self::Pine, Self::Birch,
-        Self::Willow, Self::Maple, Self::Shrub];
-    pub fn name(self) -> &'static str { match self {
-        Self::Oak => "Oak", Self::Pine => "Pine", Self::Birch => "Birch",
-        Self::Willow => "Willow", Self::Maple => "Maple", Self::Shrub => "Shrub",
-    }}
+    /// The user's full natural-world catalog: 27 tree/fruit varieties + 2 bamboo.
+    pub const TREE_CATALOG: [Self; 29] = [
+        Self::Acacia, Self::Birch, Self::Ebony, Self::Kapok, Self::Maple,
+        Self::CrimsonKingMaple, Self::Oak, Self::Purpleheart, Self::Walnut,
+        Self::Willow, Self::BaldCypress, Self::MediterraneanCypress,
+        Self::Larch, Self::Pine, Self::Redwood,
+        Self::RedApple, Self::PinkApple, Self::YellowApple, Self::Pear,
+        Self::Olive, Self::Peach, Self::Cherry, Self::Mango, Self::Orange,
+        Self::Lychee, Self::Breadfruit, Self::Pomegranate,
+        Self::GreenBamboo, Self::BrownBamboo,
+    ];
+    /// Shrub remains a separate non-tree authoring preset.
+    pub const ALL: [Self; 30] = [
+        Self::Acacia, Self::Birch, Self::Ebony, Self::Kapok, Self::Maple,
+        Self::CrimsonKingMaple, Self::Oak, Self::Purpleheart, Self::Walnut,
+        Self::Willow, Self::BaldCypress, Self::MediterraneanCypress,
+        Self::Larch, Self::Pine, Self::Redwood,
+        Self::RedApple, Self::PinkApple, Self::YellowApple, Self::Pear,
+        Self::Olive, Self::Peach, Self::Cherry, Self::Mango, Self::Orange,
+        Self::Lychee, Self::Breadfruit, Self::Pomegranate,
+        Self::GreenBamboo, Self::BrownBamboo, Self::Shrub,
+    ];
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Acacia=>"Acacia", Self::Birch=>"Birch", Self::Ebony=>"Ebony",
+            Self::Kapok=>"Kapok", Self::Maple=>"Maple",
+            Self::CrimsonKingMaple=>"Crimson King Maple", Self::Oak=>"Oak",
+            Self::Purpleheart=>"Purpleheart", Self::Walnut=>"Walnut",
+            Self::Willow=>"Willow", Self::BaldCypress=>"Bald Cypress",
+            Self::MediterraneanCypress=>"Mediterranean Cypress",
+            Self::Larch=>"Larch", Self::Pine=>"Pine", Self::Redwood=>"Redwood",
+            Self::RedApple=>"Red Apple", Self::PinkApple=>"Pink Apple",
+            Self::YellowApple=>"Yellow Apple", Self::Pear=>"Pear",
+            Self::Olive=>"Olive", Self::Peach=>"Peach", Self::Cherry=>"Cherry",
+            Self::Mango=>"Mango", Self::Orange=>"Orange", Self::Lychee=>"Lychee",
+            Self::Breadfruit=>"Breadfruit", Self::Pomegranate=>"Pomegranate",
+            Self::GreenBamboo=>"Green Bamboo", Self::BrownBamboo=>"Brown Bamboo",
+            Self::Shrub=>"Shrub",
+        }
+    }
+    pub fn group(self) -> &'static str {
+        match self {
+            Self::Acacia|Self::Birch|Self::Ebony|Self::Kapok|Self::Maple|
+            Self::CrimsonKingMaple|Self::Oak|Self::Purpleheart|Self::Walnut|
+            Self::Willow => "Hardwood & broadleaf",
+            Self::BaldCypress|Self::MediterraneanCypress|Self::Larch|
+            Self::Pine|Self::Redwood => "Conifer & evergreen",
+            Self::GreenBamboo|Self::BrownBamboo => "Bamboo",
+            Self::Shrub => "Other foliage",
+            _ => "Fruit trees",
+        }
+    }
+    /// Material-catalog titles use sentence-case species names.
+    pub fn material_name(self) -> &'static str {
+        match self {
+            Self::CrimsonKingMaple=>"Crimson King maple",
+            Self::BaldCypress=>"Bald cypress",
+            Self::MediterraneanCypress=>"Mediterranean cypress",
+            Self::RedApple=>"Red apple", Self::PinkApple=>"Pink apple",
+            Self::YellowApple=>"Yellow apple",
+            Self::GreenBamboo=>"Green bamboo", Self::BrownBamboo=>"Brown bamboo",
+            Self::Shrub=>"Oak",
+            _ => self.name(),
+        }
+    }
+    pub fn is_conifer(self) -> bool {
+        matches!(self,Self::BaldCypress|Self::MediterraneanCypress|
+            Self::Larch|Self::Pine|Self::Redwood)
+    }
+    pub fn is_bamboo(self) -> bool {
+        matches!(self,Self::GreenBamboo|Self::BrownBamboo)
+    }
+    /// Visual ripened-fruit color, not a spawned or harvestable fruit block.
+    pub fn fruit_color(self) -> Option<[u8;3]> {
+        match self {
+            Self::RedApple=>Some([193,42,38]),
+            Self::PinkApple=>Some([244,123,151]),
+            Self::YellowApple=>Some([237,198,45]),
+            Self::Pear=>Some([170,196,60]),
+            Self::Olive=>Some([86,99,64]),
+            Self::Peach=>Some([245,145,83]),
+            Self::Cherry=>Some([173,28,48]),
+            Self::Mango=>Some([238,177,49]),
+            Self::Orange=>Some([243,140,31]),
+            Self::Lychee=>Some([211,70,72]),
+            Self::Breadfruit=>Some([139,181,82]),
+            Self::Pomegranate=>Some([192,44,57]),
+            _=>None,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
