@@ -33,6 +33,7 @@ impl SeasonalPalettes {
     }
     pub fn for_species(species:PlantPreset,summer:[u8;3])->Self {
         let evergreen=species.is_conifer() || species.is_bamboo() || species.is_palm()
+            || species.is_coffee()
             || matches!(species,PlantPreset::Olive|PlantPreset::Orange|
                 PlantPreset::Mango|PlantPreset::Lychee|
                 PlantPreset::Breadfruit|PlantPreset::Kapok|
@@ -42,6 +43,10 @@ impl SeasonalPalettes {
             PlantPreset::CrimsonKingMaple=>[144,38,54],
             PlantPreset::Oak|PlantPreset::Walnut=>[176,104,40],
             PlantPreset::Birch=>[224,181,53],
+            PlantPreset::KentuckyCoffeetree=>[210,188,81],
+            PlantPreset::EasternCottonwood=>[216,180,53],
+            PlantPreset::FremontCottonwood=>[238,192,54],
+            PlantPreset::BlackCottonwood=>[202,173,70],
             PlantPreset::Willow=>[198,169,65],
             PlantPreset::Larch|PlantPreset::BaldCypress=>[187,128,43],
             PlantPreset::CherryBlossom=>[167,98,86],
@@ -211,7 +216,7 @@ impl FoliageMaterials {
             &["Stalk sides"]
         } else if species==PlantPreset::Willow {
             &["Willow bark","Bark / trunk sides"]
-        } else if species.group()=="Fruit trees" {
+        } else if species.group()=="Fruit trees" || species.is_coffee() {
             &["Bark"]
         } else {
             &["Bark / trunk sides","Bark"]
@@ -220,7 +225,7 @@ impl FoliageMaterials {
             &["Leaves"]
         } else if species==PlantPreset::Willow {
             &["Willow hanging leaf clusters","Willow leaves"]
-        } else if species.group()=="Fruit trees" {
+        } else if species.group()=="Fruit trees" || species.is_coffee() {
             &["Leaves"]
         } else {
             &["Leaf-only canopy","Mature foliage","Leaves"]
@@ -374,8 +379,8 @@ mod tests {
 
     #[test]
     fn all_catalog_materials_bake_and_keep_species_and_fruit_data() {
-        assert_eq!(PlantPreset::TREE_CATALOG.len(),33);
-        assert_eq!(PlantPreset::ALL.len(),34);
+        assert_eq!(PlantPreset::TREE_CATALOG.len(),42);
+        assert_eq!(PlantPreset::ALL.len(),43);
         for species in PlantPreset::ALL {
             let mats=FoliageMaterials::for_species(species);
             let baked=mats.bake_leaf(64,[120,155,90]).unwrap();
@@ -429,6 +434,32 @@ mod tests {
             assert!(pal.sample(2.0,0.5)[1]>pal.sample(2.0,0.5)[0]*0.9);
             assert!(pal.sample(3.0,0.5)[1]>pal.sample(3.0,0.5)[0]*0.9);
         }
+    }
+
+    #[test]
+    fn coffee_is_evergreen_and_cottonwoods_turn_yellow() {
+        for species in [PlantPreset::ArabicaCoffee,PlantPreset::CaturraCoffee,
+            PlantPreset::MaragogipeCoffee,PlantPreset::CastilloCoffee,
+            PlantPreset::TabiCoffee] {
+            let tree=crate::foliage::FoliageProject::from_preset(species);
+            let palette=tree.materials.effective_palettes(tree.leaf_color);
+            let autumn=palette.sample(2.0,0.5);
+            assert!(autumn[1]>autumn[0],"{species:?}");
+            assert!(tree.materials.fruit_color.is_some());
+            assert!(tree.materials.leaf.is_some() && tree.materials.bark.is_some());
+        }
+        for species in [PlantPreset::EasternCottonwood,PlantPreset::FremontCottonwood,
+            PlantPreset::BlackCottonwood] {
+            let tree=crate::foliage::FoliageProject::from_preset(species);
+            let autumn=tree.materials.effective_palettes(tree.leaf_color)
+                .sample(2.0,0.5);
+            assert!(autumn[0]>autumn[2]*1.8,"{species:?}");
+            assert!(autumn[1]>autumn[2]*1.4,"{species:?}");
+            assert_eq!(tree.materials.fruit_color,None);
+        }
+        let kentucky=crate::foliage::FoliageProject::from_preset(
+            PlantPreset::KentuckyCoffeetree);
+        assert_eq!(kentucky.materials.fruit_color,None);
     }
 
     #[test]
