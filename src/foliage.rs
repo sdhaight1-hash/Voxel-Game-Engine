@@ -13,36 +13,46 @@ use std::f32::consts::TAU;
 pub enum PlantPreset {
     Acacia, Birch, Ebony, Kapok, Maple, CrimsonKingMaple, Oak,
     Purpleheart, Walnut, Willow, CherryBlossom,
+    KentuckyCoffeetree, EasternCottonwood, FremontCottonwood, BlackCottonwood,
     BaldCypress, MediterraneanCypress, Larch, Pine, Redwood,
     RedApple, PinkApple, YellowApple, Pear, Olive, Peach, Cherry,
     Mango, Orange, Lychee, Breadfruit, Pomegranate,
+    ArabicaCoffee, CaturraCoffee, MaragogipeCoffee, CastilloCoffee, TabiCoffee,
     GreenBamboo, BrownBamboo,
     CoconutPalm, DatePalm, FanPalm,
     Shrub,
 }
 
 impl PlantPreset {
-    /// 31 tree varieties and 2 bamboo (original catalog plus Sakura and 3 palms).
-    pub const TREE_CATALOG: [Self; 33] = [
+    /// 40 tree/plant varieties and 2 bamboo, plus a separate shrub.
+    pub const TREE_CATALOG: [Self; 42] = [
         Self::Acacia, Self::Birch, Self::Ebony, Self::Kapok, Self::Maple,
         Self::CrimsonKingMaple, Self::Oak, Self::Purpleheart, Self::Walnut,
-        Self::Willow, Self::CherryBlossom, Self::BaldCypress, Self::MediterraneanCypress,
+        Self::Willow, Self::CherryBlossom, Self::KentuckyCoffeetree,
+        Self::EasternCottonwood, Self::FremontCottonwood, Self::BlackCottonwood,
+        Self::BaldCypress, Self::MediterraneanCypress,
         Self::Larch, Self::Pine, Self::Redwood,
         Self::RedApple, Self::PinkApple, Self::YellowApple, Self::Pear,
         Self::Olive, Self::Peach, Self::Cherry, Self::Mango, Self::Orange,
         Self::Lychee, Self::Breadfruit, Self::Pomegranate,
+        Self::ArabicaCoffee, Self::CaturraCoffee, Self::MaragogipeCoffee,
+        Self::CastilloCoffee, Self::TabiCoffee,
         Self::GreenBamboo, Self::BrownBamboo,
         Self::CoconutPalm, Self::DatePalm, Self::FanPalm,
     ];
     /// Shrub remains a separate non-tree authoring preset.
-    pub const ALL: [Self; 34] = [
+    pub const ALL: [Self; 43] = [
         Self::Acacia, Self::Birch, Self::Ebony, Self::Kapok, Self::Maple,
         Self::CrimsonKingMaple, Self::Oak, Self::Purpleheart, Self::Walnut,
-        Self::Willow, Self::CherryBlossom, Self::BaldCypress, Self::MediterraneanCypress,
+        Self::Willow, Self::CherryBlossom, Self::KentuckyCoffeetree,
+        Self::EasternCottonwood, Self::FremontCottonwood, Self::BlackCottonwood,
+        Self::BaldCypress, Self::MediterraneanCypress,
         Self::Larch, Self::Pine, Self::Redwood,
         Self::RedApple, Self::PinkApple, Self::YellowApple, Self::Pear,
         Self::Olive, Self::Peach, Self::Cherry, Self::Mango, Self::Orange,
         Self::Lychee, Self::Breadfruit, Self::Pomegranate,
+        Self::ArabicaCoffee, Self::CaturraCoffee, Self::MaragogipeCoffee,
+        Self::CastilloCoffee, Self::TabiCoffee,
         Self::GreenBamboo, Self::BrownBamboo,
         Self::CoconutPalm, Self::DatePalm, Self::FanPalm, Self::Shrub,
     ];
@@ -53,6 +63,10 @@ impl PlantPreset {
             Self::CrimsonKingMaple=>"Crimson King Maple", Self::Oak=>"Oak",
             Self::Purpleheart=>"Purpleheart", Self::Walnut=>"Walnut",
             Self::Willow=>"Willow", Self::CherryBlossom=>"Cherry Blossom",
+            Self::KentuckyCoffeetree=>"Kentucky Coffeetree",
+            Self::EasternCottonwood=>"Eastern Cottonwood",
+            Self::FremontCottonwood=>"Fremont Cottonwood",
+            Self::BlackCottonwood=>"Black Cottonwood",
             Self::BaldCypress=>"Bald Cypress",
             Self::MediterraneanCypress=>"Mediterranean Cypress",
             Self::Larch=>"Larch", Self::Pine=>"Pine", Self::Redwood=>"Redwood",
@@ -61,6 +75,9 @@ impl PlantPreset {
             Self::Olive=>"Olive", Self::Peach=>"Peach", Self::Cherry=>"Cherry",
             Self::Mango=>"Mango", Self::Orange=>"Orange", Self::Lychee=>"Lychee",
             Self::Breadfruit=>"Breadfruit", Self::Pomegranate=>"Pomegranate",
+            Self::ArabicaCoffee=>"Arabica Coffee", Self::CaturraCoffee=>"Caturra Coffee",
+            Self::MaragogipeCoffee=>"Maragogipe Coffee",
+            Self::CastilloCoffee=>"Castillo Coffee", Self::TabiCoffee=>"Tabi Coffee",
             Self::GreenBamboo=>"Green Bamboo", Self::BrownBamboo=>"Brown Bamboo",
             Self::CoconutPalm=>"Coconut Palm", Self::DatePalm=>"Date Palm",
             Self::FanPalm=>"Fan Palm",
@@ -71,11 +88,15 @@ impl PlantPreset {
         match self {
             Self::Acacia|Self::Birch|Self::Ebony|Self::Kapok|Self::Maple|
             Self::CrimsonKingMaple|Self::Oak|Self::Purpleheart|Self::Walnut|
-            Self::Willow|Self::CherryBlossom => "Hardwood & broadleaf",
+            Self::Willow|Self::CherryBlossom|Self::KentuckyCoffeetree|
+            Self::EasternCottonwood|Self::FremontCottonwood|
+            Self::BlackCottonwood => "Hardwood & broadleaf",
             Self::BaldCypress|Self::MediterraneanCypress|Self::Larch|
             Self::Pine|Self::Redwood => "Conifer & evergreen",
             Self::GreenBamboo|Self::BrownBamboo => "Bamboo",
             Self::CoconutPalm|Self::DatePalm|Self::FanPalm => "Palms",
+            Self::ArabicaCoffee|Self::CaturraCoffee|Self::MaragogipeCoffee|
+            Self::CastilloCoffee|Self::TabiCoffee => "Coffee plants",
             Self::Shrub => "Other foliage",
             _ => "Fruit trees",
         }
@@ -90,6 +111,11 @@ impl PlantPreset {
             Self::YellowApple=>"Yellow apple",
             Self::GreenBamboo=>"Green bamboo", Self::BrownBamboo=>"Brown bamboo",
             Self::CherryBlossom=>"Cherry", // Reuse the Cherry material recipes.
+            Self::KentuckyCoffeetree=>"Walnut",
+            Self::EasternCottonwood|Self::FremontCottonwood|
+            Self::BlackCottonwood=>"Birch",
+            Self::ArabicaCoffee|Self::CaturraCoffee|Self::MaragogipeCoffee|
+            Self::CastilloCoffee|Self::TabiCoffee=>"Orange",
             Self::CoconutPalm|Self::DatePalm|Self::FanPalm=>"Mango",
             // Reuse available tropical bark/leaf graphs; silhouettes are unique.
             Self::Shrub=>"Oak",
@@ -106,6 +132,14 @@ impl PlantPreset {
     pub fn is_palm(self) -> bool {
         matches!(self,Self::CoconutPalm|Self::DatePalm|Self::FanPalm)
     }
+    pub fn is_coffee(self) -> bool {
+        matches!(self,Self::ArabicaCoffee|Self::CaturraCoffee|
+            Self::MaragogipeCoffee|Self::CastilloCoffee|Self::TabiCoffee)
+    }
+    pub fn is_cottonwood(self) -> bool {
+        matches!(self,Self::EasternCottonwood|Self::FremontCottonwood|
+            Self::BlackCottonwood)
+    }
     /// Visual ripened-fruit color, not a spawned or harvestable fruit block.
     pub fn fruit_color(self) -> Option<[u8;3]> {
         match self {
@@ -116,6 +150,8 @@ impl PlantPreset {
             Self::Olive=>Some([86,99,64]),
             Self::Peach=>Some([245,145,83]),
             Self::Cherry=>Some([173,28,48]),
+            Self::ArabicaCoffee|Self::CaturraCoffee|Self::MaragogipeCoffee|
+            Self::CastilloCoffee|Self::TabiCoffee=>Some([173,35,42]),
             Self::Mango=>Some([238,177,49]),
             Self::Orange=>Some([243,140,31]),
             Self::Lychee=>Some([211,70,72]),
