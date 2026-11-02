@@ -5,7 +5,7 @@
 use crate::voxel::VoxelShape;
 use crate::foliage_materials::FoliageMaterials;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::f32::consts::{PI, TAU};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -298,6 +298,100 @@ pub struct VoxelCell {
     pub material: Material,
 }
 
+/// Role of a harvestable hexel in its authored tree structure.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TreePart {
+    Trunk,
+    MajorBranch,
+    SmallBranch,
+    Foliage,
+    AuthoredWood,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TreeCell {
+    pub cell: [i32; 3],
+    pub part: TreePart,
+    pub branch_id: Option<u32>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TreeBranch {
+    pub id: u32,
+    /// Branch 0 is the trunk; each other branch attaches to a parent.
+    pub parent: Option<u32>,
+    pub root: [i32; 3],
+    pub tip: [i32; 3],
+    pub part: TreePart,
+}
+
+/// Describes the original growth structure; gameplay occupancy is still
+/// represented by actual world hexels, not separate branch entities.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TreeStructure {
+    pub origin: [i32; 3],
+    /// Bottom-layer wood hexes that require supporting terrain.
+    pub root_footprint: Vec<[i32; 2]>,
+    pub branches: Vec<TreeBranch>,
+    pub cells: Vec<TreeCell>,
+}
+
+impl TreeStructure {
+    pub fn validate(&self, voxels: &[VoxelCell]) -> Result<(), String> {
+        if self.origin != [0, 0, 0] {
+            return Err("Tree origin must be the base hexel [0, 0, 0]".into());
+        }
+        let occupied: BTreeMap<_,_> = voxels.iter().map(|v|
+            ([v.x,v.y,v.z],v.material)).collect();
+        if occupied.len() != voxels.len() || occupied.len() != self.cells.len() {
+            return Err("Tree metadata must match occupied hexels".into());
+        }
+        let by_id:BTreeMap<_,_> = self.branches.iter().map(|b|(b.id,b)).collect();
+        if by_id.len() != self.branches.len() || by_id.get(&0)
+            .is_none_or(|b|b.parent.is_some()||b.part!=TreePart::Trunk) {
+            return Err("Tree must contain one rooted trunk".into());
+        }
+        for branch in &self.branches {
+            if branch.id!=0 && branch.parent
+                .is_none_or(|p|p>=branch.id||!by_id.contains_key(&p)) {
+                return Err("Branch parent must precede its child".into());
+            }
+        }
+        let mut seen=BTreeSet::new();
+        for part in &self.cells {
+            let Some(material)=occupied.get(&part.cell) else {
+                return Err("Tree role refers to an empty hexel".into());
+            };
+            if !seen.insert(part.cell) {return Err("Duplicate tree cell role".into());}
+            if material.is_wood() == (part.part==TreePart::Foliage) {
+                return Err("Tree role disagrees with wood/leaf material".into());
+            }
+            if let Some(id)=part.branch_id {
+                let branch=by_id.get(&id).ok_or("Missing owner branch")?;
+                if part.part!=TreePart::Foliage && part.part!=branch.part {
+                    return Err("Wood role disagrees with its branch".into());
+                }
+            }
+        }
+        let base:BTreeSet<_>=voxels.iter().filter(|v|v.material.is_wood()&&v.z==0)
+            .map(|v|[v.x,v.y]).collect();
+        let footprint:BTreeSet<_>=self.root_footprint.iter().copied().collect();
+        if base.is_empty() || base!=footprint || footprint.len()!=self.root_footprint.len() {
+            return Err("Root footprint must match bottom-layer wood".into());
+        }
+        Ok(())
+    }
+
+    /// Pure placement eligibility hook; world generation must supply support
+    /// and clearance lookups and handle actual stamping across chunks.
+    pub fn fits_site(&self, mut supported:impl FnMut([i32;2])->bool,
+                     mut clear:impl FnMut([i32;3])->bool)->bool {
+        self.root_footprint.iter().copied().all(&mut supported)
+            && self.cells.iter().all(|part|clear(part.cell))
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Triangle {
     pub points: [[f32; 3]; 3],
@@ -319,6 +413,8 @@ pub struct FoliageMesh {
     pub voxel_size: f32,
     pub height: f32,
     pub leaf_render: LeafRenderSettings,
+    /// None for non-tree assets assembled in the general-purpose editor.
+    pub structure: Option<TreeStructure>,
 }
 
 impl FoliageProject {
@@ -421,6 +517,8 @@ impl FoliageProject {
     pub fn generate(&self) -> Result<FoliageMesh, String> {
         self.validate()?;
         let mut cells: BTreeMap<[i32; 3], Material> = BTreeMap::new();
+        let mut ownership:BTreeMap<[i32;3],(TreePart,Option<u32>)>=BTreeMap::new();
+        let mut branches=Vec::new();
         let s = WORLD_HEXEL_SIZE_METRES;
         let shape = VoxelShape::HexPrism;
         let h = self.height * self.overall_scale;
@@ -437,6 +535,9 @@ impl FoliageProject {
                 (1.0 - t * 0.80)).max(s * 0.20);
             paint_sphere(&mut cells, shape, s, p, radius, Material::Bark);
         }
+        for cell in cells.keys() { ownership.insert(*cell,(TreePart::Trunk,Some(0))); }
+        branches.push(TreeBranch {id:0,parent:None,root:[0,0,0],
+            tip:grid_key(shape,s,trunk(1.0)),part:TreePart::Trunk});
         let mut targets = Vec::new();
         if self.branch_growth == BranchGrowth::CanopyGuided {
             let crown_radius = self.branch_length * h * 0.75;
@@ -489,8 +590,18 @@ impl FoliageProject {
             let mid = lerp3(base, tip, 0.56);
             let thickness = (self.trunk_radius * self.overall_scale *
                 (0.28 + 0.25 * (1.0 - t))).max(s * 0.17);
-            paint_line(&mut cells, shape, s, base, mid, thickness, Material::Bark);
-            paint_line(&mut cells, shape, s, mid, tip, s * 0.18, Material::Bark);
+            let major_id=2*i+1;
+            let fork_id=major_id+1;
+            branches.push(TreeBranch {id:major_id,parent:Some(0),
+                root:grid_key(shape,s,base),tip:grid_key(shape,s,tip),
+                part:TreePart::MajorBranch});
+            let mut main_cells=BTreeMap::new();
+            paint_line(&mut main_cells,shape,s,base,mid,thickness,Material::Bark);
+            paint_line(&mut main_cells,shape,s,mid,tip,s*0.18,Material::Bark);
+            for (cell,material) in main_cells {
+                cells.insert(cell,material);
+                ownership.entry(cell).or_insert((TreePart::MajorBranch,Some(major_id)));
+            }
             let fork_angle = angle + (rand(4) - 0.5) * 1.6;
             let fork_reach = reach * (0.28 + 0.2 * rand(5));
             let fork = [
@@ -499,10 +610,18 @@ impl FoliageProject {
                 (mid[2] + fork_reach *
                     (0.32 + self.phototropism * 0.26 - self.gravity * 0.65)).max(s * 0.5),
             ];
-            paint_line(&mut cells, shape, s, mid, fork, s * 0.17, Material::Bark);
+            branches.push(TreeBranch {id:fork_id,parent:Some(major_id),
+                root:grid_key(shape,s,mid),tip:grid_key(shape,s,fork),
+                part:TreePart::SmallBranch});
+            let mut fork_cells=BTreeMap::new();
+            paint_line(&mut fork_cells,shape,s,mid,fork,s*0.17,Material::Bark);
+            for (cell,material) in fork_cells {
+                cells.insert(cell,material);
+                ownership.entry(cell).or_insert((TreePart::SmallBranch,Some(fork_id)));
+            }
             if self.leaf_density == 0.0 { continue; }
-            // Clusters are solid, jittered voxel ellipsoids. Pine uses narrower
-            // growth, willow hangs down; each voxel stores its leaf variation.
+            // Foliage clusters are attached to their owning branch tips.
+            // Only card visibility changes; cells stay harvestable.
             let leaf_tips = [tip, fork];
             for (cluster, location) in leaf_tips.into_iter().enumerate() {
                 let r = ((self.leaf_scale * self.overall_scale * 2.3)
@@ -520,9 +639,17 @@ impl FoliageProject {
                 };
                 let center = [location[0], location[1],
                     (location[2] + offset_z).max(s * 0.5)];
-                paint_leaf_cluster(&mut cells, shape, s, center, r, rz,
-                    self.leaf_density, self.leaf_variation, self.leaf_angle,
-                    self.seed, i * 2 + cluster as u32);
+                let mut cluster_cells=BTreeMap::new();
+                paint_leaf_cluster(&mut cluster_cells,shape,s,center,r,rz,
+                    self.leaf_density,self.leaf_variation,self.leaf_angle,
+                    self.seed,i*2+cluster as u32);
+                let owner=if cluster==0 {major_id} else {fork_id};
+                for (cell,material) in cluster_cells {
+                    if let std::collections::btree_map::Entry::Vacant(entry)=cells.entry(cell) {
+                        entry.insert(material);
+                        ownership.insert(cell,(TreePart::Foliage,Some(owner)));
+                    }
+                }
             }
             if cells.len() > 40_000 {
                 return Err("Tree exceeds 40,000 game hexels: reduce size, branching or canopy density".into());
@@ -531,12 +658,25 @@ impl FoliageProject {
         if cells.len() > 40_000 {
             return Err("Tree exceeds 40,000 game hexels: reduce size, branching or canopy density".into());
         }
-        let voxels = cells.iter().map(|(pos, material)| VoxelCell {
+        retain_supported_foliage(&mut cells);
+        ownership.retain(|cell,_|cells.contains_key(cell));
+        let footprint:BTreeSet<_>=cells.iter()
+            .filter(|(pos,material)|pos[2]==0 && material.is_wood())
+            .map(|(pos,_)|[pos[0],pos[1]]).collect();
+        let structure=TreeStructure {
+            origin:[0,0,0],root_footprint:footprint.into_iter().collect(),
+            branches,
+            cells:ownership.into_iter().map(|(cell,(part,branch_id))|
+                TreeCell {cell,part,branch_id}).collect(),
+        };
+        let voxels:Vec<VoxelCell> = cells.iter().map(|(pos, material)| VoxelCell {
             x: pos[0], y: pos[1], z: pos[2], material: *material,
         }).collect();
+        structure.validate(&voxels)?;
         let triangles = surface_triangles(&cells, shape, s, self.leaf_render);
         Ok(FoliageMesh { voxels, triangles, shape,
-            voxel_size: s, height: h, leaf_render: self.leaf_render })
+            voxel_size: s, height: h, leaf_render: self.leaf_render,
+            structure:Some(structure) })
     }
 }
 
@@ -696,6 +836,37 @@ fn paint_leaf_cluster(
     }
 }
 
+/// Remove detached leaf islands after stochastic canopy generation.
+/// All retained leaf components touch at least one wood cell by a hex face.
+fn retain_supported_foliage(cells:&mut BTreeMap<[i32;3],Material>) {
+    const DIRECTIONS:[[i32;3];8]=[
+        [0,1,0],[-1,1,0],[-1,0,0],[0,-1,0],[1,-1,0],[1,0,0],
+        [0,0,1],[0,0,-1],
+    ];
+    let mut reachable=BTreeSet::new();
+    let mut queue=VecDeque::new();
+    for (pos,material) in cells.iter() {
+        if !material.is_foliage() {continue;}
+        if DIRECTIONS.iter().any(|d|cells.get(&[
+            pos[0]+d[0],pos[1]+d[1],pos[2]+d[2]])
+            .is_some_and(|m|m.is_wood())) {
+            reachable.insert(*pos);
+            queue.push_back(*pos);
+        }
+    }
+    while let Some(pos)=queue.pop_front() {
+        for direction in DIRECTIONS {
+            let other=[pos[0]+direction[0],pos[1]+direction[1],pos[2]+direction[2]];
+            if !reachable.contains(&other) &&
+                cells.get(&other).is_some_and(|m|m.is_foliage()) {
+                reachable.insert(other);
+                queue.push_back(other);
+            }
+        }
+    }
+    cells.retain(|pos,material|material.is_wood() || reachable.contains(pos));
+}
+
 fn polygon(shape: VoxelShape, center: [f32; 3], s: f32, z: f32) -> Vec<[f32; 3]> {
     let footprint = shape.footprint();
     let radius = match shape {
@@ -851,7 +1022,8 @@ impl FoliageMesh {
         }
         let height = voxels.iter().map(|v| v.z).max().unwrap_or(0) as f32 * voxel_size;
         let triangles = surface_triangles(&occupied, shape, voxel_size, render);
-        Ok(Self { voxels, triangles, shape, voxel_size, height, leaf_render:render })
+        Ok(Self { voxels, triangles, shape, voxel_size, height, leaf_render:render,
+            structure:None })
     }
 
     pub fn triangle_count(&self) -> usize { self.triangles.len() }
@@ -875,6 +1047,7 @@ impl FoliageMesh {
             "voxels": self.voxels,
             "leaf_render": self.leaf_render,
             "settings": project,
+            "structure": self.structure,
         })).map_err(|e| e.to_string())
     }
 
