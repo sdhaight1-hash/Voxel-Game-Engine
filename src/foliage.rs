@@ -485,6 +485,30 @@ pub struct TreeBranch {
     pub part: TreePart,
 }
 
+/// A continuous wood segment in millimetres (deterministic and Eq/JSON safe).
+/// Render geometry is derived from these points, but 1m hexel cells remain
+/// authoritative for harvesting and persistence.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BranchSpan {
+    pub branch_id: u32,
+    pub from_mm: [i32; 3],
+    pub to_mm: [i32; 3],
+    pub start_radius_mm: u16,
+    pub end_radius_mm: u16,
+}
+
+impl BranchSpan {
+    fn new(branch_id:u32, a:[f32;3], b:[f32;3], start:f32, end:f32)->Self {
+        Self {
+            branch_id,
+            from_mm:a.map(|p|(p*1000.0).round() as i32),
+            to_mm:b.map(|p|(p*1000.0).round() as i32),
+            start_radius_mm:(start*1000.0).round() as u16,
+            end_radius_mm:(end*1000.0).round() as u16,
+        }
+    }
+}
+
 /// Describes the original growth structure; gameplay occupancy is still
 /// represented by actual world hexels, not separate branch entities.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -494,6 +518,10 @@ pub struct TreeStructure {
     pub root_footprint: Vec<[i32; 2]>,
     pub branches: Vec<TreeBranch>,
     pub cells: Vec<TreeCell>,
+    /// One or more tapered spans per branch; no path is regenerated after
+    /// a player removes a wood hexel.
+    #[serde(default)]
+    pub spans: Vec<BranchSpan>,
 }
 
 impl TreeStructure {
@@ -515,6 +543,15 @@ impl TreeStructure {
             if branch.id!=0 && branch.parent
                 .is_none_or(|p|p>=branch.id||!by_id.contains_key(&p)) {
                 return Err("Branch parent must precede its child".into());
+            }
+        }
+        for span in &self.spans {
+            if !by_id.contains_key(&span.branch_id) ||
+                span.branch_id==0 ||
+                span.start_radius_mm==0 || span.end_radius_mm==0 ||
+                span.start_radius_mm>500 || span.end_radius_mm>500 ||
+                span.from_mm==span.to_mm {
+                return Err("Invalid tapered branch segment".into());
             }
         }
         let mut seen=BTreeSet::new();
@@ -744,6 +781,7 @@ impl FoliageProject {
         let mut cells: BTreeMap<[i32; 3], Material> = BTreeMap::new();
         let mut ownership:BTreeMap<[i32;3],(TreePart,Option<u32>)>=BTreeMap::new();
         let mut branches=Vec::new();
+        let mut spans=Vec::new();
         let s = WORLD_HEXEL_SIZE_METRES;
         let shape = VoxelShape::HexPrism;
         let h = self.height * self.overall_scale;
@@ -838,14 +876,24 @@ impl FoliageProject {
             }
             let thickness = (self.trunk_radius * self.overall_scale *
                 (0.28 + 0.25 * (1.0 - t))).max(s * 0.17);
+            // Visible branch radii are independent of the 1m wood cell.
+            // Major branches transition to thin tips, rather than building
+            // staircases of full-sized hexagonal prisms.
+            let major_radius=(thickness*0.65).clamp(0.12,0.42);
+            let tip_radius=(major_radius*0.45).max(0.05);
+            let fork_radius=(major_radius*0.35).clamp(0.045,0.16);
             let major_id=2*i+1;
             let fork_id=major_id+1;
             branches.push(TreeBranch {id:major_id,parent:Some(0),
                 root:grid_key(shape,s,base),tip:grid_key(shape,s,tip),
                 part:TreePart::MajorBranch});
+            spans.push(BranchSpan::new(major_id,base,mid,major_radius,
+                major_radius*0.78));
+            spans.push(BranchSpan::new(major_id,mid,tip,major_radius*0.78,
+                tip_radius));
             let mut main_cells=BTreeMap::new();
-            paint_line(&mut main_cells,shape,s,base,mid,thickness,Material::Bark);
-            paint_line(&mut main_cells,shape,s,mid,tip,s*0.18,Material::Bark);
+            paint_line(&mut main_cells,shape,s,base,mid,major_radius,Material::Bark);
+            paint_line(&mut main_cells,shape,s,mid,tip,tip_radius,Material::Bark);
             for (cell,material) in main_cells {
                 let previous=cells.insert(cell,material);
                 if previous.is_none() || previous.is_some_and(|m|m.is_foliage()) {
@@ -871,8 +919,10 @@ impl FoliageProject {
             branches.push(TreeBranch {id:fork_id,parent:Some(major_id),
                 root:grid_key(shape,s,mid),tip:grid_key(shape,s,fork),
                 part:TreePart::SmallBranch});
+            spans.push(BranchSpan::new(fork_id,mid,fork,fork_radius,
+                (fork_radius*0.50).max(0.035)));
             let mut fork_cells=BTreeMap::new();
-            paint_line(&mut fork_cells,shape,s,mid,fork,s*0.17,Material::Bark);
+            paint_line(&mut fork_cells,shape,s,mid,fork,fork_radius,Material::Bark);
             for (cell,material) in fork_cells {
                 let previous=cells.insert(cell,material);
                 if previous.is_none() || previous.is_some_and(|m|m.is_foliage()) {
@@ -933,12 +983,14 @@ impl FoliageProject {
             branches,
             cells:ownership.into_iter().map(|(cell,(part,branch_id))|
                 TreeCell {cell,part,branch_id}).collect(),
+            spans,
         };
         let voxels:Vec<VoxelCell> = cells.iter().map(|(pos, material)| VoxelCell {
             x: pos[0], y: pos[1], z: pos[2], material: *material,
         }).collect();
         structure.validate(&voxels)?;
-        let triangles = surface_triangles(&cells, shape, s, self.leaf_render);
+        let triangles = tree_surface_triangles(&cells,shape,s,self.leaf_render,
+            Some(&structure));
         Ok(FoliageMesh { voxels, triangles, shape,
             voxel_size: s, height: h, leaf_render: self.leaf_render,
             structure:Some(structure) })
