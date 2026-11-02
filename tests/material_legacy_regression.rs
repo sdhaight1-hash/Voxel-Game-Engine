@@ -284,6 +284,44 @@ fn tapered_bezier_sdf_can_drive_warped_bark_and_leaf_mask_without_pixel_drift() 
         .all(|(a,b)|b[3]<=a[3]));
 }
 
+#[test]
+fn seeded_sdf_contour_warp_preserves_bark_leaf_and_exact_uv_rendering() {
+    let mut graph=Graph::default();
+    let bezier=graph.add_node(NodeKind::SdfBezierStroke{
+        points:[[0.88,0.5],[0.96,0.24],[0.04,0.76],[0.12,0.5]],
+        start_radius:0.06,end_radius:0.025,segments:12,tiled:true,
+    },[20.0,20.0]);
+    let warp=graph.add_node(NodeKind::SdfContourWarp{
+        frequency:7,amount:0.08,seed:61,
+    },[180.0,20.0]);
+    let mask=graph.add_node(NodeKind::SdfToMask{
+        edge_width:0.012,
+    },[340.0,20.0]);
+    graph.connect(bezier,warp,0).unwrap();
+    graph.connect(warp,mask,0).unwrap();
+    graph.connect(mask,2,0).unwrap();
+    graph.connect(mask,2,3).unwrap();
+    graph.validate().unwrap();
+    let encoded=serde_json::to_string(&graph).unwrap();
+    let restored:Graph=serde_json::from_str(&encoded).unwrap();
+    for size in [32,64] {
+        let rgba=graph.render_rgba(size,size).unwrap();
+        let (channels,_)=graph.render_channels_memoized_rgba(
+            &[0,3],size,size).unwrap();
+        assert_eq!(channels[0],rgba);
+        assert_eq!(channels[1],rgba);
+        assert_eq!(restored.render_rgba(size,size).unwrap(),rgba);
+    }
+    let mut materials=FoliageMaterials::default();
+    let original=materials.bake_leaf(32,[80,143,71]).unwrap();
+    materials.leaf_opacity=Some(graph.clone());
+    let after=materials.bake_leaf(32,[80,143,71]).unwrap();
+    assert!(original.chunks_exact(4).zip(after.chunks_exact(4))
+        .all(|(old,new)|new[3]<=old[3]));
+    materials.bark=Some(graph);
+    assert_eq!(materials.bake_bark(32,[90,73,54]).unwrap().len(),32*32*4);
+}
+
 /// The CI benchmark step runs this alongside the pre-optimization baseline.
 /// It measures repeat-output reuse (not GPU upload or intermediate graph caching).
 #[test]
