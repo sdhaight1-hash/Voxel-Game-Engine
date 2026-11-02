@@ -10,10 +10,11 @@ resource and not a replacement for the existing `FoliageMaterials` graphs.
 The leaf key includes its assigned Leaf graph, Leaf Cutout graph, species
 silhouette, fruit color, cutout threshold, base leaf tint and output size.
 The bark key includes its assigned Bark graph, optional tint strength, base
-bark tint and output size. The keys use normal serialized graph authoring
-data; this version conservatively includes canvas positions/voxel metadata
-when present within a graph. Such unrelated edits may cause *extra misses*,
-never incorrect pixel reuse. Refining canonical keys is a separate gate.
+bark tint and output size. The keys use **canonical graph execution data**: stable node IDs and node
+kinds/parameters sorted by ID, plus sorted input links. Canvas positions,
+node/link ordering, and voxel display settings are excluded because they do
+not affect `Graph::render_rgba`. Renumbering otherwise equivalent nodes may
+still cause conservative extra misses; it cannot cause incorrect reuse.
 
 Species season gradients are **not** in either key. They remain dynamic GPU
 palette data, so changing seasons does not require a new cutout or bark
