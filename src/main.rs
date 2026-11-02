@@ -118,7 +118,7 @@ impl Default for Studio {
             pan: Vec2::ZERO,
             zoom: 1.0,
             library_search: String::new(),
-            library_tab: 1,
+            library_tab: 3,
             preset_search: String::new(),
             preset_category: "All categories".into(),
             preset_selected: None,
@@ -126,7 +126,7 @@ impl Default for Studio {
             dirty: true,
             export_size: 1024,
             project_path: None,
-            status: "Drag output to input to connect. Drag an existing cable to rewire it.".to_owned(),
+            status: "Voxel asset editor: select a tool, click blocks to edit, or import a procedural tree.".to_owned(),
         }
     }
 }
@@ -1969,7 +1969,7 @@ mod wire_interaction_tests {
 fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title("Texture Studio — Procedural Textures")
+            .with_title("Texture Studio — Voxel Asset Editor")
             .with_inner_size([1330.0, 780.0])
             .with_min_inner_size([940.0, 550.0]),
         ..Default::default()
