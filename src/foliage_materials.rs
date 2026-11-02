@@ -2,13 +2,21 @@
 //! Both slots use the existing editable graph engine and bundled natural presets.
 
 use crate::foliage::{leaf_cutout_rgba, PlantPreset};
-use crate::presets::builtin_presets;
+use crate::presets::{builtin_presets, Preset};
 use crate::{Graph, VoxelSettings};
 use serde::{Deserialize, Serialize};
 
 pub const MATERIAL_SIZE: u32 = 128;
 
 fn default_threshold() -> f32 { 0.5 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MaterialRole { Bark, Leaf, Opacity }
+impl MaterialRole {
+    pub fn name(self)-> &'static str {match self {
+        Self::Bark=>"Bark",Self::Leaf=>"Leaf Albedo",Self::Opacity=>"Leaf Cutout",
+    }}
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
@@ -42,6 +50,37 @@ impl FoliageMaterials {
             graph.validate()?;
         }
         Ok(())
+    }
+
+    pub fn assign_preset(&mut self, slot: MaterialRole, preset: &Preset) {
+        let graph=preset.build_graph(VoxelSettings {
+            geometryless:true, ..Default::default()
+        });
+        match slot {
+            MaterialRole::Bark => {
+                self.bark=Some(graph);self.bark_preset=Some(preset.title());
+            }
+            MaterialRole::Leaf => {
+                self.leaf=Some(graph);self.leaf_preset=Some(preset.title());
+            }
+            MaterialRole::Opacity => self.leaf_opacity=Some(graph),
+        }
+    }
+
+    pub fn graph(&self,slot:MaterialRole)->Option<&Graph> {
+        match slot {
+            MaterialRole::Bark=>self.bark.as_ref(),
+            MaterialRole::Leaf=>self.leaf.as_ref(),
+            MaterialRole::Opacity=>self.leaf_opacity.as_ref(),
+        }
+    }
+
+    pub fn set_graph(&mut self,slot:MaterialRole,graph:Graph) {
+        match slot {
+            MaterialRole::Bark=>{self.bark=Some(graph);self.bark_preset=None;}
+            MaterialRole::Leaf=>{self.leaf=Some(graph);self.leaf_preset=None;}
+            MaterialRole::Opacity=>self.leaf_opacity=Some(graph),
+        }
     }
 
     /// Map each plant family to *existing* built-in bark/leaf appearance variants.
