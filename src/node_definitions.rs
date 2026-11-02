@@ -9,6 +9,8 @@ use serde::{Deserialize,Serialize};
 pub enum SocketType {
     Scalar,
     Mask,
+    /// Signed normalized-UV distance; no implicit cast to Mask or Color.
+    Distance,
     Color,
     Vector2,
     Vector3,
@@ -50,6 +52,44 @@ pub struct ParameterDefinition {
     pub control: ParameterControl,
 }
 
+const SDF_CIRCLE: &[ParameterDefinition]=&[
+    ParameterDefinition{id:"center_x",label:"Center X",control:ParameterControl::Float{
+        min:0.0,max:1.0,default:0.5,unit:"tile UV"}},
+    ParameterDefinition{id:"center_y",label:"Center Y",control:ParameterControl::Float{
+        min:0.0,max:1.0,default:0.5,unit:"tile UV"}},
+    ParameterDefinition{id:"radius",label:"Radius",control:ParameterControl::Float{
+        min:0.001,max:0.5,default:0.22,unit:"tile UV"}},
+];
+const SDF_ELLIPSE: &[ParameterDefinition]=&[
+    ParameterDefinition{id:"center_x",label:"Center X",control:ParameterControl::Float{
+        min:0.0,max:1.0,default:0.5,unit:"tile UV"}},
+    ParameterDefinition{id:"center_y",label:"Center Y",control:ParameterControl::Float{
+        min:0.0,max:1.0,default:0.5,unit:"tile UV"}},
+    ParameterDefinition{id:"radius_x",label:"Radius X",control:ParameterControl::Float{
+        min:0.001,max:0.5,default:0.28,unit:"tile UV"}},
+    ParameterDefinition{id:"radius_y",label:"Radius Y",control:ParameterControl::Float{
+        min:0.001,max:0.5,default:0.14,unit:"tile UV"}},
+];
+const SDF_CAPSULE: &[ParameterDefinition]=&[
+    ParameterDefinition{id:"start_x",label:"Start X",control:ParameterControl::Float{
+        min:0.0,max:1.0,default:0.30,unit:"tile UV"}},
+    ParameterDefinition{id:"start_y",label:"Start Y",control:ParameterControl::Float{
+        min:0.0,max:1.0,default:0.5,unit:"tile UV"}},
+    ParameterDefinition{id:"end_x",label:"End X",control:ParameterControl::Float{
+        min:0.0,max:1.0,default:0.70,unit:"tile UV"}},
+    ParameterDefinition{id:"end_y",label:"End Y",control:ParameterControl::Float{
+        min:0.0,max:1.0,default:0.5,unit:"tile UV"}},
+    ParameterDefinition{id:"radius",label:"Radius",control:ParameterControl::Float{
+        min:0.001,max:0.5,default:0.07,unit:"tile UV"}},
+];
+const SDF_BOOLEAN: &[ParameterDefinition]=&[
+    ParameterDefinition{id:"smoothing",label:"Smooth width",control:ParameterControl::Float{
+        min:0.0,max:0.25,default:0.0,unit:"tile UV"}},
+];
+const SDF_TO_MASK: &[ParameterDefinition]=&[
+    ParameterDefinition{id:"edge_width",label:"Coverage width",control:ParameterControl::Float{
+        min:0.0,max:0.25,default:0.01,unit:"tile UV"}},
+];
 const CURVE_REMAP: &[ParameterDefinition]=&[
     ParameterDefinition{id:"curve",label:"Control points",control:ParameterControl::CurvePoints{
         min:2,max:8,default:4}},
@@ -135,6 +175,11 @@ pub fn parameters(kind:&NodeKind)-> &'static [ParameterDefinition] {
         NodeKind::ThresholdMask{..}=>THRESHOLD_MASK,
         NodeKind::ColorRamp{..}=>COLOR_RAMP,
         NodeKind::CurveRemap{..}=>CURVE_REMAP,
+        NodeKind::SdfCircle{..}=>SDF_CIRCLE,
+        NodeKind::SdfEllipse{..}=>SDF_ELLIPSE,
+        NodeKind::SdfCapsule{..}=>SDF_CAPSULE,
+        NodeKind::SdfCombine{..}=>SDF_BOOLEAN,
+        NodeKind::SdfToMask{..}=>SDF_TO_MASK,
         NodeKind::Noise{..}=>NOISE,
         NodeKind::Checker{..}=>CHECKER,
         NodeKind::Bricks{..}=>BRICKS,
@@ -158,6 +203,9 @@ mod tests {
         assert!(!SocketType::Color.can_feed(SocketType::Scalar));
         assert!(!SocketType::Vector2.can_feed(SocketType::Color));
         assert!(!SocketType::Gradient.can_feed(SocketType::Curve));
+        assert!(!SocketType::Distance.can_feed(SocketType::Mask));
+        assert!(!SocketType::Distance.can_feed(SocketType::Color));
+        assert!(!SocketType::Scalar.can_feed(SocketType::Distance));
     }
 
     #[test]
@@ -228,6 +276,22 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn sdf_nodes_expose_distance_types_and_bounded_parameter_metadata() {
+        let circle=NodeKind::SdfCircle{center:[0.5,0.5],radius:0.22};
+        let boolean=NodeKind::SdfCombine{operation:crate::SdfBoolean::Union,
+            smoothing:0.0};
+        let mask=NodeKind::SdfToMask{edge_width:0.01};
+        assert_eq!(circle.output_type(),SocketType::Distance);
+        assert_eq!(boolean.input_type(0),Some(SocketType::Distance));
+        assert_eq!(boolean.input_type(1),Some(SocketType::Distance));
+        assert_eq!(mask.input_type(0),Some(SocketType::Distance));
+        assert_eq!(mask.output_type(),SocketType::Mask);
+        assert_eq!(parameters(&circle).iter().map(|p|p.id).collect::<Vec<_>>(),
+            vec!["center_x","center_y","radius"]);
+        assert_eq!(parameters(&mask)[0].id,"edge_width");
     }
 
     #[test]
