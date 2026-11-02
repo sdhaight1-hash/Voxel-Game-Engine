@@ -6,6 +6,7 @@ use std::collections::HashSet;
 
 pub mod voxel;
 pub mod foliage;
+pub mod asset;
 pub mod presets;
 pub mod node_library;
 pub use node_library::LibraryNode;
