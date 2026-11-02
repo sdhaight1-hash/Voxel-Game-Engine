@@ -635,20 +635,29 @@ impl Studio {
         }
     }
 
+    /// Undo/redo should rebake only when stored material inputs changed.
+    fn asset_bake_inputs_changed(a:&VoxelAsset,b:&VoxelAsset)->bool {
+        a.bark_color!=b.bark_color || a.leaf_color!=b.leaf_color
+            || serde_json::to_value(&a.materials).ok()
+                != serde_json::to_value(&b.materials).ok()
+    }
+
     fn undo_asset(&mut self) {
         if let Some(previous) = self.asset_undo.pop() {
+            let material_changed=Self::asset_bake_inputs_changed(&self.asset,&previous);
             self.asset_redo.push(std::mem::replace(&mut self.asset, previous));
             self.asset_dirty = true;
-            self.asset_mats_dirty = true;
+            self.asset_mats_dirty |= material_changed;
             self.status = "Undid voxel edit".into();
         }
     }
 
     fn redo_asset(&mut self) {
         if let Some(next) = self.asset_redo.pop() {
+            let material_changed=Self::asset_bake_inputs_changed(&self.asset,&next);
             self.asset_undo.push(std::mem::replace(&mut self.asset, next));
             self.asset_dirty = true;
-            self.asset_mats_dirty = true;
+            self.asset_mats_dirty |= material_changed;
             self.status = "Redid voxel edit".into();
         }
     }
@@ -2665,14 +2674,30 @@ mod wire_interaction_tests {
         let mut app=Studio::default();
         assert_eq!(app.library_tab,3);
         let original=app.asset.voxels.len();
+        app.asset_mats_dirty=false;
         app.edit_asset(|asset|asset.add([0,1,0],Material::Leaf));
         assert_eq!(app.asset.voxels.len(),original+1);
         app.undo_asset();
+        assert!(!app.asset_mats_dirty,"geometry-only undo should reuse material bake");
         assert_eq!(app.asset.voxels.len(),original);
         app.redo_asset();
+        assert!(!app.asset_mats_dirty,"geometry-only redo should reuse material bake");
         assert_eq!(app.asset.voxels.len(),original+1);
         app.edit_asset(|asset|asset.add([0,1,0],Material::Bark));
         assert_eq!(app.asset.voxels.len(),original+1);
+    }
+
+    #[test]
+    fn material_change_restored_from_asset_history_requires_bake() {
+        let mut app=Studio::default();
+        let original=app.asset.clone();
+        let mut changed=original.clone();
+        changed.materials.bark_tint_strength=1.0;
+        app.asset=changed;
+        app.asset_undo.push(original);
+        app.asset_mats_dirty=false;
+        app.undo_asset();
+        assert!(app.asset_mats_dirty);
     }
 
     #[test]
