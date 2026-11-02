@@ -65,11 +65,14 @@ impl Default for SideMapping {
 pub struct VoxelSettings {
     pub shape: VoxelShape,
     pub side_mapping: SideMapping,
+    /// Flat 2D texturing: no voxel mesh, UV atlas, or 3D preview.
+    /// Missing in older project files, so defaults to false.
+    pub geometryless: bool,
 }
 
 impl Default for VoxelSettings {
     fn default() -> Self {
-        Self { shape: VoxelShape::Cube, side_mapping: SideMapping::Wrap }
+        Self { shape: VoxelShape::Cube, side_mapping: SideMapping::Wrap, geometryless: false }
     }
 }
 
@@ -97,6 +100,9 @@ pub struct AtlasLayout {
 }
 
 pub fn layout(settings: VoxelSettings, tile_size: u32) -> Result<AtlasLayout, String> {
+    if settings.geometryless {
+        return Err("Geometryless 2D materials do not have voxel UV atlases".into());
+    }
     if !(1..=2048).contains(&tile_size) {
         return Err("Atlas tile size must be 1–2048".into());
     }
@@ -214,6 +220,9 @@ pub fn atlas_from_pixels(
 pub fn render_atlas(
     graph: &Graph, channel: usize, settings: VoxelSettings, tile_size: u32
 ) -> Result<(AtlasLayout, Vec<u8>), String> {
+    if settings.geometryless {
+        return Err("Geometryless 2D materials export regular square PBR maps, not atlases".into());
+    }
     // Capping the intermediate source at 512 keeps export memory predictable.
     let source_size = tile_size.min(512).max(64);
     let pixels = if channel == 4 {
@@ -229,6 +238,9 @@ pub fn render_atlas(
 pub fn render_voxel_preview(
     graph: &Graph, settings: VoxelSettings, size: u32, yaw: f32
 ) -> Result<Vec<u8>, String> {
+    if settings.geometryless {
+        return Err("Geometryless materials have no 3D preview; use the 2D output".into());
+    }
     if !(32..=512).contains(&size) {
         return Err("Voxel preview size must be 32–512".into());
     }
@@ -394,6 +406,27 @@ mod tests {
     use super::*;
 
     #[test]
+    fn geometryless_rejects_mesh_and_atlas_but_keeps_square_texture_rendering() {
+        let settings = VoxelSettings { geometryless: true, ..Default::default() };
+        assert!(layout(settings, 32).is_err());
+        assert!(render_atlas(&Graph::default(), 0, settings, 32).is_err());
+        assert!(render_voxel_preview(&Graph::default(), settings, 64, 0.8).is_err());
+        let graph = Graph::default();
+        assert_eq!(graph.render_output_channel_rgba(0, 8, 8).unwrap().len(), 8*8*4);
+    }
+
+    #[test]
+    fn geometryless_is_backward_compatible_and_round_trips() {
+        let old = r#"{"shape":"Cube","side_mapping":"Wrap"}"#;
+        let old: VoxelSettings = serde_json::from_str(old).unwrap();
+        assert!(!old.geometryless);
+        let geometryless = VoxelSettings { geometryless: true, ..old };
+        let decoded: VoxelSettings =
+            serde_json::from_str(&serde_json::to_string(&geometryless).unwrap()).unwrap();
+        assert_eq!(decoded, geometryless);
+    }
+
+    #[test]
     fn cube_faces_and_dimensions() {
         let settings=VoxelSettings::default();
         let meta=layout(settings,16).unwrap();
@@ -420,7 +453,7 @@ mod tests {
     #[test]
     fn wrapped_side_uvs_share_seams() {
         for shape in [VoxelShape::Cube,VoxelShape::HexPrism] {
-            let s=VoxelSettings {shape,side_mapping:SideMapping::Wrap};
+            let s=VoxelSettings {shape,side_mapping:SideMapping::Wrap, geometryless: false};
             for face in 0..shape.sides() {
                 let next=(face+1)%shape.sides();
                 assert!((source_uv(s,face,1.0,0.5)[0]-
