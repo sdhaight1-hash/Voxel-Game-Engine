@@ -1,4 +1,4 @@
-# Texture Studio — Rust Procedural Material Editor
+# Voxel Game Engine — Procedural Voxel Asset Editor
 
 An offline, standalone **Rust desktop application** for voxel asset creation, procedural tree modeling, and editable PBR material maps. Material Maker inspired, but independently implemented — no Material Maker code is copied and Blender/Godot are not required.
 
@@ -17,9 +17,26 @@ An offline, standalone **Rust desktop application** for voxel asset creation, pr
 - **Voxel export:** generate five per-face RGBA texture atlases, a UV-unwrapped `voxel.obj`, `voxel.mtl` and machine-readable `voxel_layout.json`. The OBJ material connects albedo; other PBR maps can be assigned in the target renderer.
 - **Projects:** save/load JSON node graphs *including voxel shape and side UV mode*; older projects without voxel settings load as cubes.
 
+## Procedural Bark and Foliage Materials
+
+The **Foliage** and **Assets** workspaces now use real material roles instead of treating every block or leaf card as a flat RGB color. Each project retains independent editable **Bark**, **Leaf Albedo** and optional **Leaf Cutout** node graphs. Existing asset/project JSON remains readable; missing material assignments use palette colors and the original generated leaf cutout.
+
+Every new procedural Oak, Pine, Birch, Willow, Maple or Shrub tree automatically assigns the appropriate **existing natural-material presets** for its bark and leaf appearance. Use **Procedural Material Slots** in either inspector to search and assign additional entries from the 1,039-preset library. Select a slot, click **Edit slot in Nodes**, edit its graph, then click **Apply ... to Tree/Asset** in the top toolbar. The optional cutout graph removes extra pixels from the existing silhouette; it cannot fill air gaps. **Cutout threshold** controls this additional mask.
+
+The same baked images drive the **3D editor preview** and the **static OBJ/MTL export**:
+
+- `bark-albedo.png` from the assigned bark graph (when present)
+- `foliage-leaves.png` with procedurally colored RGB and true cutout alpha
+- `foliage-leaves-alpha.png` grayscale opacity mask for MTL `map_d`
+- `bark-roughness.png`, `bark-normal.png`, `foliage-leaves-roughness.png`, `foliage-leaves-normal.png` when their material graphs exist
+
+Bark meshes carry UV coordinates; foliage retains crossed, rotated, two-sided UV cards with wind swaying in the preview. The exporter always uses the static, unswayed geometry. Normal and roughness PNGs are exported for engines supporting PBR workflows, but simple OBJ/MTL importers generally need manual assignment for those extra channels.
+
+These are **original procedural approximations** built from the app's material presets, not proprietary game art or source-game textures. Per-leaf biological geometry, real-time GPU wind, translucency/SSS and advanced texture painting remain future work.
+
 ## Voxel Asset Workspace (Blockbench-inspired foundation)
 
-Texture Studio is now organized around **four linked workspaces**. **Assets** is the new primary editing workspace; **Foliage** supplies generated voxel-tree geometry; **Presets** and **Nodes** remain responsible for procedural surface materials. The design takes inspiration from Blockbench's viewport/outliner/modeling/texturing workflow while keeping our own native Rust code and cube/hex voxel representation.
+Voxel Game Engine is organized around **four linked workspaces**. **Assets** is the new primary editing workspace; **Foliage** supplies generated voxel-tree geometry; **Presets** and **Nodes** remain responsible for procedural surface materials. The design takes inspiration from Blockbench's viewport/outliner/modeling/texturing workflow while keeping our own native Rust code and cube/hex voxel representation.
 
 **Foliage mesh setting:** In the **Assets** inspector you can choose cutout crossed cards or classic solid leaf blocks, and adjust preview wind sway. Legacy asset JSON defaults to cutout cards when its new setting is absent.
 
@@ -37,7 +54,7 @@ Texture Studio is now organized around **four linked workspaces**. **Assets** is
 
 **Asset files:** **Save Asset** stores `asset.voxelasset.json`, including name, cube/hex grid, cell size, each occupied voxel and material slot, palette, leaf-card/wind settings and an optional embedded procedural node graph. **Export Asset** also writes `asset.obj` (UV-mapped, exposed bark faces and two-sided cutout foliage cards), `asset.mtl` (bark/foliage colors and cutout maps), and—in cutout mode—`foliage-leaves.png` and `foliage-leaves-alpha.png`. In the Assets inspector, **Capture current material nodes** attaches the active procedural graph; **Edit attached material in Nodes** loads it back to the node editor. Changes in Nodes must be captured again to update the saved asset.
 
-**Current boundaries:** This is a first usable voxel asset editor, **not full Blockbench feature parity**. It does not yet have per-pixel UV painting, automatic multi-part UV atlas baking, arbitrary hierarchies or named groups, rigging/animation timelines, skeletal binding, mesh sculpting, plug-ins, Blockbench project-file compatibility, or direct 3D surface painting from the procedural PBR graph. The viewport currently colors individual voxels through four material slots, with the procedural material graph stored alongside the asset for further integration. These are deliberate next stages, not implemented features.
+**Current boundaries:** This is a first usable voxel asset editor, **not full Blockbench feature parity**. It does not yet have per-pixel UV painting, automatic multi-part UV atlas baking, arbitrary hierarchies or named groups, rigging/animation timelines, skeletal binding, mesh sculpting, plug-ins, Blockbench project-file compatibility, or direct 3D surface painting from the procedural PBR graph. The viewport now samples baked bark and foliage albedo/alpha using their UVs, and the asset stores per-role material graphs. Per-pixel painting, PBR-lit shading and bone animations remain future work.
 
 ## Native Voxel Tree Designer
 
