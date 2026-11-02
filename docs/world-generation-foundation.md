@@ -1,6 +1,6 @@
-# Architecture decision: InfiniteDiffusion-inspired world generation
+# World-generation option 1: InfiniteDiffusion-inspired synthetic worlds
 
-**Status:** Foundational direction / design decision (not yet a running terrain implementation)
+**Status:** Candidate world-generation mode (not yet a running terrain implementation). See [Option 2 — Tellus-inspired real-Earth worlds](real-earth-world-generation.md).
 **Project:** Voxel Game Engine (Rust + wgpu)
 **Research basis:** Alexander Goslin, *InfiniteDiffusion: Bridging Learned Fidelity and Procedural Utility for Open-World Terrain Generation*, SIGGRAPH 2026.
 
@@ -24,7 +24,7 @@ Voxel Game Engine is a *game engine*, not only a procedural texture editor or a 
 6. GPU rendering through wgpu, independent from the choice of terrain inference backend.
 7. Terrain-informed climate, biomes, vegetation, water and procedural material selection.
 
-InfiniteDiffusion's core idea (lazy, stateless, coordinate-addressable learned synthesis with a bounded cache) is the *design foundation*. The external Terrain Diffusion models are an important generator **backend**, not a required dependency of the entire game loop. All runtime/gameplay APIs consume normalized terrain data; they do not call Python or a neural network directly.
+InfiniteDiffusion's core idea (lazy, stateless, coordinate-addressable learned synthesis with a bounded cache) is the foundation **for synthetic world mode**. The external Terrain Diffusion models are an important generator **backend**, not a required dependency of the entire game loop. An independent Tellus-inspired real-Earth mode supplies geographic data through the same normalized world-generation contract. All runtime/gameplay APIs consume normalized terrain data; they do not call Python or a neural network directly.
 
 ## Minimum data flow
 
