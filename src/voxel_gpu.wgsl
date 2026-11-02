@@ -54,9 +54,9 @@ fn vs_main(input: VertexInput) -> VertexOutput {
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     var rgba: vec4<f32>;
     if (input.kind < 0.5) {
-        rgba = textureSample(bark_tex, linear_sampler, input.uv);
+        rgba = textureSampleLevel(bark_tex, linear_sampler, input.uv, 0.0);
     } else if (input.kind < 1.5) {
-        rgba = textureSample(foliage_tex, linear_sampler, input.uv);
+        rgba = textureSampleLevel(foliage_tex, linear_sampler, input.uv, 0.0);
         if (rgba.a < 0.5) { discard; }
     } else {
         rgba = vec4<f32>(1.0);
