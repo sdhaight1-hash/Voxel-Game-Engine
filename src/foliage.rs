@@ -1314,6 +1314,142 @@ fn surface_triangles(
     triangles
 }
 
+/// Unit vector for the wood-cylinder frame.
+fn normalize3(v:[f32;3])->[f32;3] {
+    let n=(v[0]*v[0]+v[1]*v[1]+v[2]*v[2]).sqrt().max(1e-8);
+    [v[0]/n,v[1]/n,v[2]/n]
+}
+fn cross3(a:[f32;3],b:[f32;3])->[f32;3] {
+    [a[1]*b[2]-a[2]*b[1],
+     a[2]*b[0]-a[0]*b[2],
+     a[0]*b[1]-a[1]*b[0]]
+}
+
+/// Choose the adjacent axial or vertical cell in the normal's direction.
+/// The editing tools use this for their Add action on curved branch surfaces.
+fn branch_outward(normal:[f32;3])->[i32;3] {
+    const NEIGHBORS:[[i32;3];8]=[
+        [0,1,0],[-1,1,0],[-1,0,0],[0,-1,0],
+        [1,-1,0],[1,0,0],[0,0,1],[0,0,-1]
+    ];
+    let mut best=[0,0,1];
+    let mut score=f32::NEG_INFINITY;
+    for d in NEIGHBORS {
+        let world=[d[0] as f32 + 0.5*d[1] as f32,
+            0.8660254*d[1] as f32,d[2] as f32];
+        let dot=world[0]*normal[0]+world[1]*normal[1]+world[2]*normal[2];
+        if dot>score {score=dot;best=d;}
+    }
+    best
+}
+
+/// Six-sided tapered wood section restricted to exactly one occupied branch
+/// cell. Chopping that cell suppresses its corresponding triangles.
+fn add_tapered_branch_section(out:&mut Vec<Triangle>,cell:[i32;3],
+                              a:[f32;3],b:[f32;3],r0:f32,r1:f32) {
+    let dir=sub3(b,a);
+    let len=(dir[0]*dir[0]+dir[1]*dir[1]+dir[2]*dir[2]).sqrt();
+    if len<=0.0001 {return;}
+    let tangent=normalize3(dir);
+    let axis=if tangent[2].abs()<0.9 {[0.0,0.0,1.0]} else {[0.0,1.0,0.0]};
+    let u=normalize3(cross3(tangent,axis));
+    let v=cross3(tangent,u);
+    const SIDES:usize=6;
+    let ring=|center:[f32;3],radius:f32| {
+        std::array::from_fn::<_,SIDES,_>(|i| {
+            let angle=TAU*i as f32/SIDES as f32;
+            add3(center,add3(mul3(u,angle.cos()*radius),
+                             mul3(v,angle.sin()*radius)))
+        })
+    };
+    let start=ring(a,r0);
+    let end=ring(b,r1);
+    let sides=SIDES as f32;
+    for i in 0..SIDES {
+        let next=(i+1)%SIDES;
+        let uv0=[i as f32/sides,0.0];
+        let uv1=[(i+1) as f32/sides,0.0];
+        let uv2=[(i+1) as f32/sides,len];
+        let uv3=[i as f32/sides,len];
+        let normal=normalize3(add3(sub3(start[i],a),sub3(start[next],a)));
+        let outward=branch_outward(normal);
+        push_triangle(out,start[i],start[next],end[next],Material::Bark,cell,
+            outward,[uv0,uv1,uv2]);
+        push_triangle(out,start[i],end[next],end[i],Material::Bark,cell,
+            outward,[uv0,uv2,uv3]);
+    }
+    let start_out=branch_outward(mul3(tangent,-1.0));
+    let end_out=branch_outward(tangent);
+    for i in 1..SIDES-1 {
+        push_triangle(out,start[0],start[i+1],start[i],Material::Bark,cell,
+            start_out,[[0.5,0.5],[0.0,0.0],[1.0,0.0]]);
+        push_triangle(out,end[0],end[i],end[i+1],Material::Bark,cell,
+            end_out,[[0.5,0.5],[0.0,0.0],[1.0,0.0]]);
+    }
+}
+
+/// Same underlying mesh for Foliage, Assets, GPU preview and OBJ export.
+/// Continuous source paths are sampled solely for display; the voxel map
+/// determines which individual pieces are allowed to exist.
+fn tree_surface_triangles(
+    cells:&BTreeMap<[i32;3],Material>,shape:VoxelShape,size:f32,
+    render:LeafRenderSettings,structure:Option<&TreeStructure>,
+)->Vec<Triangle> {
+    let Some(tree)=structure.filter(|tree| !tree.spans.is_empty()
+        && shape==VoxelShape::HexPrism) else {
+        return surface_triangles(cells,shape,size,render);
+    };
+    let roles:BTreeMap<_,_>=tree.cells.iter().map(|part|(part.cell,part.part)).collect();
+    let mut solids=cells.clone();
+    // Remove block surfaces only for cells represented by tapered limbs.
+    // Full-size trunk and manually added wood cells stay solid.
+    for (cell,material) in cells {
+        if material.is_wood() &&
+            matches!(roles.get(cell),Some(TreePart::MajorBranch|TreePart::SmallBranch)) {
+            solids.remove(cell);
+        }
+    }
+    let mut triangles=surface_triangles(&solids,shape,size,render);
+    for span in &tree.spans {
+        let a=span.from_mm.map(|v|v as f32/1000.0);
+        let b=span.to_mm.map(|v|v as f32/1000.0);
+        let distance=sub3(b,a);
+        let length=(distance[0]*distance[0]+distance[1]*distance[1]
+                    +distance[2]*distance[2]).sqrt();
+        let steps=(length/0.08).ceil().max(1.0) as usize;
+        // Coalesce each run of the smooth path inside one harvestable
+        // hexel. One section is emitted per occupied cell, not per sample.
+        let mut active:Option<([i32;3],usize)>=None;
+        for i in 0..=steps {
+            let key=if i<steps {
+                let t=(i as f32+0.5)/steps as f32;
+                let cell=grid_key(shape,size,lerp3(a,b,t));
+                if cells.get(&cell)==Some(&Material::Bark) &&
+                    matches!(roles.get(&cell),Some(TreePart::MajorBranch|TreePart::SmallBranch)) {
+                    Some(cell)
+                } else {None}
+            } else {None};
+            if let Some((old,first))=active {
+                if key!=Some(old) {
+                    let t0=first as f32/steps as f32;
+                    let t1=i as f32/steps as f32;
+                    let r0=(span.start_radius_mm as f32+
+                        (span.end_radius_mm as f32-span.start_radius_mm as f32)*t0)/1000.0;
+                    let r1=(span.start_radius_mm as f32+
+                        (span.end_radius_mm as f32-span.start_radius_mm as f32)*t1)/1000.0;
+                    add_tapered_branch_section(&mut triangles,old,
+                        lerp3(a,b,t0),lerp3(a,b,t1),r0,r1);
+                    active=None;
+                }
+            }
+            if let Some(cell)=key {
+                if active.is_none(){active=Some((cell,i));}
+            }
+        }
+    }
+    triangles
+}
+
 impl FoliageMesh {
     /// Rebuild a render/export surface from individually editable occupied cells.
     /// This is shared by procedural foliage and the general-purpose asset editor.
@@ -1341,6 +1477,19 @@ impl FoliageMesh {
         let triangles = surface_triangles(&occupied, shape, voxel_size, render);
         Ok(Self { voxels, triangles, shape, voxel_size, height, leaf_render:render,
             structure:None })
+    }
+
+    /// Rebuild visible triangles after changing a tree's occupied cells.
+    /// Preserved branch spans cannot resurrect deleted or repainted hexels.
+    pub fn with_tree_structure(mut self,structure:Option<TreeStructure>)->Self {
+        if let Some(tree)=&structure {
+            let cells:BTreeMap<_,_>=self.voxels.iter()
+                .map(|v|([v.x,v.y,v.z],v.material)).collect();
+            self.triangles=tree_surface_triangles(&cells,self.shape,
+                self.voxel_size,self.leaf_render,Some(tree));
+        }
+        self.structure=structure;
+        self
     }
 
     pub fn triangle_count(&self) -> usize { self.triangles.len() }
