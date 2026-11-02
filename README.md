@@ -206,18 +206,18 @@ Select **Material Geometry → Geometryless (2D)** in the right panel to work en
 
 ## Updated natural-material preset graphs
 
-All **1,039 built-in natural texture presets** now use the expanded node library. Each selection assembles an editable, validated network using material-family-specific primary patterns (Fractal Noise, Dirt, Crystal, Spots, Fibers, Clouds or Sine Wave, or Strata for layered wood/shell textures), a family-appropriate filter, secondary micro-detail, Colorize, an adjustable Lerp blend, an editable roughness network, and a metallic channel. Unlike the previous simple five-node templates, these graphs expose the new generators and filters for further editing. Presets work identically in geometryless, Cube, and Hexagonal Prism modes.
+All **1,067 built-in natural texture presets** use the expanded node library (the original 1,039 plus 28 species-owned bark/leaf recipes). Each selection assembles an editable, validated network using material-family-specific primary patterns (Fractal Noise, Dirt, Crystal, Spots, Fibers, Clouds or Sine Wave, or Strata for layered wood/shell textures), a family-appropriate filter, secondary micro-detail, Colorize, an adjustable Lerp blend, an editable roughness network, and a metallic channel. Unlike the previous simple five-node templates, these graphs expose the new generators and filters for further editing. Presets work identically in geometryless, Cube, and Hexagonal Prism modes.
 
 These remain **procedural approximations**, not exact scientific or source-game material scans, species-accurate foliage meshes, or copies of proprietary textures.
 
 ## Built-in Natural Preset Library
 
-This build includes **1,039 named material/appearance presets across 14 categories**, derived from the provided *Complete Natural Texture Catalog*. The catalog is embedded in the executable at `src/presets/catalog.json` — no network connection or texture downloads needed.
+This build includes **1,067 named material/appearance presets across 14 categories**, derived from the provided *Complete Natural Texture Catalog*. The catalog is embedded in the executable at `src/presets/catalog.json` — no network connection or texture downloads needed.
 
 - **Stone & Rock:** igneous, sedimentary and metamorphic materials, multiple rock surface appearances, marble colors.
 - **Ores & Minerals:** metal-bearing ores, salts, crystals, gemstones, coal and additional reference minerals.
 - **Soil & Ground; Sand, Gravel & Clay:** fertility/grass appearances, all 14 sand and gravel parents, clay deposits, natural loose terrain.
-- **Trees & Wood; Fruit Trees:** bark, branches, leaf and seasonal appearances, including custom Willow and all its named components.
+- **Trees & Wood; Fruit Trees:** bark, branches, leaf and seasonal appearances, including custom Willow, distinct Cherry Blossom/Kentucky Coffeetree/Cottonwood/palm/coffee/shrub bark and leaf materials, and all existing named components.
 - **Berry Bushes; Flowers; Vegetation:** berry stages, colored flower varieties, ferns, grass sizes, reeds, cacti, vines, aquatic vegetation and croton color/size variants.
 - **Mushrooms; Wild Crops:** 45 mushroom species and growth stages of wild plants.
 - **Water, Lava & Ice; Natural Formations; Seashells:** surface states, organic/mineral formations and all 42 shell combinations.
@@ -225,6 +225,8 @@ This build includes **1,039 named material/appearance presets across 14 categori
 **Using a preset:** On the left choose **Presets**, filter by category or search any material/variant name, select a result, then click **Apply selected preset**. This replaces the current node graph with an editable layered generator/filter/detail/color/roughness/metallic network. It **preserves your cube/hexagonal-prism shape and side UV settings**. Save your project before replacing the graph. Switch to **Nodes** to customize the generators.
 
 **Accuracy limitation:** These are original, algorithmic **tileable surface material approximations**, not imported Vintage Story PNGs, photographs, plant models, or species-accurate foliage/mushroom/flower illustrations. Non-surface visual states such as blossoms, mushrooms, leaf clusters, snow accumulation and crop stages are color/pattern presets only; they do not generate geometry, transparency cutouts, animations, physics or seasonal changes. The catalog's wording is descriptive reference data, not a claim that every entry is an ordinary in-game natural deposit.
+
+**Preset identity and migration:** The original 1,039 material recipes keep their previous order, variant names, stable seeds and graph output. The 28 new bark/leaf entries are appended to the catalog. All 43 built-in Flora presets select their **own** matching bark and leaf graphs instead of borrowing unrelated species defaults. Existing saved trees and editable voxel assets retain the authored graph snapshots, including older fallback names; there is no automatic migration or visual rewrite of a user's saved materials. Vector Oak/Willow/Cottonwood silhouette, fractional alpha, Ordered/4× MSAA GPU preview and mipmapping remain explicit opt-in features; other species retain their original cutout cards.
 
 The catalog is easy to extend: edit `src/presets/catalog.json` (groups with category, family, names, variants and profile). The Rust loader validates duplicate names/variants per family and builds the variants deterministically. `Strata` is a new tileable generator for wood/water/shell-style layered patterns.
 
@@ -303,7 +305,7 @@ The OBJ/MTL format directly links the albedo map. Roughness, metallic, height, a
 ## Source
 
 - `src/lib.rs`: deterministic tileable procedural graph renderer, input validation, PBR channels, and unit tests.
-- `src/presets.rs` and `src/presets/catalog.json`: embedded 1,039-preset natural material catalog and procedural node-graph builder.
+- `src/presets.rs` and `src/presets/catalog.json`: embedded 1,067-preset natural material catalog and procedural node-graph builder.
 - `src/node_library.rs`: 76 executable original Rust generators, filters, math/mix operations and transforms with tests.
 - `src/foliage.rs`: deterministic cube/hex-prism voxel tree generation and shared exposed-face geometry for editing/export.
 - `src/asset.rs`: standalone editable voxel asset model, tree imports, block operations and asset serialization.
