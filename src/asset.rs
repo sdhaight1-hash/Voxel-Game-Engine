@@ -391,7 +391,9 @@ mod tests {
         for shape in [VoxelShape::Cube, VoxelShape::HexPrism] {
             asset.shape = shape;
             let single = asset.mesh().unwrap().triangle_count();
-            asset.add([0, 0, 1], Material::Leaf).unwrap();
+            // Two opaque wood hexels share a culled internal face;
+            // transparent leaf cards intentionally do not occlude wood.
+            asset.add([0, 0, 1], Material::Bark).unwrap();
             assert!(asset.mesh().unwrap().triangle_count() < single * 2);
             asset.erase([0, 0, 1]);
         }
