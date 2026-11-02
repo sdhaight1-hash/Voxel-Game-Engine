@@ -4,7 +4,8 @@
 //! Core data: integer cell positions + material slots, not an OBJ mesh.
 //! The PBR graph can travel with the asset for continued surface design.
 
-use crate::foliage::{FoliageMesh, FoliageProject, Material, VoxelCell, LeafRenderSettings};
+use crate::foliage::{FoliageMesh, FoliageProject, Material, VoxelCell,
+    LeafRenderSettings, TreeStructure, TreeCell, TreePart};
 use crate::voxel::VoxelShape;
 use crate::Graph;
 use crate::foliage_materials::FoliageMaterials;
@@ -26,6 +27,10 @@ pub struct VoxelAsset {
     pub materials: FoliageMaterials,
     /// Optional procedural surface material project. Kept editable in Nodes.
     pub material_graph: Option<Graph>,
+    /// Generator provenance for editable tree hexels; never a second
+    /// source of occupancy or a collection of runtime branch entities.
+    #[serde(default)]
+    pub tree_structure: Option<TreeStructure>,
 }
 
 impl Default for VoxelAsset {
@@ -41,6 +46,7 @@ impl Default for VoxelAsset {
             leaf_render: LeafRenderSettings::default(),
             materials: FoliageMaterials::default(),
             material_graph: None,
+            tree_structure: None,
         }
     }
 }
@@ -58,6 +64,7 @@ impl VoxelAsset {
             leaf_render: project.leaf_render,
             materials: project.materials.clone(),
             material_graph: Some(graph.clone()),
+            tree_structure: mesh.structure.clone(),
         }
     }
 
@@ -69,14 +76,22 @@ impl VoxelAsset {
             return Err("Asset name must be 1..120 characters".into());
         }
         self.mesh()?;
+        if let Some(structure)=&self.tree_structure {
+            if self.shape!=VoxelShape::HexPrism || self.voxel_size!=1.0 {
+                return Err("Tree structure requires standard 1m hexels".into());
+            }
+            structure.validate(&self.voxels)?;
+        }
         self.materials.validate()?;
         if let Some(graph) = &self.material_graph { graph.validate()?; }
         Ok(())
     }
 
     pub fn mesh(&self) -> Result<FoliageMesh, String> {
-        FoliageMesh::from_voxels_with_render(self.shape, self.voxel_size,
-            self.voxels.clone(), self.leaf_render)
+        let mut mesh=FoliageMesh::from_voxels_with_render(self.shape,self.voxel_size,
+            self.voxels.clone(),self.leaf_render)?;
+        mesh.structure=self.tree_structure.clone();
+        Ok(mesh)
     }
 
     pub fn contains(&self, pos: [i32; 3]) -> bool {
@@ -98,6 +113,12 @@ impl VoxelAsset {
             return Err("A voxel already occupies that position".into());
         }
         self.voxels.push(VoxelCell { x: pos[0], y: pos[1], z: pos[2], material });
+        if let Some(tree)=&mut self.tree_structure {
+            tree.cells.push(TreeCell {cell:pos,part:if material.is_wood() {
+                TreePart::AuthoredWood
+            } else {TreePart::Foliage},branch_id:None});
+            self.sync_tree_footprint();
+        }
         Ok(())
     }
 
@@ -105,7 +126,26 @@ impl VoxelAsset {
     /// harvest/drop resolution. Visual leaf cards are not separate fake blocks.
     pub fn harvest_cell(&mut self, pos: [i32; 3]) -> Option<Material> {
         let i = self.voxels.iter().position(|v| [v.x, v.y, v.z] == pos)?;
-        Some(self.voxels.remove(i).material)
+        let material=self.voxels.remove(i).material;
+        if let Some(tree)=&mut self.tree_structure {
+            tree.cells.retain(|part|part.cell!=pos);
+            self.sync_tree_footprint();
+        }
+        Some(material)
+    }
+
+    /// Recompute grounding from occupied cells after edits. A tree with no
+    /// remaining trunk base becomes a generic editable voxel asset.
+    fn sync_tree_footprint(&mut self) {
+        if let Some(tree)=&mut self.tree_structure {
+            let mut roots:Vec<_>=self.voxels.iter()
+                .filter(|v|v.z==0 && v.material.is_wood())
+                .map(|v|[v.x,v.y]).collect();
+            roots.sort_unstable();
+            roots.dedup();
+            if roots.is_empty() {self.tree_structure=None;}
+            else {tree.root_footprint=roots;}
+        }
     }
 
     pub fn erase(&mut self, pos: [i32; 3]) -> bool {
@@ -116,6 +156,15 @@ impl VoxelAsset {
         if let Some(voxel) = self.voxels.iter_mut()
             .find(|v| [v.x, v.y, v.z] == pos) {
             voxel.material = material;
+            if let Some(tree)=&mut self.tree_structure {
+                if let Some(record)=tree.cells.iter_mut().find(|c|c.cell==pos) {
+                    record.part=if material.is_wood() {
+                        TreePart::AuthoredWood
+                    } else {TreePart::Foliage};
+                    record.branch_id=None;
+                }
+                self.sync_tree_footprint();
+            }
             true
         } else { false }
     }
@@ -126,6 +175,7 @@ impl VoxelAsset {
         let material = self.material_at(from).ok_or("Source cell is empty")?;
         self.add(to, material)?;
         self.erase(from);
+        // A moved cell is a manual change, not a reliably anchored branch tip.
         Ok(())
     }
 
@@ -157,6 +207,8 @@ impl VoxelAsset {
                 leaf_color: project.leaf_color,
                 leaf_render: project.leaf_render,
                 materials: project.materials,
+                tree_structure:serde_json::from_value(value["structure"].clone())
+                    .map_err(|e|format!("Tree structure: {e}"))?,
                 ..Self::default()
             }
         } else {
