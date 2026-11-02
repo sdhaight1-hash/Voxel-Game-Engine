@@ -1,4 +1,4 @@
-//! Bounded architectural growth rules for the 29 authored tree/bamboo types.
+//! Bounded architectural growth rules for the 30 authored tree/bamboo types.
 //! These are stylized visual rules at the editor's 1m hexel resolution, not
 //! measured botanical growth simulations. Author-edited slider values still
 //! apply, but the seed cannot turn one species into a different silhouette.
