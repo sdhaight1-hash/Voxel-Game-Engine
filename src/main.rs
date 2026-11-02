@@ -6,10 +6,26 @@ use texture_studio::{Graph, NodeKind};
 const NODE_W: f32 = 170.0;
 const PREVIEW_SIZE: u32 = 256;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Port {
+    Output(u64),
+    Input(u64, usize),
+}
+
+#[derive(Clone, Copy, Debug)]
+struct WireGesture {
+    start: Port,
+    // Preserve the existing cable until a new connection has passed validation.
+    original: Option<(u64, usize, u64)>, // to, input, from
+    pressed_at: Pos2,
+    dragging: bool,
+}
+
 struct Studio {
     graph: Graph,
     selected: Option<u64>,
     connecting: Option<u64>,
+    wire_gesture: Option<WireGesture>,
     preview: Option<TextureHandle>,
     selected_preview: Option<TextureHandle>,
     previewed_id: Option<u64>,
@@ -32,6 +48,7 @@ impl Default for Studio {
             graph: Graph::demo_bricks(),
             selected: Some(2),
             connecting: None,
+            wire_gesture: None,
             preview: None,
             selected_preview: None,
             previewed_id: None,
@@ -45,7 +62,7 @@ impl Default for Studio {
             dirty: true,
             export_size: 1024,
             project_path: None,
-            status: "Ready — click an output socket, then an input socket to connect nodes".to_owned(),
+            status: "Drag output to input to connect. Drag an existing cable to rewire it.".to_owned(),
         }
     }
 }
@@ -95,6 +112,7 @@ impl Studio {
         self.graph = Graph::default();
         self.selected = Some(1);
         self.connecting = None;
+        self.wire_gesture = None;
         self.pan = Vec2::ZERO;
         self.zoom = 1.0;
         self.project_path = None;
@@ -115,6 +133,7 @@ impl Studio {
                 self.graph = graph;
                 self.selected = None;
                 self.connecting = None;
+                self.wire_gesture = None;
                 self.pan = Vec2::ZERO;
                 self.zoom = 1.0;
                 self.dirty = true;
@@ -188,6 +207,7 @@ impl Studio {
         self.graph = Graph::demo_bricks();
         self.selected = Some(2);
         self.connecting = None;
+        self.wire_gesture = None;
         self.pan = Vec2::ZERO;
         self.zoom = 1.0;
         self.project_path = None;
@@ -241,12 +261,17 @@ impl Studio {
         ui.small("Drag headers: move nodes");
         ui.small("Middle mouse drag: pan graph");
         ui.small("Mouse wheel: zoom graph");
-        ui.small("Click output → input: connect");
+        ui.small("Drag output → input: connect");
+        ui.small("Drag input / cable: rewire");
+        ui.small("Or click output then input");
         ui.small("Right-click input: disconnect");
         ui.small("Delete node in Inspector");
         if let Some(id) = self.connecting {
             ui.colored_label(Color32::LIGHT_GREEN, format!("Wiring from #{id}"));
-            if ui.button("Cancel wire").clicked() { self.connecting = None; }
+            if ui.button("Cancel wire").clicked() {
+                self.connecting = None;
+                self.wire_gesture = None;
+            }
         }
     }
 
@@ -314,8 +339,184 @@ impl Studio {
             } else {
                 self.selected = None;
                 if self.connecting == Some(id) { self.connecting = None; }
+                self.wire_gesture = None;
                 self.dirty = true;
                 self.status = "Node deleted".into();
+            }
+        }
+    }
+
+
+    /// Geometric port picking avoids click-only widgets capturing the drag and
+    /// works even when the pointer is released over another node's body.
+    fn port_at(&self, canvas: Rect, pointer: Pos2) -> Option<Port> {
+        if !canvas.contains(pointer) { return None; }
+        let mut nearest: Option<(f32, Port)> = None;
+        for node in self.graph.nodes.iter().rev() {
+            let mut consider = |position: Pos2, port: Port| {
+                let distance = position.distance(pointer);
+                if distance <= 17.0 && nearest.map_or(true, |(d, _)| distance < d) {
+                    nearest = Some((distance, port));
+                }
+            };
+            if !matches!(node.kind, NodeKind::Output) {
+                consider(socket_output(canvas.min, self.pan, self.zoom,
+                    node.position, node.kind.input_count()), Port::Output(node.id));
+            }
+            for input in 0..node.kind.input_count() {
+                consider(socket_input(canvas.min, self.pan, self.zoom,
+                    node.position, input), Port::Input(node.id, input));
+            }
+        }
+        nearest.map(|(_, port)| port)
+    }
+
+    /// The body of a wire is also grab-able, not just its small end socket.
+    fn cable_at(&self, canvas: Rect, pointer: Pos2) -> Option<(u64, usize, u64)> {
+        if !canvas.contains(pointer) { return None; }
+        // Nodes should win over cables that happen to cross behind them.
+        for node in &self.graph.nodes {
+            let origin = screen_point(canvas.min, self.pan, self.zoom,
+                node.position[0], node.position[1]);
+            if Rect::from_min_size(origin,
+                Vec2::new(NODE_W * self.zoom, node_height(node.kind) * self.zoom)).contains(pointer)
+            {
+                return None;
+            }
+        }
+        let mut best: Option<(f32, (u64, usize, u64))> = None;
+        for link in &self.graph.links {
+            let (Some(src), Some(dst)) = (self.graph.node(link.from), self.graph.node(link.to)) else { continue; };
+            let a = socket_output(canvas.min, self.pan, self.zoom, src.position, src.kind.input_count());
+            let b = socket_input(canvas.min, self.pan, self.zoom, dst.position, link.input);
+            let mut previous = a;
+            for i in 1..=24 {
+                let point = wire_bezier(a, b, i as f32 / 24.0);
+                let d = distance_to_segment(pointer, previous, point);
+                if d <= 11.0 && best.map_or(true, |(distance, _)| d < distance) {
+                    best = Some((d, (link.to, link.input, link.from)));
+                }
+                previous = point;
+            }
+        }
+        best.map(|(_, link)| link)
+    }
+
+    fn connect_dropped_wire(&mut self, gesture: WireGesture, target: Port) {
+        let result = match (gesture.start, target) {
+            (Port::Output(from), Port::Input(to, input)) =>
+                self.graph.connect(from, to, input),
+            (Port::Input(to, input), Port::Output(from)) => {
+                if gesture.original.is_some() {
+                    self.graph.rewire(to, input, from, to, input)
+                } else {
+                    self.graph.connect(from, to, input)
+                }
+            }
+            (Port::Input(old_to, old_input), Port::Input(new_to, new_input)) => {
+                if let Some((_, _, from)) = gesture.original {
+                    self.graph.rewire(old_to, old_input, from, new_to, new_input)
+                } else {
+                    Err("To create a connection, drag this input to an output socket".into())
+                }
+            }
+            _ => Err("Connect an output to an input, not two matching sockets".into()),
+        };
+        match result {
+            Ok(()) => {
+                self.connecting = None;
+                self.dirty = true;
+                self.status = "Connection updated".into();
+            }
+            Err(err) => self.status = format!("Connection unchanged: {err}"),
+        }
+    }
+
+    fn handle_wire_input(&mut self, ui: &egui::Ui, canvas: Rect) {
+        let (pointer, pressed, released, held, right_pressed, escape) = ui.input(|i| (
+            i.pointer.latest_pos(),
+            i.pointer.button_pressed(egui::PointerButton::Primary),
+            i.pointer.button_released(egui::PointerButton::Primary),
+            i.pointer.button_down(egui::PointerButton::Primary),
+            i.pointer.button_pressed(egui::PointerButton::Secondary),
+            i.key_pressed(egui::Key::Escape),
+        ));
+
+        if escape {
+            self.wire_gesture = None;
+            self.connecting = None;
+            self.status = "Cable operation cancelled".into();
+            return;
+        }
+
+        if let Some(pointer) = pointer {
+            if right_pressed {
+                let disconnected = match self.port_at(canvas, pointer) {
+                    Some(Port::Input(to, slot)) => Some((to, slot)),
+                    _ => self.cable_at(canvas, pointer).map(|(to, slot, _)| (to, slot)),
+                };
+                if let Some((to, slot)) = disconnected {
+                    self.graph.disconnect(to, slot);
+                    self.wire_gesture = None;
+                    self.connecting = None;
+                    self.dirty = true;
+                    self.status = "Connection removed".into();
+                    return;
+                }
+            }
+
+            if pressed && canvas.contains(pointer) {
+                let start = self.port_at(canvas, pointer).or_else(|| {
+                    self.cable_at(canvas, pointer).map(|(to, slot, _)| Port::Input(to, slot))
+                });
+                if let Some(start) = start {
+                    let original = match start {
+                        Port::Input(to, slot) =>
+                            self.graph.links.iter().find(|link| link.to == to && link.input == slot)
+                                .map(|link| (to, slot, link.from)),
+                        Port::Output(_) => None,
+                    };
+                    self.wire_gesture = Some(WireGesture {
+                        start, original, pressed_at: pointer, dragging: false,
+                    });
+                } else {
+                    self.connecting = None;
+                }
+            }
+
+            if let Some(mut gesture) = self.wire_gesture {
+                if held && pointer.distance(gesture.pressed_at) > 6.0 {
+                    gesture.dragging = true;
+                    self.wire_gesture = Some(gesture);
+                }
+                if released {
+                    if gesture.dragging {
+                        if let Some(target) = self.port_at(canvas, pointer) {
+                            self.connect_dropped_wire(gesture, target);
+                        } else {
+                            self.status = "Cable drop cancelled; original connection preserved".into();
+                        }
+                    } else {
+                        match gesture.start {
+                            Port::Output(from) => {
+                                self.connecting = Some(from);
+                                self.selected = Some(from);
+                                self.status = "Now click an input socket, or drag to it".into();
+                            }
+                            Port::Input(to, slot) => {
+                                if let Some(from) = self.connecting {
+                                    self.connect_dropped_wire(WireGesture {
+                                        start: Port::Output(from), ..gesture
+                                    }, Port::Input(to, slot));
+                                } else {
+                                    self.selected = Some(to);
+                                    self.status = "Drag this socket or its cable to another port".into();
+                                }
+                            }
+                        }
+                    }
+                    self.wire_gesture = None;
+                }
             }
         }
     }
@@ -354,7 +555,10 @@ impl Studio {
             y += grid_step;
         }
 
+        let moving_link = self.wire_gesture.filter(|gesture| gesture.dragging)
+            .and_then(|gesture| gesture.original);
         for link in &self.graph.links {
+            if moving_link == Some((link.to, link.input, link.from)) { continue; }
             let (Some(source), Some(target)) = (self.graph.node(link.from), self.graph.node(link.to)) else { continue; };
             let from = socket_output(rect.min, self.pan, self.zoom, source.position, source.kind.input_count());
             let to = socket_input(rect.min, self.pan, self.zoom, target.position, link.input);
@@ -395,7 +599,8 @@ impl Studio {
             if response.clicked() { self.selected = Some(id); }
             if response.dragged() {
                 self.selected = Some(id);
-                let delta = response.drag_delta() / z;
+                // pointer.delta() is per frame; drag_delta() is cumulative and caused runaway motion.
+                let delta = ui.input(|i| i.pointer.delta()) / z;
                 if let Some(node) = self.graph.node_mut(id) {
                     node.position[0] += delta.x;
                     node.position[1] += delta.y;
@@ -418,12 +623,6 @@ impl Studio {
                 let output = socket_output(rect.min, self.pan, z, position, kind.input_count());
                 painter.circle_filled(output, 6.0 * z,
                     if self.connecting == Some(id) { Color32::LIGHT_GREEN } else { Color32::from_rgb(103, 200, 232) });
-                let hit = Rect::from_center_size(output, Vec2::splat(24.0 * z));
-                if ui.interact(hit, ui.make_persistent_id(("output", id)), Sense::click()).clicked() {
-                    self.connecting = Some(id);
-                    self.selected = Some(id);
-                    self.status = format!("Choose an input socket for node #{id}");
-                }
             }
             for input in 0..kind.input_count() {
                 let socket = socket_input(rect.min, self.pan, z, position, input);
@@ -438,35 +637,52 @@ impl Studio {
                 painter.circle_filled(socket, 6.0 * z, color);
                 painter.text(socket + Vec2::new(12.0 * z, 0.0), Align2::LEFT_CENTER,
                     kind.input_name(input), FontId::proportional(11.0 * z), Color32::WHITE);
-                let hit = Rect::from_center_size(socket, Vec2::splat(24.0 * z));
-                let response = ui.interact(hit, ui.make_persistent_id(("input", id, input)), Sense::click());
-                if response.clicked() {
-                    if let Some(source) = self.connecting {
-                        match self.graph.connect(source, id, input) {
-                            Ok(()) => {
-                                self.connecting = None;
-                                self.dirty = true;
-                                self.status = "Nodes connected".into();
-                            }
-                            Err(err) => self.status = err,
-                        }
-                    } else {
-                        self.selected = Some(id);
-                        self.status = "Click a source output socket first".into();
-                    }
-                }
-                if response.secondary_clicked() {
-                    self.graph.disconnect(id, input);
-                    self.dirty = true;
-                    self.status = "Connection removed".into();
-                }
             }
         }
-        if let Some(id) = self.connecting {
-            if let (Some(node), Some(mouse)) = (self.graph.node(id), ui.ctx().pointer_hover_pos()) {
-                draw_wire(&painter,
-                    socket_output(rect.min, self.pan, self.zoom, node.position, node.kind.input_count()),
-                    mouse, Color32::LIGHT_GREEN);
+        self.handle_wire_input(ui, rect);
+        if let Some(pointer) = ui.ctx().pointer_hover_pos() {
+            let active = self.wire_gesture.filter(|gesture| gesture.dragging);
+            if let Some(gesture) = active {
+                match gesture.start {
+                    Port::Output(from) => {
+                        if let Some(node) = self.graph.node(from) {
+                            let start = socket_output(rect.min, self.pan, self.zoom,
+                                node.position, node.kind.input_count());
+                            draw_wire(&painter, start, pointer, Color32::LIGHT_GREEN);
+                        }
+                    }
+                    Port::Input(to, slot) => {
+                        if let Some((_, _, from)) = gesture.original {
+                            if let Some(node) = self.graph.node(from) {
+                                let start = socket_output(rect.min, self.pan, self.zoom,
+                                    node.position, node.kind.input_count());
+                                draw_wire(&painter, start, pointer, Color32::LIGHT_GREEN);
+                            }
+                        } else if let Some(node) = self.graph.node(to) {
+                            let end = socket_input(rect.min, self.pan, self.zoom, node.position, slot);
+                            draw_wire(&painter, pointer, end, Color32::LIGHT_GREEN);
+                        }
+                    }
+                }
+            } else if let Some(from) = self.connecting {
+                if let Some(node) = self.graph.node(from) {
+                    let start = socket_output(rect.min, self.pan, self.zoom,
+                        node.position, node.kind.input_count());
+                    draw_wire(&painter, start, pointer, Color32::LIGHT_GREEN);
+                }
+            }
+
+            if let Some(port) = self.port_at(rect, pointer) {
+                let position = match port {
+                    Port::Output(id) => self.graph.node(id).map(|node|
+                        socket_output(rect.min, self.pan, self.zoom, node.position, node.kind.input_count())),
+                    Port::Input(id, slot) => self.graph.node(id).map(|node|
+                        socket_input(rect.min, self.pan, self.zoom, node.position, slot)),
+                };
+                if let Some(center) = position {
+                    painter.circle_stroke(center, 12.0,
+                        Stroke::new(2.0, Color32::LIGHT_GREEN));
+                }
             }
         }
     }
@@ -596,19 +812,31 @@ fn node_accent(kind: NodeKind) -> Color32 {
     }
 }
 
-fn draw_wire(painter: &egui::Painter, a: Pos2, b: Pos2, color: Color32) {
+/// Cubic cable path shared by painter and wire hit-testing.
+fn wire_bezier(a: Pos2, b: Pos2, t: f32) -> Pos2 {
     let bend = ((b.x - a.x).abs() * 0.45).max(30.0);
     let c1 = a + Vec2::new(bend, 0.0);
     let c2 = b - Vec2::new(bend, 0.0);
+    let inv = 1.0 - t;
+    let point = a.to_vec2() * (inv * inv * inv)
+        + c1.to_vec2() * (3.0 * inv * inv * t)
+        + c2.to_vec2() * (3.0 * inv * t * t)
+        + b.to_vec2() * (t * t * t);
+    Pos2::new(point.x, point.y)
+}
+
+fn distance_to_segment(point: Pos2, a: Pos2, b: Pos2) -> f32 {
+    let ab = b - a;
+    let length_squared = ab.length_sq();
+    if length_squared < 0.001 { return point.distance(a); }
+    let t = ((point - a).dot(ab) / length_squared).clamp(0.0, 1.0);
+    point.distance(a + ab * t)
+}
+
+fn draw_wire(painter: &egui::Painter, a: Pos2, b: Pos2, color: Color32) {
     let mut previous = a;
-    for i in 1..=20 {
-        let t = i as f32 / 20.0;
-        let inv = 1.0 - t;
-        let point = a.to_vec2() * (inv * inv * inv)
-            + c1.to_vec2() * (3.0 * inv * inv * t)
-            + c2.to_vec2() * (3.0 * inv * t * t)
-            + b.to_vec2() * (t * t * t);
-        let point = Pos2::new(point.x, point.y);
+    for i in 1..=24 {
+        let point = wire_bezier(a, b, i as f32 / 24.0);
         painter.line_segment([previous, point], Stroke::new(2.5, color));
         previous = point;
     }
