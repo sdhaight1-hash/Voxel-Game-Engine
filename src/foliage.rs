@@ -2436,6 +2436,35 @@ mod tests {
     use super::*;
 
     #[test]
+    fn pipe_model_uses_foliage_support_without_breaking_legacy_projects() {
+        let mut p=FoliageProject::from_preset(PlantPreset::Oak);
+        p.wood_pipe_blend=0.0;
+        let original=p.generate().unwrap();
+        p.wood_pipe_blend=1.0;
+        p.wood_pipe_exponent=2.0;
+        let adapted=p.generate().unwrap();
+        assert_ne!(original.structure.as_ref().unwrap().spans,
+            adapted.structure.as_ref().unwrap().spans);
+        assert_eq!(original.structure.as_ref().unwrap()
+            .spans.iter().filter(|s|s.branch_id==0).collect::<Vec<_>>(),
+            adapted.structure.as_ref().unwrap()
+            .spans.iter().filter(|s|s.branch_id==0).collect::<Vec<_>>(),
+            "Pipe model must not change the authored trunk");
+        adapted.structure.as_ref().unwrap().validate(&adapted.voxels).unwrap();
+        let json=serde_json::to_string(&p).unwrap();
+        let reloaded: FoliageProject=serde_json::from_str(&json).unwrap();
+        assert_eq!(reloaded.wood_pipe_blend,1.0);
+        assert_eq!(reloaded.wood_pipe_exponent,2.0);
+        let mut old:serde_json::Value=serde_json::from_str(&json).unwrap();
+        old.as_object_mut().unwrap().remove("wood_pipe_blend");
+        old.as_object_mut().unwrap().remove("wood_pipe_exponent");
+        let old: FoliageProject=serde_json::from_value(old).unwrap();
+        old.validate().unwrap();
+        assert_eq!(old.wood_pipe_blend,0.35);
+        assert_eq!(old.wood_pipe_exponent,2.3);
+    }
+
+    #[test]
     fn organic_wood_triangles_never_leave_authoritative_hexels() {
         for preset in [PlantPreset::Oak,PlantPreset::Pine,
                        PlantPreset::FremontCottonwood,PlantPreset::CaturraCoffee,
