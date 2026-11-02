@@ -8,6 +8,7 @@ use texture_studio::presets::{builtin_presets, Preset};
 use texture_studio::foliage::{FoliageProject, FoliageMesh, FoliageStage, PlantPreset, Material,
     BranchGrowth, LeafGeometry, sway_leaf_vertex};
 use texture_studio::asset::VoxelAsset;
+use texture_studio::flora_prefab::FloraPrefab;
 use texture_studio::foliage_materials::{FoliageMaterials, MaterialRole,
     SeasonalPalettes, MATERIAL_SIZE};
 use texture_studio::voxel::{render_atlas, render_voxel_preview, export_obj};
@@ -1229,6 +1230,19 @@ impl Studio {
         };
     }
 
+    fn save_flora_prefab(&mut self) {
+        let Some(path)=rfd::FileDialog::new().add_filter("Flora prefab",&["json"])
+            .set_file_name("plant.flora.json").save_file() else {return;};
+        let result=FloraPrefab::from_project(
+                FloraPrefab::builtin_id(self.foliage.preset),self.foliage.clone())
+            .and_then(|prefab|prefab.to_pretty_json())
+            .and_then(|json|std::fs::write(&path,json).map_err(|e|e.to_string()));
+        self.status=match result {
+            Ok(())=>format!("Saved Flora prefab: {}",path.display()),
+            Err(err)=>format!("Save Flora prefab failed: {err}"),
+        };
+    }
+
     fn open_foliage(&mut self) {
         let Some(path) = rfd::FileDialog::new().add_filter("Foliage project",&["json"])
             .pick_file() else { return; };
@@ -1481,6 +1495,11 @@ impl Studio {
                 ui.small("Opens in Assets for per-cell removal/painting and saving.");
                 if ui.button("Export voxel tree").clicked() { self.export_foliage(); }
                 if ui.button("Save foliage project").clicked() { self.save_foliage(); }
+                if ui.button("Save Flora prefab JSON").clicked() {
+                    self.save_flora_prefab();
+                }
+                ui.small("Flora prefab bundles editable tree settings and habitat.");
+                ui.small("Give edited variants distinct asset_id values before publishing.");
                 if ui.button("Open foliage project").clicked() { self.open_foliage(); }
             }
         }
