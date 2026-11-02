@@ -1440,6 +1440,7 @@ fn tree_surface_triangles(
         }
     }
     let mut triangles=surface_triangles(&solids,shape,size,render);
+    let mut visualized=BTreeSet::new();
     for span in &tree.spans {
         let a=span.from_mm.map(|v|v as f32/1000.0);
         let b=span.to_mm.map(|v|v as f32/1000.0);
@@ -1469,12 +1470,48 @@ fn tree_surface_triangles(
                         (span.end_radius_mm as f32-span.start_radius_mm as f32)*t1)/1000.0;
                     add_tapered_branch_section(&mut triangles,old,
                         lerp3(a,b,t0),lerp3(a,b,t1),r0,r1);
+                    visualized.insert(old);
                     active=None;
                 }
             }
             if let Some(cell)=key {
                 if active.is_none(){active=Some((cell,i));}
             }
+        }
+    }
+    // Rasterization inserts face-adjacent bridge hexels to preserve
+    // harvestable connectivity, even when the smooth centreline narrowly
+    // misses their centers. Give every such cell a thin visible connection
+    // toward its owner path rather than an invisible collision/harvest block.
+    for part in &tree.cells {
+        if !matches!(part.part,TreePart::MajorBranch|TreePart::SmallBranch)
+            || visualized.contains(&part.cell)
+            || cells.get(&part.cell)!=Some(&Material::Bark) {continue;}
+        let Some(owner)=part.branch_id else {continue;};
+        let center=grid_position(shape,size,part.cell);
+        let mut nearest=None;
+        let mut best=f32::INFINITY;
+        for span in tree.spans.iter().filter(|span|span.branch_id==owner) {
+            let a=span.from_mm.map(|x|x as f32/1000.0);
+            let b=span.to_mm.map(|x|x as f32/1000.0);
+            let dir=sub3(b,a);
+            let len2=dir.iter().map(|x|x*x).sum::<f32>().max(1e-8);
+            let off=sub3(center,a);
+            let t=(off.iter().zip(dir.iter()).map(|(a,b)|a*b).sum::<f32>()
+                /len2).clamp(0.0,1.0);
+            let point=lerp3(a,b,t);
+            let delta=sub3(center,point);
+            let distance=delta.iter().map(|x|x*x).sum::<f32>();
+            if distance<best {
+                best=distance;
+                nearest=Some((point,normalize3(dir)));
+            }
+        }
+        if let Some((point,dir))=nearest {
+            let (a,b)=if best<0.005 {
+                (add3(center,mul3(dir,-0.30)),add3(center,mul3(dir,0.30)))
+            } else {(point,center)};
+            add_tapered_branch_section(&mut triangles,part.cell,a,b,0.07,0.045);
         }
     }
     triangles
