@@ -88,7 +88,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         // Preserve baked species texture details and fruit accents; animate
         // only their color multiplier. No per-frame texture uploads.
         let base=max(globals.leaf_base.rgb,vec3<f32>(0.12));
-        rgba=vec4<f32>(min(rgba.rgb*seasonal_foliage(input.uv.y)/base,
+        rgba=vec4<f32>(min(rgba.rgb*seasonal_foliage(1.0-input.uv.y)/base,
             vec3<f32>(1.0)),rgba.a);
     } else {
         rgba = vec4<f32>(1.0);
