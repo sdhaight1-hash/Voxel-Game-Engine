@@ -366,7 +366,7 @@ fn multi_channel_memo_is_compatible_with_all_catalog_materials() {
     use texture_studio::presets::builtin_presets;
     use texture_studio::VoxelSettings;
     let recipes=builtin_presets().unwrap();
-    assert_eq!(recipes.len(),1039);
+    assert_eq!(recipes.len(),1067);
     for preset in recipes {
         let graph=preset.build_graph(VoxelSettings::default());
         let (channels,stats)=graph.render_channels_memoized_rgba(&[0,1,2,3],2,2)
