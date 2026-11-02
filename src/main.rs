@@ -3,10 +3,24 @@ use std::{collections::HashMap, path::{Path, PathBuf}};
 use texture_studio::{Graph, NodeKind, LibraryNode, VoxelShape, SideMapping};
 use texture_studio::presets::{builtin_presets, Preset};
 use texture_studio::foliage::{FoliageProject, FoliageMesh, FoliageStage, PlantPreset, Material};
+use texture_studio::asset::VoxelAsset;
 use texture_studio::voxel::{render_atlas, render_voxel_preview, export_obj};
 
 const NODE_W: f32 = 170.0;
 const PREVIEW_SIZE: u32 = 256;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum AssetTool { Select, Add, Erase, Paint }
+
+fn hit_triangle(p: Pos2, a: Pos2, b: Pos2, c: Pos2) -> bool {
+    let cross = |u: Pos2, v: Pos2, w: Pos2| -> f32 {
+        (v.x - u.x) * (w.y - u.y) - (v.y - u.y) * (w.x - u.x)
+    };
+    let x = cross(a,b,p); let y = cross(b,c,p); let z = cross(c,a,p);
+    (x >= 0.0 && y >= 0.0 && z >= 0.0) ||
+        (x <= 0.0 && y <= 0.0 && z <= 0.0)
+}
+
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Port {
@@ -30,6 +44,18 @@ struct Studio {
     foliage_dirty: bool,
     foliage_stage: FoliageStage,
     foliage_yaw: f32,
+    asset: VoxelAsset,
+    asset_mesh: Option<FoliageMesh>,
+    asset_dirty: bool,
+    asset_tool: AssetTool,
+    asset_material: Material,
+    asset_selected: Option<[i32; 3]>,
+    asset_cursor: [i32; 3],
+    asset_yaw: f32,
+    asset_zoom: f32,
+    asset_path: Option<PathBuf>,
+    asset_undo: Vec<VoxelAsset>,
+    asset_redo: Vec<VoxelAsset>,
     selected: Option<u64>,
     connecting: Option<u64>,
     wire_gesture: Option<WireGesture>,
@@ -65,6 +91,18 @@ impl Default for Studio {
             foliage_dirty: true,
             foliage_stage: FoliageStage::PresetLoader,
             foliage_yaw: 0.8,
+            asset: VoxelAsset::default(),
+            asset_mesh: None,
+            asset_dirty: true,
+            asset_tool: AssetTool::Select,
+            asset_material: Material::Bark,
+            asset_selected: Some([0, 0, 0]),
+            asset_cursor: [0, 0, 1],
+            asset_yaw: 0.8,
+            asset_zoom: 1.0,
+            asset_path: None,
+            asset_undo: Vec::new(),
+            asset_redo: Vec::new(),
             selected: Some(2),
             connecting: None,
             wire_gesture: None,
@@ -572,6 +610,7 @@ impl Studio {
             ui.selectable_value(&mut self.library_tab, 1, "Presets");
             ui.selectable_value(&mut self.library_tab, 0, "Nodes");
             ui.selectable_value(&mut self.library_tab, 2, "Foliage");
+            ui.selectable_value(&mut self.library_tab, 3, "Assets");
         });
         ui.separator();
         if self.library_tab == 1 {
@@ -580,6 +619,10 @@ impl Studio {
         }
         if self.library_tab == 2 {
             self.foliage_stage_list(ui);
+            return;
+        }
+        if self.library_tab == 3 {
+            self.asset_outliner(ui);
             return;
         }
         ui.add(egui::TextEdit::singleline(&mut self.library_search).hint_text("Search nodes..."));
@@ -1162,7 +1205,15 @@ impl Studio {
 impl eframe::App for Studio {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
-        if self.library_tab == 2 {
+        if self.library_tab == 3 {
+            if self.asset_dirty {
+                match self.asset.mesh() {
+                    Ok(mesh) => self.asset_mesh = Some(mesh),
+                    Err(e) => { self.asset_mesh = None; self.status = format!("Asset error: {e}"); }
+                }
+                self.asset_dirty = false;
+            }
+        } else if self.library_tab == 2 {
             if self.foliage_dirty {
                 match self.foliage.generate() {
                     Ok(mesh) => self.foliage_mesh = Some(mesh),
@@ -1177,7 +1228,18 @@ impl eframe::App for Studio {
             ui.horizontal_wrapped(|ui| {
                 ui.heading("TEXTURE STUDIO");
                 ui.separator();
-                if self.library_tab == 2 {
+                if self.library_tab == 3 {
+                    if ui.button("New Asset").clicked() { self.new_asset(); }
+                    if ui.button("Open Asset").clicked() { self.open_asset(); }
+                    if ui.button("Save Asset").clicked() { self.save_asset(false); }
+                    if ui.button("Save As").clicked() { self.save_asset(true); }
+                    if ui.button("Export Asset").clicked() { self.export_asset(); }
+                    ui.separator();
+                    if ui.add_enabled(!self.asset_undo.is_empty(),
+                        egui::Button::new("Undo")).clicked() { self.undo_asset(); }
+                    if ui.add_enabled(!self.asset_redo.is_empty(),
+                        egui::Button::new("Redo")).clicked() { self.redo_asset(); }
+                } else if self.library_tab == 2 {
                     if ui.button("New Tree").clicked() {
                         self.foliage = FoliageProject::default();
                         self.foliage_dirty = true;
@@ -1186,6 +1248,7 @@ impl eframe::App for Studio {
                     if ui.button("Open Tree").clicked() { self.open_foliage(); }
                     if ui.button("Save Tree").clicked() { self.save_foliage(); }
                     if ui.button("Export Voxel Tree").clicked() { self.export_foliage(); }
+                    if ui.button("Edit Tree as Asset").clicked() { self.import_tree_as_asset(); }
                     ui.separator();
                 } else {
                 if ui.button("New").clicked() { self.new_project(); }
@@ -1228,6 +1291,10 @@ impl eframe::App for Studio {
             ui.add_space(6.0);
             if self.library_tab == 2 {
                 self.foliage_inspector(ui);
+                return;
+            }
+            if self.library_tab == 3 {
+                self.asset_inspector(ui);
                 return;
             }
             ui.heading("MATERIAL GEOMETRY");
@@ -1348,11 +1415,13 @@ impl eframe::App for Studio {
             });
             if self.library_tab == 2 {
                 self.foliage_canvas(ui);
+            } else if self.library_tab == 3 {
+                self.asset_canvas(ui);
             } else {
                 self.canvas(ui);
             }
         });
-        if self.dirty || self.foliage_dirty { ctx.request_repaint(); }
+        if self.dirty || self.foliage_dirty || self.asset_dirty { ctx.request_repaint(); }
     }
 }
 
