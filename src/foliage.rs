@@ -90,7 +90,7 @@ impl Default for FoliageProject {
 #[serde(rename_all = "snake_case")]
 pub enum Material { Bark, LeafDark, Leaf, LeafLight }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VoxelCell {
     /// Cube: (x,y,z). Hex: (axial q, axial r, z).
     pub x: i32,
@@ -103,6 +103,10 @@ pub struct VoxelCell {
 pub struct Triangle {
     pub points: [[f32; 3]; 3],
     pub material: Material,
+    /// Occupied grid cell this visible face belongs to.
+    pub cell: [i32; 3],
+    /// Grid-space outward neighbor. Clicking the face adds a cell here.
+    pub outward: [i32; 3],
 }
 
 #[derive(Clone, Debug)]
@@ -429,8 +433,8 @@ fn neighbor(shape: VoxelShape, face: usize) -> [i32; 3] {
     }
 }
 fn push_triangle(out: &mut Vec<Triangle>, a: [f32; 3], b: [f32; 3],
-                 c: [f32; 3], material: Material) {
-    out.push(Triangle { points: [a, b, c], material });
+                 c: [f32; 3], material: Material, cell: [i32; 3], outward: [i32; 3]) {
+    out.push(Triangle { points: [a, b, c], material, cell, outward });
 }
 fn surface_triangles(
     cells: &BTreeMap<[i32; 3], Material>, shape: VoxelShape, s: f32,
@@ -448,19 +452,20 @@ fn surface_triangles(
             let next = (face + 1) % n;
             // Footprints are CCW; side quad normal points outward.
             push_triangle(&mut triangles, bottom[face], bottom[next],
-                top[next], *material);
+                top[next], *material, *cell, d);
             push_triangle(&mut triangles, bottom[face], top[next],
-                top[face], *material);
+                top[face], *material, *cell, d);
         }
         if !cells.contains_key(&[cell[0], cell[1], cell[2] + 1]) {
             for i in 1..n-1 {
-                push_triangle(&mut triangles, top[0], top[i], top[i+1], *material);
+                push_triangle(&mut triangles, top[0], top[i], top[i+1],
+                    *material, *cell, [0, 0, 1]);
             }
         }
         if !cells.contains_key(&[cell[0], cell[1], cell[2] - 1]) {
             for i in 1..n-1 {
                 push_triangle(&mut triangles, bottom[0], bottom[i+1],
-                    bottom[i], *material);
+                    bottom[i], *material, *cell, [0, 0, -1]);
             }
         }
     }
@@ -468,6 +473,28 @@ fn surface_triangles(
 }
 
 impl FoliageMesh {
+    /// Rebuild a render/export surface from individually editable occupied cells.
+    /// This is shared by procedural foliage and the general-purpose asset editor.
+    pub fn from_voxels(shape: VoxelShape, voxel_size: f32,
+                       voxels: Vec<VoxelCell>) -> Result<Self, String> {
+        if !voxel_size.is_finite() || !(0.1..=1.5).contains(&voxel_size) {
+            return Err("Voxel size must be between 0.1 and 1.5".into());
+        }
+        if voxels.len() > 40_000 { return Err("Asset exceeds 40,000 voxels".into()); }
+        let mut occupied = BTreeMap::new();
+        for v in &voxels {
+            if [v.x, v.y, v.z].iter().any(|p| !(-128..=128).contains(p)) {
+                return Err("Voxel coordinates must be between -128 and 128".into());
+            }
+            if occupied.insert([v.x, v.y, v.z], v.material).is_some() {
+                return Err("Two voxels occupy the same cell".into());
+            }
+        }
+        let height = voxels.iter().map(|v| v.z).max().unwrap_or(0) as f32 * voxel_size;
+        let triangles = surface_triangles(&occupied, shape, voxel_size);
+        Ok(Self { voxels, triangles, shape, voxel_size, height })
+    }
+
     pub fn triangle_count(&self) -> usize { self.triangles.len() }
     pub fn voxel_count(&self) -> usize { self.voxels.len() }
 
