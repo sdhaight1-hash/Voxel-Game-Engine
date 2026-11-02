@@ -518,6 +518,7 @@ impl Studio {
     }
 
     fn asset_inspector(&mut self, ui: &mut egui::Ui) {
+        egui::ScrollArea::vertical().id_salt("asset_inspector").show(ui, |ui| {
         ui.heading("VOXEL ASSET");
         ui.label("Asset name");
         ui.add(egui::TextEdit::singleline(&mut self.asset.name));
@@ -623,6 +624,7 @@ impl Studio {
             }
         }
         ui.small("The 3D asset preview uses palette colors; PBR texturing remains in Nodes.");
+        });
     }
 
     fn asset_canvas(&mut self, ui: &mut egui::Ui) {
@@ -1011,11 +1013,11 @@ impl Studio {
 
     fn palette(&mut self, ui: &mut egui::Ui) {
         ui.heading("LIBRARY");
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
+            ui.selectable_value(&mut self.library_tab, 3, "Assets");
+            ui.selectable_value(&mut self.library_tab, 2, "Foliage");
             ui.selectable_value(&mut self.library_tab, 1, "Presets");
             ui.selectable_value(&mut self.library_tab, 0, "Nodes");
-            ui.selectable_value(&mut self.library_tab, 2, "Foliage");
-            ui.selectable_value(&mut self.library_tab, 3, "Assets");
         });
         ui.separator();
         if self.library_tab == 1 {
