@@ -5,6 +5,7 @@ use texture_studio::presets::{builtin_presets, Preset};
 use texture_studio::foliage::{FoliageProject, FoliageMesh, FoliageStage, PlantPreset, Material,
     LeafGeometry, leaf_cutout_rgba, leaf_opacity_rgba, sway_leaf_vertex, LEAF_TEXTURE_SIZE};
 use texture_studio::asset::VoxelAsset;
+use texture_studio::foliage_materials::{FoliageMaterials, MaterialRole, MATERIAL_SIZE};
 use texture_studio::voxel::{render_atlas, render_voxel_preview, export_obj};
 
 const NODE_W: f32 = 170.0;
@@ -53,6 +54,26 @@ fn paint_voxel_triangle(
                 Stroke::new(1.3,Color32::from_rgb(255,204,95)));
         }
     }
+}
+
+/// Bake the same material images used by the preview and the static OBJ.
+fn write_foliage_textures(folder:&Path,materials:&FoliageMaterials,
+                          bark:[u8;3], leaf:[u8;3], cutout:bool)->Result<(),String> {
+    let size=MATERIAL_SIZE;
+    if materials.bark.is_some() {
+        save_png_rect(&folder.join("bark-albedo.png"),size,size,
+            &materials.bake_bark(size,bark)?)?;
+    }
+    if cutout {
+        save_png_rect(&folder.join("foliage-leaves.png"),size,size,
+            &materials.bake_leaf(size,leaf)?)?;
+        save_png_rect(&folder.join("foliage-leaves-alpha.png"),size,size,
+            &materials.bake_leaf_opacity(size,leaf)?)?;
+    }
+    for (name,tex) in materials.bake_pbr(size)? {
+        save_png_rect(&folder.join(name),size,size,&tex)?;
+    }
+    Ok(())
 }
 
 fn hit_triangle(p: Pos2, a: Pos2, b: Pos2, c: Pos2) -> bool {
@@ -505,7 +526,9 @@ impl Studio {
         let Some(folder) = rfd::FileDialog::new().pick_folder() else { return; };
         let result: Result<(),String> = (|| {
             let names = ["asset.voxelasset.json", "asset.obj", "asset.mtl",
-                "foliage-leaves.png", "foliage-leaves-alpha.png"];
+                "foliage-leaves.png", "foliage-leaves-alpha.png",
+                "bark-albedo.png", "bark-roughness.png", "bark-normal.png",
+                "foliage-leaves-roughness.png", "foliage-leaves-normal.png"];
             for name in names {
                 if folder.join(name).exists() {
                     return Err(format!("{name} already exists — choose an empty folder"));
@@ -519,12 +542,9 @@ impl Studio {
             for (name, contents) in files {
                 std::fs::write(folder.join(name), contents).map_err(|e|e.to_string())?;
             }
-            if self.asset.leaf_render.geometry==LeafGeometry::CrossedCutout {
-                save_png_rect(&folder.join("foliage-leaves.png"),
-                    LEAF_TEXTURE_SIZE as u32, LEAF_TEXTURE_SIZE as u32, &leaf_cutout_rgba())?;
-                save_png_rect(&folder.join("foliage-leaves-alpha.png"),
-                    LEAF_TEXTURE_SIZE as u32, LEAF_TEXTURE_SIZE as u32, &leaf_opacity_rgba())?;
-            }
+            write_foliage_textures(&folder,&self.asset.materials,
+                self.asset.bark_color,self.asset.leaf_color,
+                self.asset.leaf_render.geometry==LeafGeometry::CrossedCutout)?;
             Ok(())
         })();
         self.status = match result {
@@ -905,7 +925,9 @@ impl Studio {
         let Some(folder) = rfd::FileDialog::new().pick_folder() else { return; };
         let result: Result<(),String> = (||{
             let names=["foliage.voxels.json","foliage.obj","foliage.mtl","foliage.json",
-                "foliage-leaves.png","foliage-leaves-alpha.png"];
+                "foliage-leaves.png","foliage-leaves-alpha.png",
+                "bark-albedo.png","bark-roughness.png","bark-normal.png",
+                "foliage-leaves-roughness.png","foliage-leaves-normal.png"];
             for name in names {
                 if folder.join(name).exists() {
                     return Err(format!("{name} already exists; choose an empty folder"));
@@ -923,12 +945,9 @@ impl Studio {
             for (name,contents) in files {
                 std::fs::write(folder.join(name),contents).map_err(|e|e.to_string())?;
             }
-            if self.foliage.leaf_render.geometry==LeafGeometry::CrossedCutout {
-                save_png_rect(&folder.join("foliage-leaves.png"),
-                    LEAF_TEXTURE_SIZE as u32, LEAF_TEXTURE_SIZE as u32, &leaf_cutout_rgba())?;
-                save_png_rect(&folder.join("foliage-leaves-alpha.png"),
-                    LEAF_TEXTURE_SIZE as u32, LEAF_TEXTURE_SIZE as u32, &leaf_opacity_rgba())?;
-            }
+            write_foliage_textures(&folder,&self.foliage.materials,
+                self.foliage.bark_color,self.foliage.leaf_color,
+                self.foliage.leaf_render.geometry==LeafGeometry::CrossedCutout)?;
             Ok(())
         })();
         self.status = match result {
