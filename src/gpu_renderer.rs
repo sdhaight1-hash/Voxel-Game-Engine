@@ -157,6 +157,24 @@ fn scene_uploads(previous: Option<&Scene>, next: &Scene) -> SceneUploads {
     }
 }
 
+/// Counts CPU-side resource upload calls, not GPU execution time.
+#[derive(Default, Debug, PartialEq, Eq)]
+struct UploadMetrics {
+    vertex_buffers: u64,
+    bark_textures: u64,
+    leaf_textures: u64,
+    palette_writes: u64,
+}
+
+impl UploadMetrics {
+    fn record(&mut self, uploads: &SceneUploads) {
+        self.vertex_buffers+=u64::from(uploads.geometry);
+        self.bark_textures+=u64::from(uploads.bark);
+        self.leaf_textures+=u64::from(uploads.leaf);
+        self.palette_writes+=u64::from(uploads.palette);
+    }
+}
+
 pub struct GpuViewport {
     pub texture_id: egui::TextureId,
     pub backend: String,
@@ -175,6 +193,7 @@ struct Resources {
     vertex: Option<wgpu::Buffer>,
     vertex_count: u32,
     last_scene: Option<Arc<Scene>>,
+    upload_metrics: UploadMetrics,
     _target: wgpu::Texture,
     target_view: wgpu::TextureView,
     _depth: wgpu::Texture,
@@ -306,6 +325,7 @@ impl GpuViewport {
             pipeline,group_layout,uniform,palette_buffer,bind_group:None,
             bark_view:None,leaf_view:None,sampler:None,
             vertex:None,vertex_count:0,last_scene:None,
+            upload_metrics:UploadMetrics::default(),
             _target:target,target_view,
             _depth:depth,depth_view,
         });
@@ -344,6 +364,7 @@ impl egui_wgpu::CallbackTrait for RenderScene {
         let Some(resources)=resources.get_mut::<Resources>() else {return Vec::new()};
         if !resources.last_scene.as_ref()
             .is_some_and(|old|Arc::ptr_eq(old,&self.scene)) {
+            let started=std::time::Instant::now();
             let scene=&self.scene;
             let uploads=scene_uploads(resources.last_scene.as_deref(),scene);
             if uploads.geometry {
@@ -393,6 +414,16 @@ impl egui_wgpu::CallbackTrait for RenderScene {
                             resource:resources.palette_buffer.as_entire_binding()},
                     ],
                 }));
+            }
+            resources.upload_metrics.record(&uploads);
+            if std::env::var_os("VOXEL_PROFILE_MATERIALS").is_some() {
+                let m=&resources.upload_metrics;
+                eprintln!(
+                    "[material-profile] event=gpu_scene_upload cpu_ms={:.3} geometry={} bark={} leaf={} palette={} vertex_uploads={} bark_uploads={} leaf_uploads={} palette_writes={}",
+                    started.elapsed().as_secs_f64()*1000.0,
+                    uploads.geometry,uploads.bark,uploads.leaf,uploads.palette,
+                    m.vertex_buffers,m.bark_textures,m.leaf_textures,m.palette_writes,
+                );
             }
             resources.last_scene=Some(self.scene.clone());
         }
@@ -536,6 +567,27 @@ mod tests {
         let different_mesh=Scene::from_mesh(&grown,&tinted,&leaf,[50,150,80],palette,0.0);
         assert_eq!(scene_uploads(Some(&material),&different_mesh),SceneUploads {
             geometry:true,bark:false,leaf:false,palette:false,
+        });
+        // A wind-strength edit changes only a uniform; scene resources stay put.
+        let mut wind=Scene::from_mesh(&mesh,&bark,&leaf,[50,150,80],
+            texture_studio::foliage_materials::SeasonalPalettes::default().gpu_stops(),0.0);
+        wind.wind_strength+=0.1;
+        assert_eq!(scene_uploads(Some(&baseline),&wind),SceneUploads {
+            geometry:false,bark:false,leaf:false,palette:false,
+        });
+        let mut metrics=UploadMetrics::default();
+        for changes in [
+            scene_uploads(None,&baseline),
+            scene_uploads(Some(&baseline),&identical),
+            scene_uploads(Some(&baseline),&season),
+            scene_uploads(Some(&season),&material),
+            scene_uploads(Some(&material),&different_mesh),
+            scene_uploads(Some(&baseline),&wind),
+        ] {
+            metrics.record(&changes);
+        }
+        assert_eq!(metrics,UploadMetrics {
+            vertex_buffers:2,bark_textures:2,leaf_textures:1,palette_writes:2,
         });
     }
 
