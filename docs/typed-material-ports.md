@@ -25,6 +25,34 @@ The simpler `Scalar` node supplies a constant scalar useful for masks and
 parameter experimentation. Its output can also connect directly to the
 existing material output without changing that output's serialization.
 
+## Scalar masks and visual type feedback
+
+A `Threshold Mask` node accepts **Scalar** input (typically from `Luminance`,
+`Levels` or `Scalar`). It exposes two serializable parameters:
+
+- `threshold` (0..1): where the mask changes from black to white.
+- `softness` (0..1): 0 produces a hard cutoff; positive values apply a
+  deterministic cubic smoothstep to normalized edge coverage.
+
+Its output is typed `Mask`. Safe `Mask→Scalar` and `Mask→Color` cables
+are supported, preserving the existing RGB evaluation boundary. **Mask does
+not silently modify texture alpha.** In foliage, connect a mask to the
+existing Leaf Cutout material graph to drive that role's opacity handling.
+
+The Nodes editor now shows typed internal socket/wire colors:
+Color (blue), Scalar (mint) and Mask (amber). The four PBR Material Output
+sockets retain their original channel-identification colors. In the node
+inspector, expand **Socket types and parameter definitions** to read the
+stable port IDs, parameter IDs, ranges, integer steps, defaults and units.
+This is a read-only reference, not a second control panel.
+
+All legacy parameterized `NodeKind` variants now expose parameter metadata,
+including Checker (even tile counts), Bricks (even row counts), Noise, Voronoi,
+Strata, Blend, Color, Colorize and every `LibraryNode` operation. The shared
+Library operations still expose their existing normalized `amount` and
+`seed` controls; metadata does **not** imply that every library operation
+has unique bespoke parameters.
+
 ## Contract and compatibility
 
 - `NodeKind` keeps the legacy serde enum representation, numeric node IDs,
