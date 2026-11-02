@@ -694,7 +694,8 @@ pub struct TreeStructure {
     pub root_footprint: Vec<[i32; 2]>,
     pub branches: Vec<TreeBranch>,
     pub cells: Vec<TreeCell>,
-    /// One or more tapered spans per branch; no path is regenerated after
+    /// Tapered trunk-spine (id 0) and branch spans; old saves without the spine
+    /// continue to show a solid hexel trunk. No path is regenerated after
     /// a player removes a wood hexel.
     #[serde(default)]
     pub spans: Vec<BranchSpan>,
@@ -721,14 +722,14 @@ impl TreeStructure {
                 return Err("Branch parent must precede its child".into());
             }
         }
-        if self.spans.len()>self.branches.len()*3 {
-            return Err("Too many branch segments for the tree".into());
+        if self.spans.len()>self.branches.len()*3+128 {
+            return Err("Too many branch or trunk segments for the tree".into());
         }
         for span in &self.spans {
             if !by_id.contains_key(&span.branch_id) ||
-                span.branch_id==0 ||
                 span.start_radius_mm==0 || span.end_radius_mm==0 ||
-                span.start_radius_mm>500 || span.end_radius_mm>500 ||
+                span.start_radius_mm>if span.branch_id==0 {8_000} else {500} ||
+                span.end_radius_mm>if span.branch_id==0 {8_000} else {500} ||
                 span.from_mm==span.to_mm ||
                 span.from_mm.iter().chain(span.to_mm.iter())
                     .any(|&v|!(-129_000..=129_000).contains(&v)) {
@@ -1070,6 +1071,23 @@ impl FoliageProject {
             id:0,parent:None,root:[0,0,0],
             tip:grid_key(shape,size,trunk(1.0)),part:TreePart::Trunk
         });
+        // Preserve an explicit, deterministic trunk centerline for smooth render
+        // geometry. Hexel occupancy remains the authority and is unchanged.
+        // 1m segments retain authored trunk lean, taper and basal flare.
+        let levels=(h/size).ceil().max(1.0) as u32;
+        let radius_at=|t:f32| {
+            let flare=(1.0-t/0.18).max(0.0).powi(2);
+            (radius*(1.0-t*trunk_rules.taper)*
+                (1.0+trunk_rules.base_flare*flare))
+                .clamp(size*0.20,8.0*size)
+        };
+        for k in 0..levels {
+            let a=k as f32/levels as f32;
+            let b=(k+1) as f32/levels as f32;
+            spans.push(BranchSpan::new(0,trunk(a),trunk(b),
+                radius_at(a),radius_at(b)));
+        }
+
 
         for i in 0..self.branch_count {
             let rand=|channel|hash01(self.seed,i,channel);
@@ -1204,6 +1222,23 @@ impl FoliageProject {
         for cell in cells.keys() { ownership.insert(*cell,(TreePart::Trunk,Some(0))); }
         branches.push(TreeBranch {id:0,parent:None,root:[0,0,0],
             tip:grid_key(shape,s,trunk(1.0)),part:TreePart::Trunk});
+        // Preserve an explicit, deterministic trunk centerline for smooth render
+        // geometry. Hexel occupancy remains the authority and is unchanged.
+        // 1m segments retain authored trunk lean, taper and basal flare.
+        let levels=(h/s).ceil().max(1.0) as u32;
+        let radius_at=|t:f32| {
+            let flare=(1.0-t/0.18).max(0.0).powi(2);
+            (trunk_radius*(1.0-t*trunk_rules.taper)*
+                (1.0+trunk_rules.base_flare*flare))
+                .clamp(s*0.20,8.0*s)
+        };
+        for k in 0..levels {
+            let a=k as f32/levels as f32;
+            let b=(k+1) as f32/levels as f32;
+            spans.push(BranchSpan::new(0,trunk(a),trunk(b),
+                radius_at(a),radius_at(b)));
+        }
+
         let mut targets = Vec::new();
         if self.branch_growth == BranchGrowth::CanopyGuided {
             let crown_radius = self.branch_length * h * 0.75;
