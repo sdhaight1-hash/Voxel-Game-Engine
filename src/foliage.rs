@@ -230,26 +230,44 @@ pub struct FoliageMesh {
 
 impl FoliageProject {
     pub fn from_preset(preset: PlantPreset) -> Self {
+        // These proportions are tuned for the game's fixed 1 m hexels, not
+        // the former sub-metre foliage grid. A thinner trunk still occupies
+        // at least one real wood cell.
         let (height, radius, branches, branch_length, gravity, density, leaf_scale, bark, leaves) =
             match preset {
-                PlantPreset::Oak => (7.0, 0.35, 26, 0.65, 0.12, 0.75, 0.57,
+                PlantPreset::Oak => (13.0, 0.72, 38, 0.55, 0.08, 0.82, 0.82,
                     [91, 67, 45], [67, 135, 52]),
-                PlantPreset::Pine => (9.0, 0.27, 35, 0.54, 0.07, 0.8, 0.36,
+                PlantPreset::Pine => (18.0, 0.53, 48, 0.46, 0.06, 0.78, 0.44,
                     [89, 71, 52], [40, 94, 58]),
-                PlantPreset::Birch => (8.0, 0.22, 23, 0.44, 0.07, 0.64, 0.44,
+                PlantPreset::Birch => (15.0, 0.46, 30, 0.35, 0.02, 0.67, 0.59,
                     [198, 193, 172], [96, 158, 54]),
-                PlantPreset::Willow => (7.2, 0.28, 28, 0.75, 0.7, 0.94, 0.48,
+                PlantPreset::Willow => (12.0, 0.72, 38, 0.61, 0.80, 0.93, 0.70,
                     [91, 86, 61], [91, 156, 65]),
-                PlantPreset::Maple => (7.0, 0.32, 29, 0.66, 0.1, 0.8, 0.58,
+                PlantPreset::Maple => (13.0, 0.69, 40, 0.58, 0.10, 0.90, 0.85,
                     [97, 70, 51], [112, 163, 52]),
-                PlantPreset::Shrub => (2.8, 0.17, 32, 0.73, 0.18, 0.95, 0.42,
+                PlantPreset::Shrub => (3.5, 0.34, 20, 0.65, 0.13, 0.86, 0.46,
                     [91, 70, 48], [67, 142, 51]),
+            };
+        let (carve_bottom, carve_top, phototropism, leaf_angle, leaf_variation, branch_growth) =
+            match preset {
+                // Crown above a substantial harvestable trunk.
+                PlantPreset::Oak => (0.36, 0.06, 0.20, 0.12, 0.28, BranchGrowth::CanopyGuided),
+                // Lower whorls are widest; preserve the conifer taper.
+                PlantPreset::Pine => (0.10, 0.03, 0.09, 0.05, 0.20, BranchGrowth::Classic),
+                // Light, high, narrow crown with an exposed trunk.
+                PlantPreset::Birch => (0.44, 0.08, 0.28, 0.09, 0.34, BranchGrowth::CanopyGuided),
+                // Long, gravity-drooping branches under a high starting crown.
+                PlantPreset::Willow => (0.36, 0.05, 0.02, -0.25, 0.24, BranchGrowth::Classic),
+                // Broad, relatively full upper canopy.
+                PlantPreset::Maple => (0.33, 0.06, 0.19, 0.15, 0.26, BranchGrowth::CanopyGuided),
+                // Low, multi-branched growth; not a miniature tall tree.
+                PlantPreset::Shrub => (0.05, 0.08, 0.13, 0.18, 0.40, BranchGrowth::Classic),
             };
         Self {
             preset, seed: 42, height, trunk_radius: radius, branch_count: branches,
-            branch_length, branch_growth: BranchGrowth::CanopyGuided, carve_bottom: 0.15, carve_top: 0.02,
-            gravity, phototropism: 0.15, slope: 0.0, overall_scale: 1.0, prune: 0.0,
-            leaf_density: density, leaf_scale, leaf_angle: 0.12, leaf_variation: 0.32,
+            branch_length, branch_growth, carve_bottom, carve_top,
+            gravity, phototropism, slope: 0.0, overall_scale: 1.0, prune: 0.0,
+            leaf_density: density, leaf_scale, leaf_angle, leaf_variation,
             bark_color: bark, leaf_color: leaves,
             leaf_render: LeafRenderSettings::default(),
             materials: FoliageMaterials::for_species(preset),
@@ -854,6 +872,39 @@ mod tests {
                 mesh.voxels.iter().map(|v| (v.x, v.y, v.z)).collect();
             assert_eq!(unique.len(), mesh.voxel_count());
             assert!(mesh.triangle_count() > 0);
+        }
+    }
+
+    #[test]
+    fn species_presets_have_distinct_game_scale_growth_profiles() {
+        let oak = FoliageProject::from_preset(PlantPreset::Oak);
+        let pine = FoliageProject::from_preset(PlantPreset::Pine);
+        let birch = FoliageProject::from_preset(PlantPreset::Birch);
+        let willow = FoliageProject::from_preset(PlantPreset::Willow);
+        let maple = FoliageProject::from_preset(PlantPreset::Maple);
+        let shrub = FoliageProject::from_preset(PlantPreset::Shrub);
+
+        assert!(pine.height > birch.height && birch.height > oak.height);
+        assert!(shrub.height < oak.height * 0.4);
+        assert!(oak.trunk_radius > birch.trunk_radius);
+        assert!(oak.carve_bottom > pine.carve_bottom);
+        assert!(birch.carve_bottom > oak.carve_bottom);
+        assert!(pine.branch_length < willow.branch_length);
+        assert!(willow.gravity > oak.gravity);
+        assert!(maple.leaf_density > birch.leaf_density);
+        assert_eq!(pine.branch_growth, BranchGrowth::Classic);
+        assert_eq!(willow.branch_growth, BranchGrowth::Classic);
+        assert_eq!(oak.branch_growth, BranchGrowth::CanopyGuided);
+        for preset in PlantPreset::ALL {
+            let tree = FoliageProject::from_preset(preset);
+            tree.validate().unwrap();
+            let a = tree.generate().unwrap();
+            let b = tree.generate().unwrap();
+            assert_eq!(a.voxels, b.voxels, "non-deterministic {preset:?}");
+            assert_eq!(a.shape, VoxelShape::HexPrism);
+            assert_eq!(a.voxel_size, WORLD_HEXEL_SIZE_METRES);
+            assert!(a.voxels.iter().any(|v| v.material.is_wood()), "{preset:?}");
+            assert!(a.voxels.iter().any(|v| v.material.is_foliage()), "{preset:?}");
         }
     }
 
