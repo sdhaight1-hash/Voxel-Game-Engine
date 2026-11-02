@@ -922,6 +922,7 @@ impl Studio {
             return;
         };
         let voxel_count=mesh.voxel_count();
+        let triangle_count=mesh.triangle_count();
         if mesh.triangles.is_empty() {
             painter.text(rect.center(),Align2::CENTER_CENTER,"Empty asset: add a block using the inspector",
                 FontId::proportional(16.0),Color32::LIGHT_GRAY);
@@ -1016,6 +1017,19 @@ impl Studio {
                 }
             }
         }
+        if self.gpu.is_some() {
+            // The GPU owns all visible mesh triangles. Only highlight the handful
+            // of faces belonging to the active selected cell on the CPU.
+            if let Some(cell)=self.asset_selected {
+                for tri in mesh.triangles.iter().filter(|t|t.cell==cell).take(36) {
+                    let corners=tri.points.map(project);
+                    for i in 0..3 {
+                        painter.line_segment([corners[i],corners[(i+1)%3]],
+                            Stroke::new(1.0,Color32::from_rgb(255,204,95)));
+                    }
+                }
+            }
+        }
         if let Some((cell,face))=picked {
             match self.asset_tool {
                 AssetTool::Select => {
@@ -1041,22 +1055,9 @@ impl Studio {
                 }
             }
         }
-        if self.gpu.is_some() {
-            // The GPU owns all visible mesh triangles. Only highlight the handful
-            // of faces belonging to the active selected cell on the CPU.
-            if let Some(cell)=self.asset_selected {
-                for tri in mesh.triangles.iter().filter(|t|t.cell==cell).take(36) {
-                    let corners=tri.points.map(project);
-                    for i in 0..3 {
-                        painter.line_segment([corners[i],corners[(i+1)%3]],
-                            Stroke::new(1.0,Color32::from_rgb(255,204,95)));
-                    }
-                }
-            }
-        }
         painter.text(rect.left_top()+Vec2::new(10.0,10.0),Align2::LEFT_TOP,
-            format!("{} voxels • {} displayed triangles",
-                voxel_count,drawn),
+            format!("{} voxels • {} triangles • wgpu",
+                voxel_count,if self.gpu.is_some(){triangle_count}else{drawn}),
             FontId::proportional(13.0),Color32::LIGHT_GRAY);
         ui.small("Left-click a voxel face to edit. Right-drag to orbit. Select a block in the outliner.");
     }
