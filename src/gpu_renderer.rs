@@ -333,13 +333,15 @@ impl GpuViewport {
     }
 
     pub fn paint(&self,ui:&egui::Ui, rect:egui::Rect,scene:Arc<Scene>,
-                 yaw:f32, zoom:f32, time:f32,season_progress:f32) {
+                 yaw:f32, zoom:f32, time:f32,season_progress:f32,
+                 ordered_leaf_coverage:bool) {
         // Egui presents the GPU render target, populated during callback.prepare.
         ui.painter().image(self.texture_id,rect,
             egui::Rect::from_min_max(egui::Pos2::ZERO,egui::Pos2::new(1.0,1.0)),
             egui::Color32::WHITE);
         ui.painter().add(egui_wgpu::Callback::new_paint_callback(
             rect,RenderScene{scene,yaw,zoom,time,season_progress,
+                ordered_leaf_coverage,
                 width:rect.width(),height:rect.height()}));
     }
 }
@@ -350,6 +352,7 @@ struct RenderScene {
     zoom:f32,
     time:f32,
     season_progress:f32,
+    ordered_leaf_coverage:bool,
     width:f32,
     height:f32,
 }
@@ -442,7 +445,8 @@ impl egui_wgpu::CallbackTrait for RenderScene {
             view:[front[0],front[1],front[2],0.4/span],
             wind:[self.time,self.scene.wind_strength,self.scene.wind_speed,self.scene.voxel_size],
             season:[self.season_progress.rem_euclid(4.0),
-                self.scene.flower_kind,0.0,0.0],
+                self.scene.flower_kind,
+                if self.ordered_leaf_coverage {1.0} else {0.0},0.0],
             leaf_base:self.scene.leaf_base,
         };
         queue.write_buffer(&resources.uniform,0,bytemuck::bytes_of(&globals));
@@ -530,6 +534,39 @@ mod tests {
         ).validate(&module).expect("WGSL shader validation failed");
         assert!(module.entry_points.iter().any(|e|e.name=="vs_main"));
         assert!(module.entry_points.iter().any(|e|e.name=="fs_main"));
+    }
+
+    fn cpu_coverage_threshold(x:u32,y:u32)->f32 {
+        const BAYER:[u8;16]=[
+            0,8,2,10,12,4,14,6,3,11,1,9,15,7,13,5,
+        ];
+        (BAYER[((y&3)*4+(x&3)) as usize] as f32+0.5)/16.0
+    }
+
+    #[test]
+    fn ordered_coverage_has_complete_4x4_levels_with_exact_endpoints() {
+        let thresholds:Vec<f32>=(0..4).flat_map(|y|
+            (0..4).map(move |x|cpu_coverage_threshold(x,y))).collect();
+        let mut sorted=thresholds.clone();
+        sorted.sort_by(|a,b|a.total_cmp(b));
+        for (index,&value) in sorted.iter().enumerate() {
+            assert_eq!(value,(index as f32+0.5)/16.0);
+        }
+        assert_eq!((0..16).filter(|index|0.0>=thresholds[*index]).count(),0);
+        assert_eq!((0..16).filter(|index|1.0>=thresholds[*index]).count(),16);
+        assert_eq!((0..16).filter(|index|0.5>=thresholds[*index]).count(),8);
+        for y in 0..4 {
+            for x in 0..4 {
+                assert_eq!(cpu_coverage_threshold(x,y),
+                    cpu_coverage_threshold(x+4,y+4));
+            }
+        }
+        // The existing shader is tested with Naga, not GPU execution;
+        // keep the WGSL's Bayer sequence in sync with this CPU reference.
+        let shader=include_str!("voxel_gpu.wgsl");
+        assert!(shader.contains("leaf_coverage_threshold"));
+        assert!(shader.contains("globals.season.z > 0.5"));
+        assert!(shader.contains("if (rgba.a < 0.5 && blossom < 0.55) { discard; }"));
     }
 
     #[test]
