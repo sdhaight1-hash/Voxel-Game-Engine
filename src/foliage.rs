@@ -1009,6 +1009,7 @@ mod tests {
     #[test]
     fn canopy_guidance_changes_branches_but_remains_deterministic() {
         let mut project = FoliageProject::from_preset(PlantPreset::Oak);
+        project.branch_growth = BranchGrowth::Classic;
         let classic = project.generate().unwrap();
         project.branch_growth = BranchGrowth::CanopyGuided;
         let first = project.generate().unwrap();
