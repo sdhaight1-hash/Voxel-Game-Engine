@@ -1,3 +1,6 @@
+mod gpu_renderer;
+use std::sync::Arc;
+use gpu_renderer::{GpuViewport, Scene as GpuScene};
 use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, TextureHandle, Vec2};
 use std::{collections::HashMap, path::{Path, PathBuf}};
 use texture_studio::{Graph, NodeKind, LibraryNode, VoxelShape, SideMapping};
@@ -102,6 +105,9 @@ struct WireGesture {
 }
 
 struct Studio {
+    gpu: Option<GpuViewport>,
+    foliage_gpu_scene: Option<Arc<GpuScene>>,
+    asset_gpu_scene: Option<Arc<GpuScene>>,
     graph: Graph,
     foliage: FoliageProject,
     foliage_mesh: Option<FoliageMesh>,
@@ -160,6 +166,9 @@ struct Studio {
 impl Default for Studio {
     fn default() -> Self {
         Self {
+            gpu: None,
+            foliage_gpu_scene: None,
+            asset_gpu_scene: None,
             graph: Graph::demo_bricks(),
             foliage: FoliageProject::default(),
             foliage_mesh: None,
@@ -437,6 +446,17 @@ impl Studio {
         self.selected = Some(id);
         self.dirty = true;
         self.status = format!("Added {} node", kind.name());
+    }
+
+    fn new(cc:&eframe::CreationContext<'_>)->Self {
+        let mut app=Self::default();
+        app.gpu=GpuViewport::new(cc);
+        if let Some(gpu)=&app.gpu {
+            app.status=format!("wgpu {:?} renderer on {}",gpu.backend,gpu.adapter);
+        } else {
+            app.status="wgpu initialization unavailable".into();
+        }
+        app
     }
 
     fn new_asset(&mut self) {
@@ -888,6 +908,10 @@ impl Studio {
         let (rect,response)=ui.allocate_exact_size(desired,Sense::click_and_drag());
         let painter=ui.painter_at(rect);
         painter.rect_filled(rect,4.0,Color32::from_rgb(23,27,35));
+        if let (Some(gpu),Some(scene))=(&self.gpu,&self.asset_gpu_scene) {
+            gpu.paint(ui,rect,Arc::clone(scene),self.asset_yaw,self.asset_zoom,
+                ui.ctx().input(|i|i.time as f32));
+        }
         if response.dragged_by(egui::PointerButton::Secondary) {
             self.asset_yaw=(self.asset_yaw+
                 response.drag_delta().x*0.008).rem_euclid(std::f32::consts::TAU);
@@ -975,11 +999,18 @@ impl Studio {
                 (base[1] as f32*shade) as u8,
                 (base[2] as f32*shade) as u8);
             let selected=self.asset_selected==Some(tri.cell);
-            paint_voxel_triangle(&painter,tri,projected,
-                if tri.cutout || tri.material==Material::Bark {Color32::WHITE} else {color},
-                if tri.cutout {self.asset_leaf_texture.as_ref()}
-                    else if tri.material==Material::Bark {self.asset_bark_texture.as_ref()}
-                    else {None},selected);
+            if self.gpu.is_none() {
+                paint_voxel_triangle(&painter,tri,projected,
+                    if tri.cutout || tri.material==Material::Bark {Color32::WHITE} else {color},
+                    if tri.cutout {self.asset_leaf_texture.as_ref()}
+                        else if tri.material==Material::Bark {self.asset_bark_texture.as_ref()}
+                        else {None},selected);
+            } else if selected {
+                for n in 0..3 {
+                    painter.line_segment([projected[n],projected[(n+1)%3]],
+                        Stroke::new(1.0,Color32::from_rgb(255,204,95)));
+                }
+            }
         }
         if let Some((cell,face))=picked {
             match self.asset_tool {
@@ -1234,6 +1265,10 @@ impl Studio {
         let (rect,_) = ui.allocate_exact_size(desired,Sense::hover());
         let painter=ui.painter_at(rect);
         painter.rect_filled(rect,4.0,Color32::from_rgb(22,27,35));
+        if let (Some(gpu),Some(scene))=(&self.gpu,&self.foliage_gpu_scene) {
+            gpu.paint(ui,rect,Arc::clone(scene),self.foliage_yaw,1.0,
+                ui.ctx().input(|i|i.time as f32));
+        }
         let Some(mesh)=&self.foliage_mesh else {
             painter.text(rect.center(),Align2::CENTER_CENTER,
                 "Invalid foliage settings — adjust parameters",
@@ -1289,11 +1324,13 @@ impl Studio {
             let points=std::array::from_fn(|i|project(sway_leaf_vertex(
                 tri.points[i],tri.cell,tri.wind_weight[i],wind_time,
                 mesh.leaf_render,mesh.voxel_size)));
-            paint_voxel_triangle(&painter,tri,points,
-                if tri.cutout || tri.material==Material::Bark {Color32::WHITE} else {color},
-                if tri.cutout {self.leaf_texture.as_ref()}
-                    else if tri.material==Material::Bark {self.bark_texture.as_ref()}
-                    else {None},false);
+            if self.gpu.is_none() {
+                paint_voxel_triangle(&painter,tri,points,
+                    if tri.cutout || tri.material==Material::Bark {Color32::WHITE} else {color},
+                    if tri.cutout {self.leaf_texture.as_ref()}
+                        else if tri.material==Material::Bark {self.bark_texture.as_ref()}
+                        else {None},false);
+            }
         }
         painter.text(rect.left_top()+Vec2::new(12.0,12.0),Align2::LEFT_TOP,
             format!("{} • {} {} voxels • {} surface triangles",
@@ -1905,6 +1942,7 @@ impl eframe::App for Studio {
         let ctx = ui.ctx().clone();
         if self.library_tab==2 && self.foliage_mats_dirty {
             self.foliage_mats_dirty=false;
+            self.foliage_gpu_scene=None;
             let size=64;
             match (self.foliage.materials.bake_leaf(size,self.foliage.leaf_color),
                    self.foliage.materials.bake_bark(size,self.foliage.bark_color)) {
@@ -1919,6 +1957,7 @@ impl eframe::App for Studio {
             }
         } else if self.library_tab==3 && self.asset_mats_dirty {
             self.asset_mats_dirty=false;
+            self.asset_gpu_scene=None;
             let size=64;
             match (self.asset.materials.bake_leaf(size,self.asset.leaf_color),
                    self.asset.materials.bake_bark(size,self.asset.bark_color)) {
@@ -1939,6 +1978,18 @@ impl eframe::App for Studio {
                     Err(e) => { self.asset_mesh = None; self.status = format!("Asset error: {e}"); }
                 }
                 self.asset_dirty = false;
+                self.asset_gpu_scene=None;
+            }
+            if self.asset_gpu_scene.is_none() && self.gpu.is_some() {
+                if let Some(mesh)=&self.asset_mesh {
+                    if self.asset_leaf_pixels.len()==64*64*4 {
+                        let bark=self.asset.materials.bake_bark(64,self.asset.bark_color);
+                        if let Ok(bark)=bark {
+                            self.asset_gpu_scene=Some(Arc::new(GpuScene::from_mesh(
+                                mesh,&bark,&self.asset_leaf_pixels,self.asset.leaf_color)));
+                        }
+                    }
+                }
             }
         } else if self.library_tab == 2 {
             if self.foliage_dirty {
@@ -1947,6 +1998,18 @@ impl eframe::App for Studio {
                     Err(err) => { self.foliage_mesh = None; self.status = format!("Foliage error: {err}"); }
                 }
                 self.foliage_dirty = false;
+                self.foliage_gpu_scene=None;
+            }
+            if self.foliage_gpu_scene.is_none() && self.gpu.is_some() {
+                if let Some(mesh)=&self.foliage_mesh {
+                    if self.foliage_leaf_pixels.len()==64*64*4 {
+                        let bark=self.foliage.materials.bake_bark(64,self.foliage.bark_color);
+                        if let Ok(bark)=bark {
+                            self.foliage_gpu_scene=Some(Arc::new(GpuScene::from_mesh(
+                                mesh,&bark,&self.foliage_leaf_pixels,self.foliage.leaf_color)));
+                        }
+                    }
+                }
             }
         } else {
             self.refresh_preview(&ctx);
@@ -2362,5 +2425,5 @@ fn main() -> eframe::Result {
             .with_min_inner_size([940.0, 550.0]),
         ..Default::default()
     };
-    eframe::run_native("voxel-game-engine", options, Box::new(|_| Ok(Box::new(Studio::default()))))
+    eframe::run_native("voxel-game-engine", options, Box::new(|cc| Ok(Box::new(Studio::new(cc)))))
 }
