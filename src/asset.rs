@@ -333,6 +333,30 @@ mod tests {
     }
 
     #[test]
+    fn chopping_one_branch_hexel_removes_its_tapered_mesh_and_survives_reload() {
+        let project=FoliageProject::from_preset(PlantPreset::Oak);
+        let original=project.generate().unwrap();
+        let mut asset=VoxelAsset::from_tree(&project,&original,&Graph::default());
+        let branch_cell=original.triangles.iter()
+            .find(|face| face.material.is_wood() && original.structure.as_ref()
+                .unwrap().cells.iter().any(|part|
+                    part.cell==face.cell && matches!(part.part,
+                    TreePart::MajorBranch|TreePart::SmallBranch)))
+            .expect("oak has visible tapered wood").cell;
+        assert!(asset.mesh().unwrap().triangles.iter().any(|f|
+            f.cell==branch_cell && f.material.is_wood()));
+        assert_eq!(asset.harvest_cell(branch_cell),Some(Material::Bark));
+        assert!(asset.mesh().unwrap().triangles.iter().all(|f|
+            !(f.cell==branch_cell && f.material.is_wood())));
+        let restored=VoxelAsset::from_json(&asset.to_json().unwrap()).unwrap();
+        assert_eq!(restored.tree_structure,asset.tree_structure);
+        assert!(restored.mesh().unwrap().triangles.iter().all(|f|
+            !(f.cell==branch_cell && f.material.is_wood())));
+        assert_eq!(restored.mesh().unwrap().triangles.len(),
+            asset.mesh().unwrap().triangles.len());
+    }
+
+    #[test]
     fn manually_edited_tree_keeps_valid_structure_and_origin() {
         let project=FoliageProject::from_preset(PlantPreset::Oak);
         let mesh=project.generate().unwrap();
