@@ -16,6 +16,11 @@ node/link ordering, and voxel display settings are excluded because they do
 not affect `Graph::render_rgba`. Renumbering otherwise equivalent nodes may
 still cause conservative extra misses; it cannot cause incorrect reuse.
 
+For an authored Bark graph with `bark_tint_strength=0`, the species bark
+color is normalized out of its key, since the source graph is rendered
+without that tint. When tint strength is nonzero, or there is no Bark graph,
+bark color remains part of the recipe.
+
 Species season gradients are **not** in either key. They remain dynamic GPU
 palette data, so changing seasons does not require a new cutout or bark
 texture. Geometry seeds, mesh cells, wind and asset provenance are absent;
