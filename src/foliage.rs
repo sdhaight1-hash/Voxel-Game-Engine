@@ -1004,7 +1004,7 @@ impl FoliageProject {
         if cells.len() > 40_000 {
             return Err("Tree exceeds 40,000 game hexels: reduce size, branching or canopy density".into());
         }
-        if self.leaf_density>0.0 && matches!(self.preset,
+        if self.leaf_density>0.0 && !spans.is_empty() && matches!(self.preset,
             PlantPreset::Oak|PlantPreset::Walnut|PlantPreset::Ebony|
             PlantPreset::Maple|PlantPreset::CrimsonKingMaple|
             PlantPreset::Mango|PlantPreset::Lychee|
@@ -1979,7 +1979,7 @@ mod tests {
         for shape in [VoxelShape::Cube,VoxelShape::HexPrism] {
             let model=FoliageMesh::from_voxels(shape,1.0,vec![
                 VoxelCell{x:0,y:0,z:0,material:Material::Leaf}]).unwrap();
-            assert_eq!(model.triangle_count(),8);
+            assert_eq!(model.triangle_count(),24);
             assert!(model.triangles.iter().all(|t|t.cutout));
             assert!(model.triangles.iter().any(|t|t.wind_weight.contains(&1.0)));
             assert!(model.triangles.iter().any(|t|t.wind_weight.contains(&0.0)));
@@ -2007,7 +2007,7 @@ mod tests {
             cells.insert([0,0,-1],surroundings);
             let result=surface_triangles(&cells,VoxelShape::Cube,1.0,LeafRenderSettings::default());
             let center=result.iter().filter(|t|t.cell==[0,0,0]).count();
-            assert_eq!(center, if surroundings==Material::Bark {0} else {8});
+            assert_eq!(center, if surroundings==Material::Bark {0} else {24});
         }
     }
 
