@@ -361,6 +361,10 @@ mod tests {
             let graph = preset.build_graph(VoxelSettings::default());
             graph.validate().unwrap_or_else(|err|
                 panic!("{} / {}: {}", preset.material, preset.variant, err));
+            // Rendering a tiny image smoke-tests actual evaluation for every
+            // bundled preset, not just the graph's connection structure.
+            assert_eq!(graph.render_rgba(2, 2).unwrap_or_else(|err|
+                panic!("{} / {} render: {}", preset.material, preset.variant, err)).len(), 16);
         }
     }
 
