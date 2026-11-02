@@ -2068,6 +2068,18 @@ fn emit_owned_wood(
     let source=std::array::from_fn::<_,3,_>(|i| Vertex {
         position:source[i].position,uv:raw.uv[i],
     });
+    // Convexity gives us an inexpensive exact fast path: all three corners
+    // inside one hexel implies the entire triangle lies inside it.
+    let nearest=grid_key(VoxelShape::HexPrism,size,raw.points[0]);
+    if cells.get(&nearest)==Some(&Material::Bark)
+        && matches!(roles.get(&nearest),
+            Some(TreePart::Trunk|TreePart::MajorBranch|TreePart::SmallBranch))
+        && raw.points.iter().all(|p|
+            crate::hexel_clip::contains(*p,nearest,size)) {
+        visualized.insert(nearest);
+        out.push(Triangle{cell:nearest,..raw});
+        return;
+    }
     for cell in triangle_candidates(source,size) {
         // Artist-painted blocks are separate solids, never replaced by an
         // old generated path. Other generated limbs may share the same cell.
