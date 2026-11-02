@@ -2,7 +2,7 @@
 //! No UI types are used here, so the graph and renderer can be tested independently.
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::{cell::Cell, collections::{HashMap, HashSet}};
 
 pub mod voxel;
 pub mod foliage;
@@ -42,6 +42,74 @@ pub struct Link {
     pub from: u64,
     pub to: u64,
     pub input: usize,
+}
+
+/// Per-render CPU evaluation counters (not GPU timings). Samples are cached
+/// only within one output pixel, and keyed by exact float UV bit patterns.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct MultiChannelStats {
+    pub reused_samples: u64,
+    pub evaluated_samples: u64,
+    pub peak_entries_per_pixel: usize,
+}
+
+// One most-recent exact-UV sample per shared node: no per-pixel hash maps,
+// allocations or dynamic borrow checks. Extra shared nodes remain uncached.
+const MAX_PIXEL_SAMPLE_ENTRIES: usize = 64;
+
+struct SampleSlot {
+    id: u64,
+    last: Cell<Option<(u32,u32,[f32;3])>>,
+}
+
+struct SampleMemo {
+    slots: Vec<SampleSlot>,
+    hits: Cell<u64>,
+    evaluations: Cell<u64>,
+    active: Cell<usize>,
+    peak: Cell<usize>,
+}
+
+impl SampleMemo {
+    fn new(mut shared_nodes:Vec<u64>)->Self {
+        shared_nodes.sort_unstable();
+        let slots=shared_nodes.into_iter().take(MAX_PIXEL_SAMPLE_ENTRIES)
+            .map(|id|SampleSlot{id,last:Cell::new(None)}).collect();
+        Self{slots,hits:Cell::new(0),evaluations:Cell::new(0),
+            active:Cell::new(0),peak:Cell::new(0)}
+    }
+
+    fn clear(&self) {
+        for slot in &self.slots {slot.last.set(None);}
+        self.active.set(0);
+    }
+
+    fn lookup(&self,id:u64,u:f32,v:f32)->Option<[f32;3]> {
+        let slot=self.slots.iter().find(|slot|slot.id==id)?;
+        let (cached_u,cached_v,rgb)=slot.last.get()?;
+        if cached_u==u.to_bits() && cached_v==v.to_bits() {
+            self.hits.set(self.hits.get()+1);
+            Some(rgb)
+        } else {None}
+    }
+
+    fn record(&self,id:u64,u:f32,v:f32,value:[f32;3]) {
+        self.evaluations.set(self.evaluations.get()+1);
+        if let Some(slot)=self.slots.iter().find(|slot|slot.id==id) {
+            if slot.last.get().is_none() {
+                let active=self.active.get()+1;
+                self.active.set(active);
+                self.peak.set(self.peak.get().max(active));
+            }
+            slot.last.set(Some((u.to_bits(),v.to_bits(),value)));
+        }
+    }
+
+    fn stats(&self)->MultiChannelStats {
+        MultiChannelStats{reused_samples:self.hits.get(),
+            evaluated_samples:self.evaluations.get(),
+            peak_entries_per_pixel:self.peak.get()}
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -378,6 +446,76 @@ impl Graph {
         })
     }
 
+    /// Render several PBR output channels in one pixel traversal. Upstream
+    /// node evaluations are reused only at the *same exact UV coordinate*,
+    /// including transformed/filter sample positions. No upstream raster
+    /// interpolation or u8 quantization occurs before the final output.
+    ///
+    /// The original one-channel API does not allocate a memo. The memo stores
+    /// only branches shared by the requested channels, with one exact-UV
+    /// sample slot per shared node and at most 64 slots per pixel.
+    /// Compare byte-equivalence and CPU times before opting into this path.
+    pub fn render_channels_memoized_rgba(&self, channels:&[usize], width:u32, height:u32)
+        -> Result<(Vec<Vec<u8>>, MultiChannelStats),String> {
+        self.validate()?;
+        if width==0 || height==0 || width>4096 || height>4096 {
+            return Err("Image dimensions must be 1–4096".into());
+        }
+        if channels.len()>4 || channels.iter().any(|&channel|channel>=4) {
+            return Err("Unsupported material channel".into());
+        }
+        let output=self.nodes.iter().find(|n|matches!(n.kind,NodeKind::Output))
+            .expect("validated graph").id;
+        let mut sources=[None;4];
+        for link in &self.links {
+            if link.to==output && link.input<4 {
+                sources[link.input]=Some(link.from);
+            }
+        }
+        // Count each node once per requested channel. Only branches that are
+        // shared across channel closures are candidates for memoization.
+        let mut usage=HashMap::<u64,u32>::new();
+        for &channel in channels {
+            let mut seen=HashSet::new();
+            let mut stack:Vec<u64>=sources[channel].into_iter().collect();
+            while let Some(id)=stack.pop() {
+                if seen.insert(id) {
+                    *usage.entry(id).or_default()+=1;
+                    stack.extend(self.links.iter().filter(|link|link.to==id)
+                        .map(|link|link.from));
+                }
+            }
+        }
+        let shared:Vec<u64>=usage.into_iter().filter(|(_,count)|*count>1)
+            .map(|(id,_)|id).collect();
+        let mut images:Vec<Vec<u8>>=channels.iter().map(|_|
+            Vec::with_capacity(width as usize*height as usize*4)).collect();
+        let memo=SampleMemo::new(shared);
+        for y in 0..height {
+            for x in 0..width {
+                memo.clear();
+                let u=x as f32/width as f32;
+                let v=y as f32/height as f32;
+                for (slot,&channel) in channels.iter().enumerate() {
+                    let default=match channel {
+                        1=>[0.72;3],
+                        3=>[0.5;3],
+                        _=>[0.0;3],
+                    };
+                    let rgb=match sources[channel] {
+                        Some(source)=>self.sample_memo(source,u,v,Some(&memo)),
+                        None=>default,
+                    };
+                    for component in rgb {
+                        images[slot].push((component.clamp(0.0,1.0)*255.0).round() as u8);
+                    }
+                    images[slot].push(255);
+                }
+            }
+        }
+        Ok((images,memo.stats()))
+    }
+
     pub fn render_normal_rgba(&self, width: u32, height: u32) -> Result<Vec<u8>, String> {
         let height_map = self.render_output_channel_rgba(3, width, height)?;
         let mut normals = vec![0u8; height_map.len()];
@@ -422,16 +560,25 @@ impl Graph {
         Ok(rgba)
     }
 
-    fn sample_input(&self, node: u64, input: usize, u: f32, v: f32) -> [f32; 3] {
-        match self.links.iter().find(|l| l.to == node && l.input == input) {
-            Some(link) => self.sample(link.from, u, v),
-            None => [0.0; 3],
+    fn sample_input_memo(&self,node:u64,input:usize,u:f32,v:f32,
+                         memo:Option<&SampleMemo>)->[f32;3] {
+        match self.links.iter().find(|l|l.to==node && l.input==input) {
+            Some(link)=>self.sample_memo(link.from,u,v,memo),
+            None=>[0.0;3],
         }
     }
 
-    fn sample(&self, id: u64, u: f32, v: f32) -> [f32; 3] {
-        let node = self.node(id).expect("validated graph");
-        match node.kind {
+    fn sample(&self,id:u64,u:f32,v:f32)->[f32;3] {
+        self.sample_memo(id,u,v,None)
+    }
+
+    fn sample_memo(&self,id:u64,u:f32,v:f32,
+                   memo:Option<&SampleMemo>)->[f32;3] {
+        if let Some(memo)=memo {
+            if let Some(rgb)=memo.lookup(id,u,v) {return rgb;}
+        }
+        let node=self.node(id).expect("validated graph");
+        let rgb=match node.kind {
             NodeKind::Noise { scale, octaves, seed } => {
                 let mut value = 0.0;
                 let mut weight = 1.0;
@@ -453,18 +600,18 @@ impl Graph {
             NodeKind::Color { rgb } => rgb.map(|c| c as f32 / 255.0),
             NodeKind::Scalar { value } => [value;3],
             NodeKind::Luminance => {
-                let rgb=self.sample_input(id,0,u,v);
+                let rgb=self.sample_input_memo(id,0,u,v,memo);
                 let grey=(0.2126*rgb[0]+0.7152*rgb[1]+0.0722*rgb[2])
                     .clamp(0.0,1.0);
                 [grey;3]
             }
             NodeKind::Levels { black,white,gamma } => {
-                let value=self.sample_input(id,0,u,v)[0];
+                let value=self.sample_input_memo(id,0,u,v,memo)[0];
                 let mapped=((value-black)/(white-black)).clamp(0.0,1.0).powf(gamma);
                 [mapped;3]
             }
             NodeKind::ThresholdMask { threshold,softness } => {
-                let value=self.sample_input(id,0,u,v)[0];
+                let value=self.sample_input_memo(id,0,u,v,memo)[0];
                 let coverage=if softness==0.0 {
                     if value>=threshold {1.0} else {0.0}
                 } else {
@@ -473,10 +620,10 @@ impl Graph {
                 };
                 [coverage;3]
             }
-            NodeKind::Invert => self.sample_input(id, 0, u, v).map(|c| 1.0 - c),
+            NodeKind::Invert => self.sample_input_memo(id, 0, u, v,memo).map(|c| 1.0 - c),
             NodeKind::Blend { factor } => {
-                let a = self.sample_input(id, 0, u, v);
-                let b = self.sample_input(id, 1, u, v);
+                let a = self.sample_input_memo(id, 0, u, v,memo);
+                let b = self.sample_input_memo(id, 1, u, v,memo);
                 std::array::from_fn(|i| a[i] * (1.0 - factor) + b[i] * factor)
             }
             NodeKind::Bricks { columns, rows, mortar } => {
@@ -517,14 +664,16 @@ impl Graph {
                 [stripe; 3]
             }
             NodeKind::Colorize { dark, light } => {
-                let input = self.sample_input(id, 0, u, v);
+                let input = self.sample_input_memo(id, 0, u, v,memo);
                 let t = (input[0] * 0.2126 + input[1] * 0.7152 + input[2] * 0.0722).clamp(0.0, 1.0);
                 std::array::from_fn(|i| (dark[i] as f32 * (1.0 - t) + light[i] as f32 * t) / 255.0)
             }
             NodeKind::Library { operation, amount, seed } => operation.evaluate(u, v, amount, seed,
-                |input, su, sv| self.sample_input(id, input, su, sv)),
-            NodeKind::Output => self.sample_input(id, 0, u, v),
-        }
+                |input, su, sv| self.sample_input_memo(id, input, su, sv,memo)),
+            NodeKind::Output => self.sample_input_memo(id, 0, u, v,memo),
+        };
+        if let Some(memo)=memo {memo.record(id,u,v,rgb);}
+        rgb
     }
 }
 
@@ -820,6 +969,63 @@ mod tests {
             black:0.0,white:1.0,gamma:f32::NAN,
         };
         assert!(graph.validate().is_err());
+    }
+
+    #[test]
+    fn memoized_shared_channels_match_unmodified_legacy_pixels() {
+        let mut graph=Graph::demo_bricks();
+        // The same seeded Noise feeds Roughness and Metallic, so its exact
+        // pixel evaluation can be reused without quantizing intermediate RGB.
+        graph.connect(3,4,2).unwrap();
+        for size in [8,32,64] {
+            let (images,stats)=graph.render_channels_memoized_rgba(
+                &[0,1,2,3],size,size).unwrap();
+            for (index,channel) in [0,1,2,3].into_iter().enumerate() {
+                assert_eq!(images[index],
+                    graph.render_output_channel_rgba(channel,size,size).unwrap());
+            }
+            assert!(stats.reused_samples>=size as u64*size as u64,
+                "shared seeded source was recomputed for every output pixel");
+            assert!(stats.evaluated_samples>0);
+            assert!(stats.peak_entries_per_pixel<=MAX_PIXEL_SAMPLE_ENTRIES);
+        }
+    }
+
+    #[test]
+    fn memoized_uv_warps_and_neighborhood_filters_are_byte_exact() {
+        for operation in [LibraryNode::Warp,LibraryNode::Rotate,
+                          LibraryNode::Blur,LibraryNode::EdgeDetect] {
+            let mut graph=Graph::default();
+            let op=graph.add_node(NodeKind::Library{
+                operation,amount:0.4,seed:41
+            },[120.0,10.0]);
+            graph.connect(1,op,0).unwrap();
+            graph.connect(op,2,0).unwrap();
+            graph.connect(op,2,3).unwrap();
+            let (images,stats)=graph.render_channels_memoized_rgba(
+                &[0,3],12,12).unwrap();
+            assert_eq!(images[0],graph.render_rgba(12,12).unwrap(),"{operation:?}");
+            assert_eq!(images[1],
+                graph.render_output_channel_rgba(3,12,12).unwrap(),"{operation:?}");
+            assert!(stats.reused_samples>0,"{operation:?}");
+        }
+    }
+
+    #[test]
+    fn memoized_channels_validate_inputs_and_support_disconnected_outputs() {
+        let mut graph=Graph::default();
+        graph.disconnect(2,0);
+        let (images,stats)=graph.render_channels_memoized_rgba(
+            &[0,1,2,3],4,4).unwrap();
+        assert_eq!(stats.evaluated_samples,0);
+        for channel in 0..4 {
+            assert_eq!(images[channel],
+                graph.render_output_channel_rgba(channel,4,4).unwrap());
+        }
+        assert!(graph.render_channels_memoized_rgba(&[4],4,4).is_err());
+        assert!(graph.render_channels_memoized_rgba(&[0],0,4).is_err());
+        graph.node_mut(1).unwrap().position=[f32::NAN,0.0];
+        assert!(graph.render_channels_memoized_rgba(&[0],4,4).is_err());
     }
 
     #[test]
