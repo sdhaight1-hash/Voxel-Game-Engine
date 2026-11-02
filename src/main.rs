@@ -2066,6 +2066,8 @@ impl Studio {
                         format!("{min}..{max} (step {step}), default {default}"),
                     ParameterControl::Seed{default} => format!("seed, default {default}"),
                     ParameterControl::Color{default} => format!("RGB, default {default:?}"),
+                    ParameterControl::ColorStops{min,max,default} =>
+                        format!("{min}..{max} color stops, default {default}"),
                 };
                 ui.small(format!("{} [{}]: {details}",param.label,param.id));
             }
