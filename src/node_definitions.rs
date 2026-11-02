@@ -39,6 +39,7 @@ pub enum ParameterControl {
     Seed {default:u32},
     Color {default:[u8;3]},
     ColorStops {min:u8,max:u8,default:u8},
+    CurvePoints {min:u8,max:u8,default:u8},
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -48,6 +49,10 @@ pub struct ParameterDefinition {
     pub control: ParameterControl,
 }
 
+const CURVE_REMAP: &[ParameterDefinition]=&[
+    ParameterDefinition{id:"curve",label:"Control points",control:ParameterControl::CurvePoints{
+        min:2,max:8,default:4}},
+];
 const COLOR_RAMP: &[ParameterDefinition]=&[
     ParameterDefinition{id:"ramp",label:"Color stops",control:ParameterControl::ColorStops{
         min:2,max:8,default:4}},
@@ -128,6 +133,7 @@ pub fn parameters(kind:&NodeKind)-> &'static [ParameterDefinition] {
         NodeKind::Levels{..}=>LEVELS,
         NodeKind::ThresholdMask{..}=>THRESHOLD_MASK,
         NodeKind::ColorRamp{..}=>COLOR_RAMP,
+        NodeKind::CurveRemap{..}=>CURVE_REMAP,
         NodeKind::Noise{..}=>NOISE,
         NodeKind::Checker{..}=>CHECKER,
         NodeKind::Bricks{..}=>BRICKS,
@@ -205,7 +211,8 @@ mod tests {
                             assert_eq!((default-min)%step,0);
                         }
                         ParameterControl::Seed{..}|ParameterControl::Color{..}=>{},
-                        ParameterControl::ColorStops{min,max,default} => {
+                        ParameterControl::ColorStops{min,max,default}
+                        | ParameterControl::CurvePoints{min,max,default} => {
                             assert!(min>=2&&min<=default&&default<=max&&max<=8);
                         }
                     }
@@ -220,6 +227,16 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn curve_remap_metadata_is_typed_and_bounded() {
+        let kind=NodeKind::CurveRemap{curve:crate::CurveRemap::default()};
+        let parameters=parameters(&kind);
+        assert_eq!(parameters.len(),1);
+        assert_eq!(parameters[0].id,"curve");
+        assert!(matches!(parameters[0].control,ParameterControl::CurvePoints{
+            min:2,max:8,default:4}));
     }
 
     #[test]
