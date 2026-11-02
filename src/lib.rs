@@ -16,6 +16,7 @@ pub mod presets;
 pub mod node_library;
 pub mod node_definitions;
 pub mod sdf;
+pub mod sdf_bezier;
 pub use sdf::SdfBoolean;
 pub mod color_ramp;
 pub mod curve_remap;
@@ -143,6 +144,9 @@ pub enum NodeKind {
     SdfCircle { center:[f32;2], radius:f32 },
     SdfEllipse { center:[f32;2], radii:[f32;2] },
     SdfCapsule { start:[f32;2], end:[f32;2], radius:f32 },
+    /// Bounded cubic Bézier centerline with interpolated start/end stroke radii.
+    SdfBezierStroke { points:[[f32;2];4], start_radius:f32, end_radius:f32,
+        segments:u8, tiled:bool },
     SdfCombine { operation:SdfBoolean, smoothing:f32 },
     /// Explicit signed Distance -> normalized coverage Mask conversion.
     SdfToMask { edge_width:f32 },
@@ -172,6 +176,7 @@ impl NodeKind {
             Self::SdfCircle{..}=>"SDF Circle",
             Self::SdfEllipse{..}=>"SDF Ellipse",
             Self::SdfCapsule{..}=>"SDF Capsule",
+            Self::SdfBezierStroke{..}=>"SDF Bézier Stroke",
             Self::SdfCombine{..}=>"SDF Boolean",
             Self::SdfToMask{..}=>"Distance to Mask",
             Self::Invert => "Invert",
@@ -190,7 +195,8 @@ impl NodeKind {
             Self::Noise { .. } | Self::Checker { .. } | Self::Color { .. }
                 | Self::Scalar { .. } | Self::Bricks { .. } | Self::Voronoi { .. }
                 | Self::Strata { .. } | Self::SdfCircle{..}
-                | Self::SdfEllipse{..} | Self::SdfCapsule{..} => 0,
+                | Self::SdfEllipse{..} | Self::SdfCapsule{..}
+                | Self::SdfBezierStroke{..} => 0,
             Self::Invert | Self::Colorize { .. } | Self::Luminance
                 | Self::Levels { .. } | Self::ThresholdMask { .. }
                 | Self::ColorRamp { .. } | Self::CurveRemap { .. }
@@ -239,6 +245,7 @@ impl NodeKind {
             Self::SdfCircle{..}=>"sdf_circle".into(),
             Self::SdfEllipse{..}=>"sdf_ellipse".into(),
             Self::SdfCapsule{..}=>"sdf_capsule".into(),
+            Self::SdfBezierStroke{..}=>"sdf_bezier_stroke".into(),
             Self::SdfCombine{..}=>"sdf_boolean".into(),
             Self::SdfToMask{..}=>"sdf_to_mask".into(),
             Self::Invert=>"invert".into(),
@@ -258,7 +265,7 @@ impl NodeKind {
                 |Self::CurveRemap{..}=>SocketType::Scalar,
             Self::ThresholdMask{..}|Self::SdfToMask{..}=>SocketType::Mask,
             Self::SdfCircle{..}|Self::SdfEllipse{..}|Self::SdfCapsule{..}
-                |Self::SdfCombine{..}=>SocketType::Distance,
+                |Self::SdfBezierStroke{..}|Self::SdfCombine{..}=>SocketType::Distance,
             Self::Reroute{kind}=>*kind,
             _=>SocketType::Color, // Existing RGB evaluation semantics.
         }
@@ -465,6 +472,13 @@ impl Graph {
                     if !sdf::valid_uv(start)||!sdf::valid_uv(end)
                         ||!radius.is_finite()||!(0.001..=0.5).contains(&radius) =>
                     return Err("SDF Capsule requires normalized endpoints and radius 0.001..0.5".into()),
+                NodeKind::SdfBezierStroke{points,start_radius,end_radius,
+                    segments,..} if !sdf_bezier::valid_points(points)
+                    || ![start_radius,end_radius].iter().all(|r|
+                        r.is_finite() && (0.001..=0.25).contains(r))
+                    || !(sdf_bezier::MIN_BEZIER_SEGMENTS..=
+                        sdf_bezier::MAX_BEZIER_SEGMENTS).contains(&segments) =>
+                    return Err("SDF Bézier stroke needs 0..1 points, radii 0.001..0.25 and 8..64 segments".into()),
                 NodeKind::SdfCombine{smoothing,..}
                     if !smoothing.is_finite()||!(0.0..=0.25).contains(&smoothing) =>
                     return Err("SDF Boolean smoothing must be 0..0.25 UV units".into()),
@@ -714,6 +728,10 @@ impl Graph {
             NodeKind::SdfCapsule{start,end,radius} => {
                 [sdf::capsule(u,v,start,end,radius);3]
             }
+            NodeKind::SdfBezierStroke{points,start_radius,end_radius,
+                segments,tiled} => [
+                sdf_bezier::stroke(u,v,points,start_radius,end_radius,segments,tiled);3
+            ],
             NodeKind::SdfCombine{operation,smoothing} => {
                 let a=self.sample_input_memo(id,0,u,v,memo)[0];
                 let b=self.sample_input_memo(id,1,u,v,memo)[0];
@@ -1170,6 +1188,33 @@ mod tests {
             let index=((size/2*size+size/2)*4) as usize;
             assert_eq!(independent[index+3],255);
         }
+    }
+
+    #[test]
+    fn bezier_stroke_is_a_typed_distance_and_respects_flat_graph_render_paths() {
+        let mut graph=Graph::default();
+        let bezier=graph.add_node(NodeKind::SdfBezierStroke{
+            points:[[0.2,0.5],[0.35,0.2],[0.65,0.8],[0.8,0.5]],
+            start_radius:0.07,end_radius:0.02,segments:24,tiled:true,
+        },[70.0,20.0]);
+        let mask=graph.add_node(NodeKind::SdfToMask{
+            edge_width:0.01,
+        },[250.0,20.0]);
+        assert_eq!(graph.node(bezier).unwrap().kind.output_type(),SocketType::Distance);
+        assert!(graph.connect(bezier,2,0).is_err());
+        graph.connect(bezier,mask,0).unwrap();
+        graph.connect(mask,2,0).unwrap();
+        graph.connect(mask,2,3).unwrap();
+        graph.validate().unwrap();
+        let original=graph.render_rgba(64,64).unwrap();
+        let (memo,stats)=graph.render_channels_memoized_rgba(
+            &[0,3],64,64).unwrap();
+        assert_eq!(memo[0],original);
+        assert_eq!(memo[1],original);
+        assert!(stats.reused_samples>0);
+        let restored:Graph=serde_json::from_str(
+            &serde_json::to_string(&graph).unwrap()).unwrap();
+        assert_eq!(restored.render_rgba(64,64).unwrap(),original);
     }
 
     #[test]
