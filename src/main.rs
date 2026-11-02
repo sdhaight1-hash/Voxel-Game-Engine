@@ -2044,6 +2044,9 @@ impl Studio {
                     center:[0.5,0.5],radii:[0.28,0.14]}),
                 ("SDF Capsule", NodeKind::SdfCapsule{
                     start:[0.3,0.5],end:[0.7,0.5],radius:0.07}),
+                ("SDF Bézier Stroke", NodeKind::SdfBezierStroke{
+                    points:[[0.2,0.5],[0.35,0.2],[0.65,0.8],[0.8,0.5]],
+                    start_radius:0.07,end_radius:0.02,segments:24,tiled:true}),
                 ("SDF Boolean", NodeKind::SdfCombine{
                     operation:SdfBoolean::Union,smoothing:0.0}),
                 ("Distance to Mask", NodeKind::SdfToMask{edge_width:0.01}),
@@ -2397,6 +2400,30 @@ impl Studio {
                 }
                 changed |= ui.add(egui::Slider::new(radius,0.001..=0.5)
                     .text("Radius")).changed();
+            }
+            NodeKind::SdfBezierStroke{points,start_radius,end_radius,
+                segments,tiled} => {
+                ui.small("Cubic Bézier stroke: four control points in normalized 0–1 UV.");
+                for (index,point) in points.iter_mut().enumerate() {
+                    ui.label(match index {
+                        0=>"Start anchor",1=>"Handle A",2=>"Handle B",_=>"End anchor",
+                    });
+                    ui.horizontal(|ui| {
+                        changed |= ui.add(egui::Slider::new(&mut point[0],0.0..=1.0)
+                            .text("U")).changed();
+                        changed |= ui.add(egui::Slider::new(&mut point[1],0.0..=1.0)
+                            .text("V")).changed();
+                    });
+                }
+                changed |= ui.add(egui::Slider::new(start_radius,0.001..=0.25)
+                    .text("Start radius")).changed();
+                changed |= ui.add(egui::Slider::new(end_radius,0.001..=0.25)
+                    .text("End radius")).changed();
+                changed |= ui.add(egui::Slider::new(segments,8..=64)
+                    .text("Curve segments")).changed();
+                changed |= ui.checkbox(tiled,"Repeat across U/V seams").changed();
+                ui.small("Approximate signed distance: finer segment counts cost more CPU per pixel.");
+                ui.small("Distance output must pass through Distance to Mask before PBR outputs.");
             }
             NodeKind::SdfCombine{operation,smoothing} => {
                 ui.small("Combine two signed Distance inputs before converting to coverage.");
@@ -3218,7 +3245,7 @@ fn node_accent(kind: NodeKind) -> Color32 {
             | NodeKind::CurveRemap { .. } | NodeKind::Reroute { .. }
             => Color32::from_rgb(115, 64, 127),
         NodeKind::SdfCircle{..}|NodeKind::SdfEllipse{..}|NodeKind::SdfCapsule{..}
-            |NodeKind::SdfCombine{..}|NodeKind::SdfToMask{..}
+            |NodeKind::SdfBezierStroke{..}|NodeKind::SdfCombine{..}|NodeKind::SdfToMask{..}
             => Color32::from_rgb(119,70,140),
         NodeKind::Output => Color32::from_rgb(43, 105, 77),
     }
