@@ -40,6 +40,21 @@ fn legacy_graph_has_frozen_four_channel_pixels_and_identical_roundtrip() {
             .unwrap().render_normal_rgba(4,4).unwrap());
 }
 
+/// Verified against the unoptimized CPU sampler on Rust CI Linux x86-64.
+#[test]
+fn frozen_legacy_albedo_hashes_at_export_resolutions() {
+    let graph=old_graph();
+    for (size,expected) in [
+        (256,0xa632dee47d4a2325_u64),
+        (512,0xd520d3e468c22325),
+        (1024,0xf37e68e416a22325),
+        (2048,0x9750cce2ce222325),
+    ] {
+        assert_eq!(fnv1a(&graph.render_rgba(size,size).unwrap()),expected,
+            "legacy albedo changed at {size}px");
+    }
+}
+
 #[test]
 fn legacy_asset_retains_owned_material_and_editable_cells() {
     let asset=VoxelAsset::from_json(include_str!("fixtures/legacy_asset_v1.json")).unwrap();
@@ -151,14 +166,15 @@ fn profile_material_graph_baseline() {
     println!("material-baseline version={} os={} arch={} workers={}",
         env!("CARGO_PKG_VERSION"),std::env::consts::OS,std::env::consts::ARCH,
         std::thread::available_parallelism().map_or(1,|n|n.get()));
-    for (name,graph,sizes) in [
-        ("legacy_checker",&reference,[256,512,1024,2048].as_slice()),
-        ("warped_noise",&warped,[64,128,256,512].as_slice()),
+    for (name,graph,sizes,channel) in [
+        ("legacy_color",&reference,[256,512,1024,2048].as_slice(),0),
+        ("legacy_checker",&reference,[256,512,1024,2048].as_slice(),1),
+        ("warped_noise",&warped,[64,128,256,512].as_slice(),0),
     ] {
         for &size in sizes {
             for repetition in 0..2 {
                 let started=Instant::now();
-                let pixels=graph.render_rgba(size,size).unwrap();
+                let pixels=graph.render_output_channel_rgba(channel,size,size).unwrap();
                 let elapsed=started.elapsed();
                 println!("material-baseline graph={name} size={size} run={repetition} elapsed_ms={:.3} fnv64={:016x} bytes={}",
                     elapsed.as_secs_f64()*1000.0,fnv1a(&pixels),pixels.len());
