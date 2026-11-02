@@ -71,6 +71,32 @@ const SDF_ELLIPSE: &[ParameterDefinition]=&[
     ParameterDefinition{id:"radius_y",label:"Radius Y",control:ParameterControl::Float{
         min:0.001,max:0.5,default:0.14,unit:"tile UV"}},
 ];
+const SDF_BEZIER: &[ParameterDefinition]=&[
+    ParameterDefinition{id:"point_0_x",label:"Anchor X",control:ParameterControl::Float{
+        min:0.0,max:1.0,default:0.2,unit:"tile UV"}},
+    ParameterDefinition{id:"point_0_y",label:"Anchor Y",control:ParameterControl::Float{
+        min:0.0,max:1.0,default:0.5,unit:"tile UV"}},
+    ParameterDefinition{id:"point_1_x",label:"Handle A X",control:ParameterControl::Float{
+        min:0.0,max:1.0,default:0.35,unit:"tile UV"}},
+    ParameterDefinition{id:"point_1_y",label:"Handle A Y",control:ParameterControl::Float{
+        min:0.0,max:1.0,default:0.2,unit:"tile UV"}},
+    ParameterDefinition{id:"point_2_x",label:"Handle B X",control:ParameterControl::Float{
+        min:0.0,max:1.0,default:0.65,unit:"tile UV"}},
+    ParameterDefinition{id:"point_2_y",label:"Handle B Y",control:ParameterControl::Float{
+        min:0.0,max:1.0,default:0.8,unit:"tile UV"}},
+    ParameterDefinition{id:"point_3_x",label:"Endpoint X",control:ParameterControl::Float{
+        min:0.0,max:1.0,default:0.8,unit:"tile UV"}},
+    ParameterDefinition{id:"point_3_y",label:"Endpoint Y",control:ParameterControl::Float{
+        min:0.0,max:1.0,default:0.5,unit:"tile UV"}},
+    ParameterDefinition{id:"start_radius",label:"Start radius",control:ParameterControl::Float{
+        min:0.001,max:0.25,default:0.07,unit:"tile UV"}},
+    ParameterDefinition{id:"end_radius",label:"End radius",control:ParameterControl::Float{
+        min:0.001,max:0.25,default:0.02,unit:"tile UV"}},
+    ParameterDefinition{id:"segments",label:"Curve segments",control:ParameterControl::Integer{
+        min:8,max:64,step:1,default:24}},
+    ParameterDefinition{id:"tiled",label:"UV tiling",control:ParameterControl::Choice{
+        options:&["Tile","Clamp"],default:"Tile"}},
+];
 const SDF_CAPSULE: &[ParameterDefinition]=&[
     ParameterDefinition{id:"start_x",label:"Start X",control:ParameterControl::Float{
         min:0.0,max:1.0,default:0.30,unit:"tile UV"}},
@@ -181,6 +207,7 @@ pub fn parameters(kind:&NodeKind)-> &'static [ParameterDefinition] {
         NodeKind::SdfCircle{..}=>SDF_CIRCLE,
         NodeKind::SdfEllipse{..}=>SDF_ELLIPSE,
         NodeKind::SdfCapsule{..}=>SDF_CAPSULE,
+        NodeKind::SdfBezierStroke{..}=>SDF_BEZIER,
         NodeKind::SdfCombine{..}=>SDF_BOOLEAN,
         NodeKind::SdfToMask{..}=>SDF_TO_MASK,
         NodeKind::Noise{..}=>NOISE,
@@ -282,6 +309,21 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn cubic_stroke_exposes_four_handles_and_taper_metadata() {
+        let node=NodeKind::SdfBezierStroke{
+            points:[[0.2,0.5],[0.35,0.2],[0.65,0.8],[0.8,0.5]],
+            start_radius:0.07,end_radius:0.02,segments:24,tiled:true,
+        };
+        let params=parameters(&node);
+        assert_eq!(params.len(),12);
+        assert_eq!(params[0].id,"point_0_x");
+        assert_eq!(params[7].id,"point_3_y");
+        assert_eq!(params[8].id,"start_radius");
+        assert_eq!(params[11].id,"tiled");
+        assert_eq!(node.output_type(),SocketType::Distance);
     }
 
     #[test]
