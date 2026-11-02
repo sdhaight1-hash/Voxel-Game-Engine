@@ -2,7 +2,7 @@
 name = "texture-studio"
 version = "0.1.0"
 edition = "2021"
-description = "Standalone node-based procedural texture generator"
+description = "Voxel Game Engine: procedural voxel assets, foliage and node-based materials"
 
 [dependencies]
 eframe = "0.37"
