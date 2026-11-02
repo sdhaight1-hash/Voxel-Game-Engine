@@ -24,9 +24,11 @@ fn cutout_hit(p:Pos2, screen:[Pos2;3], uv:[[f32;2];3],rgba:&[u8]) -> bool {
     if w0<0.0 || w1<0.0 || w2<0.0 {return false;}
     let u=(w0*uv[0][0]+w1*uv[1][0]+w2*uv[2][0]).clamp(0.0,0.9999);
     let v=(w0*uv[0][1]+w1*uv[1][1]+w2*uv[2][1]).clamp(0.0,0.9999);
-    let x=(u*LEAF_TEXTURE_SIZE as f32) as usize;
-    let y=(v*LEAF_TEXTURE_SIZE as f32) as usize;
-    rgba[(y*LEAF_TEXTURE_SIZE+x)*4+3]>127
+    let side=((rgba.len()/4) as f32).sqrt() as usize;
+    if side==0 || side*side*4!=rgba.len() {return false;}
+    let x=(u*side as f32) as usize;
+    let y=(v*side as f32) as usize;
+    rgba[(y*side+x)*4+3]>127
 }
 
 fn paint_voxel_triangle(
@@ -34,8 +36,7 @@ fn paint_voxel_triangle(
     points:[Pos2;3], color:Color32,texture:Option<&TextureHandle>,
     selected:bool,
 ) {
-    if tri.cutout {
-        if let Some(tex)=texture {
+    if let Some(tex)=texture {
             let mut m=egui::Mesh::with_texture(tex.id());
             for (index,pos) in points.iter().enumerate() {
                 m.vertices.push(egui::epaint::Vertex {
@@ -44,7 +45,6 @@ fn paint_voxel_triangle(
             }
             m.indices.extend_from_slice(&[0,1,2]);
             painter.add(egui::Shape::mesh(m));
-        }
     } else {
         painter.add(egui::Shape::convex_polygon(points.to_vec(),color,Stroke::NONE));
     }
@@ -109,6 +109,16 @@ struct Studio {
     foliage_stage: FoliageStage,
     foliage_yaw: f32,
     leaf_texture: Option<TextureHandle>,
+    bark_texture: Option<TextureHandle>,
+    asset_leaf_texture: Option<TextureHandle>,
+    asset_bark_texture: Option<TextureHandle>,
+    foliage_leaf_pixels: Vec<u8>,
+    asset_leaf_pixels: Vec<u8>,
+    foliage_mats_dirty: bool,
+    asset_mats_dirty: bool,
+    material_role: MaterialRole,
+    material_search: String,
+    editing_material: Option<(bool,MaterialRole)>,
     asset: VoxelAsset,
     asset_mesh: Option<FoliageMesh>,
     asset_dirty: bool,
@@ -157,6 +167,16 @@ impl Default for Studio {
             foliage_stage: FoliageStage::PresetLoader,
             foliage_yaw: 0.8,
             leaf_texture: None,
+            bark_texture: None,
+            asset_leaf_texture: None,
+            asset_bark_texture: None,
+            foliage_leaf_pixels: Vec::new(),
+            asset_leaf_pixels: Vec::new(),
+            foliage_mats_dirty: true,
+            asset_mats_dirty: true,
+            material_role: MaterialRole::Leaf,
+            material_search: String::new(),
+            editing_material: None,
             asset: VoxelAsset::default(),
             asset_mesh: None,
             asset_dirty: true,
@@ -802,7 +822,8 @@ impl Studio {
         let pointer=if response.clicked_by(egui::PointerButton::Primary) {
             response.interact_pointer_pos()
         } else {None};
-        let leaf_alpha=pointer.map(|_|leaf_cutout_rgba());
+        let leaf_alpha=pointer.and(if self.asset_leaf_pixels.is_empty() {None}
+            else {Some(&self.asset_leaf_pixels)});
         let wind_time=ui.ctx().input(|i|i.time as f32);
         if mesh.leaf_render.geometry==LeafGeometry::CrossedCutout &&
             mesh.leaf_render.wind_strength>0.0 && mesh.leaf_render.wind_speed>0.0 {
@@ -819,7 +840,7 @@ impl Studio {
                 mesh.leaf_render,mesh.voxel_size)));
             if let Some(p)=pointer {
                 if hit_triangle(p,projected[0],projected[1],projected[2]) &&
-                    (!tri.cutout || leaf_alpha.as_ref().is_some_and(|rgba|
+                    (!tri.cutout || leaf_alpha.is_some_and(|rgba|
                         cutout_hit(p,projected,tri.uv,rgba))) {
                     picked=Some((tri.cell,tri.outward));
                 }
@@ -837,8 +858,11 @@ impl Studio {
                 (base[1] as f32*shade) as u8,
                 (base[2] as f32*shade) as u8);
             let selected=self.asset_selected==Some(tri.cell);
-            paint_voxel_triangle(&painter,tri,projected,color,
-                self.leaf_texture.as_ref(),selected);
+            paint_voxel_triangle(&painter,tri,projected,
+                if tri.cutout || tri.material==Material::Bark {Color32::WHITE} else {color},
+                if tri.cutout {self.asset_leaf_texture.as_ref()}
+                    else if tri.material==Material::Bark {self.asset_bark_texture.as_ref()}
+                    else {None},selected);
         }
         if let Some((cell,face))=picked {
             match self.asset_tool {
@@ -1143,8 +1167,11 @@ impl Studio {
             let points=std::array::from_fn(|i|project(sway_leaf_vertex(
                 tri.points[i],tri.cell,tri.wind_weight[i],wind_time,
                 mesh.leaf_render,mesh.voxel_size)));
-            paint_voxel_triangle(&painter,tri,points,color,
-                self.leaf_texture.as_ref(),false);
+            paint_voxel_triangle(&painter,tri,points,
+                if tri.cutout || tri.material==Material::Bark {Color32::WHITE} else {color},
+                if tri.cutout {self.leaf_texture.as_ref()}
+                    else if tri.material==Material::Bark {self.bark_texture.as_ref()}
+                    else {None},false);
         }
         painter.text(rect.left_top()+Vec2::new(12.0,12.0),Align2::LEFT_TOP,
             format!("{} • {} {} voxels • {} surface triangles",
@@ -1754,12 +1781,34 @@ impl Studio {
 impl eframe::App for Studio {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
-        if self.leaf_texture.is_none() && (self.library_tab==2 || self.library_tab==3) {
-            let pixels=leaf_cutout_rgba();
-            let image=egui::ColorImage::from_rgba_unmultiplied(
-                [LEAF_TEXTURE_SIZE,LEAF_TEXTURE_SIZE],&pixels);
-            self.leaf_texture=Some(ctx.load_texture(
-                "leaf-cutout",image,egui::TextureOptions::NEAREST));
+        if self.library_tab==2 && self.foliage_mats_dirty {
+            self.foliage_mats_dirty=false;
+            let size=64;
+            match (self.foliage.materials.bake_leaf(size,self.foliage.leaf_color),
+                   self.foliage.materials.bake_bark(size,self.foliage.bark_color)) {
+                (Ok(leaves),Ok(bark))=>{
+                    self.foliage_leaf_pixels=leaves.clone();
+                    put_texture_rect(&ctx,&mut self.leaf_texture,"foliage-leaf-material",
+                        leaves,[size as usize,size as usize]);
+                    put_texture_rect(&ctx,&mut self.bark_texture,"foliage-bark-material",
+                        bark,[size as usize,size as usize]);
+                }
+                (Err(e),_)|(_,Err(e))=>self.status=format!("Foliage material: {e}"),
+            }
+        } else if self.library_tab==3 && self.asset_mats_dirty {
+            self.asset_mats_dirty=false;
+            let size=64;
+            match (self.asset.materials.bake_leaf(size,self.asset.leaf_color),
+                   self.asset.materials.bake_bark(size,self.asset.bark_color)) {
+                (Ok(leaves),Ok(bark))=>{
+                    self.asset_leaf_pixels=leaves.clone();
+                    put_texture_rect(&ctx,&mut self.asset_leaf_texture,"asset-leaf-material",
+                        leaves,[size as usize,size as usize]);
+                    put_texture_rect(&ctx,&mut self.asset_bark_texture,"asset-bark-material",
+                        bark,[size as usize,size as usize]);
+                }
+                (Err(e),_)|(_,Err(e))=>self.status=format!("Asset material: {e}"),
+            }
         }
         if self.library_tab == 3 {
             if self.asset_dirty {
