@@ -49,6 +49,22 @@ Authoring subsystems (existing)                World systems (future)
 
 **Ownership stays explicit:** the Foliage creator produces actual world-block blueprints; world placement, tool requirements, felling traversal, item yields, ecology, multiplayer and authoritative persistence belong to the future runtime.
 
+## Structural trees: trunk, attachments, supported foliage (implemented)
+
+The Foliage generator now records a **single cohesive tree structure** alongside its real 1 m harvestable hexels, inspired by PlanetSmith's editable structure workflow and the Vintage Story forum discussion of believable branches and crowns. This is **our own implementation**; no external model packs are imported.
+
+- **Trunk first:** rasterize a solid hexel trunk with the existing species-specific thickness and taper. The trunk is recorded as structural branch `0` and its bottom-layer wood hexes form the **root footprint**.
+- **Attached major and small branches:** each generated limb and fork has an ID, a parent branch, a snapped Q/R/Z attachment cell and a tip. Each wood cell is attributed to one owner, while overlaps retain already-authoritative trunk/limb ownership. Wood remains 1 m solid game hexels, not independent mesh-only branch entities.
+- **Branch-owned leaf clusters:** each foliage cell records which limb/fork spawned it. Leaf cards remain species-specific alpha-cutout textures occupying real, removable leaf hexels.
+- **No floating canopy islands:** a face-neighbour flood-fill removes any probabilistic leaf island that does not ultimately reach wood. This does **not** guarantee botanical realism, but prevents entirely unsupported leaf clusters in the generated structure.
+- **Editable, persistent provenance:** `TreeStructure` (`origin`, `root_footprint`, `branches`, per-cell `TreePart`/`branch_id`) is embedded in Foliage game-tree JSON and in `VoxelAsset.tree_structure`. Individual add/erase/paint operations update cell-role metadata and recompute the ground footprint; a fully removed base allows the asset to lose its tree-specific metadata rather than keeping an invalid root record. Untouched tree components keep their original branch identity.
+- **Pure planting-site check:** `TreeStructure::fits_site` takes terrain-support and clearance callbacks over local cells. It performs no biome selection, terrain mutation, chunk streaming or wrapping; the eventual world generator must map local Q/R/Z onto world coordinates and check period-boundary and chunk overlap correctly.
+- **Testable bounds:** the existing 40,000-cell asset budget, deterministic seeds and fixed 1 m across-flats / 1 m vertical geometry remain. Tests check branch relationships and root/site constraints, supported foliage, manual edit consistency and serialized provenance.
+
+**Visual direction:** The [MountainLabs Voxel Tree Pack](https://mountainlabz.itch.io/voxel-tree-pack) is a **style reference** for distinctive silhouettes (dense broadleaf crowns, tapered conifers, hanging willows, irregular exposed branches and seasonal variants). It is **not** bundled, copied or converted to the game's hexel assets. The generator does not yet match those models exactly; especially, small branches still appear as full-sized wooden hexel prisms, and future refinement could use narrower *render geometry* inside harvestable branch cells.
+
+**Not yet implemented:** Gameplay tree-felling logic, tool/drop rules, segment collapse, published variant catalog, runtime chunk-aware asset stamping, toroidal planting/scattering, climate-based species selection, ecological growth and persistence of world instances. Structural IDs are groundwork for those systems, not proof those systems are already running.
+
 ## Proposed asset handoff: editable source vs game-ready content
 
 1. **Source asset (editable and authoritative for creation):** a `Graph`, `FoliageProject`, `VoxelAsset`, or preset/recipe with its source settings, parameters, seed, material bindings and format version.
