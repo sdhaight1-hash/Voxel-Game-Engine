@@ -6,7 +6,7 @@ use std::{collections::HashMap, path::{Path, PathBuf}};
 use texture_studio::{Graph, NodeKind, LibraryNode, VoxelShape, SideMapping};
 use texture_studio::presets::{builtin_presets, Preset};
 use texture_studio::foliage::{FoliageProject, FoliageMesh, FoliageStage, PlantPreset, Material,
-    BranchGrowth, LeafGeometry, leaf_cutout_rgba, leaf_opacity_rgba, sway_leaf_vertex, LEAF_TEXTURE_SIZE};
+    BranchGrowth, LeafGeometry, sway_leaf_vertex};
 use texture_studio::asset::VoxelAsset;
 use texture_studio::foliage_materials::{FoliageMaterials, MaterialRole, MATERIAL_SIZE};
 use texture_studio::voxel::{render_atlas, render_voxel_preview, export_obj};
