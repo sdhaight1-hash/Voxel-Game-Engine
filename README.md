@@ -69,6 +69,18 @@ The **Assets** and **Foliage** 3D viewports use a shared native WGSL rendering p
 
 For now, the render target is 1024 × 1024 pixels and uses a simple orthographic camera and directional face lighting. The node graph is **not yet a GPU compute graph**, and there is no PBR-lighting model, shadow map, compute meshing or skeletal wind engine. The underlying wgpu renderer is the foundation for those later stages. Geometry-only changes reuse previously baked bark and leaf pixels; the GPU uploads only the vertex, texture, or palette resources that actually changed.
 
+### Measuring texture and geometry invalidation
+
+To capture a **local, reproducible CPU-side baseline** for issue [#10](https://github.com/sdhaight1-hash/Voxel-Game-Engine/issues/10), launch the desktop editor with profiling enabled:
+
+```sh
+VOXEL_PROFILE_MATERIALS=1 cargo run --release
+```
+
+The opt-in `[material-profile]` stderr lines report per-operation CPU milliseconds and **cumulative counts** since launch: leaf/bark bake attempts, Foliage generation, Asset mesh builds, 3D scene builds, and actual wgpu vertex/texture/palette upload calls. The bake times include CPU graph evaluation, not egui texture presentation; GPU upload timings measure CPU resource creation and queue writes, **not GPU execution**. These are diagnostics, not a cross-machine performance claim. Export-time bakes and egui 2D texture uploads are not included.
+
+For repeatable comparisons, record the same preset, seed, graph, texture resolution, build mode and machine, then perform these steps in order: open **Foliage** with Oak and let its initial 64px preview render; change only the seed (geometry generation should increase, material bake attempts should not); edit only a seasonal palette stop (palette uploads should increase, geometry and material bake attempts should not); edit Bark tint mix (bakes and bark texture upload should increase, geometry generation should not); import the tree into **Assets**, then move one hexel (Asset mesh builds should increase without new material bakes). Compare the **count deltas**, then measure elapsed times over repeated runs on the same hardware. Switch to the 3D viewport to trigger GPU upload measurements.
+
 ## Procedural Bark and Foliage Materials
 
 The **Foliage** and **Assets** workspaces now use real material roles instead of treating every block or leaf card as a flat RGB color. Each project retains independent editable **Bark**, **Leaf Pattern (palette-tinted)** and optional **Leaf Cutout** node graphs. Current asset/project JSON supports editable material assignments; missing material assignments use palette colors and the generated leaf cutout.
