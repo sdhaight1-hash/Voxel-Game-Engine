@@ -158,6 +158,37 @@ fn branching_warped_materials_remain_byte_identical_after_old_graph_roundtrip() 
     }
 }
 
+#[test]
+fn color_ramp_bakes_into_tree_roles_without_replacing_species_palette() {
+    use texture_studio::ColorRamp;
+    let mut graph=Graph::default();
+    let scalar=graph.add_node(NodeKind::Scalar{value:0.5},[0.0,0.0]);
+    let gradient=graph.add_node(NodeKind::ColorRamp{ramp:ColorRamp::default()},[180.0,0.0]);
+    graph.connect(scalar,gradient,0).unwrap();
+    graph.connect(gradient,2,0).unwrap();
+    let mut mats=FoliageMaterials::default();
+    mats.bark=Some(graph.clone());
+    mats.leaf=Some(graph.clone());
+    let bark=mats.bake_bark(16,[110,80,60]).unwrap();
+    assert_eq!(bark,graph.render_rgba(16,16).unwrap());
+    let first_leaf=mats.bake_leaf(16,[75,138,77]).unwrap();
+    if let NodeKind::ColorRamp{ramp}= &mut graph.node_mut(gradient).unwrap().kind {
+        for index in 0..ramp.count as usize {
+            ramp.stops[index].rgb=[0,0,0];
+        }
+    }
+    mats.leaf=Some(graph);
+    let edited_leaf=mats.bake_leaf(16,[75,138,77]).unwrap();
+    assert_ne!(first_leaf,edited_leaf,"the ramp must affect leaf material shading");
+    assert_eq!(first_leaf.chunks_exact(4).map(|p|p[3]).collect::<Vec<_>>(),
+        edited_leaf.chunks_exact(4).map(|p|p[3]).collect::<Vec<_>>(),
+        "the species foliage cutout is owned by the leaf silhouette");
+    // Seasonal palettes are GPU runtime data, not a static texture rebake.
+    let mut seasonal=mats.clone();
+    seasonal.seasonal_palettes=Some(Default::default());
+    assert_eq!(seasonal.bake_leaf(16,[75,138,77]).unwrap(),edited_leaf);
+}
+
 /// The CI benchmark step runs this alongside the pre-optimization baseline.
 /// It measures repeat-output reuse (not GPU upload or intermediate graph caching).
 #[test]
