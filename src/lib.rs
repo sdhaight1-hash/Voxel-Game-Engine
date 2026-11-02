@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
 pub mod voxel;
+pub mod presets;
 pub use voxel::{VoxelSettings, VoxelShape, SideMapping};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -39,6 +40,7 @@ pub enum NodeKind {
     Blend { factor: f32 },
     Bricks { columns: u32, rows: u32, mortar: f32 },
     Voronoi { cells: u32, seed: u32 },
+    Strata { bands: u32, warp: f32, seed: u32 },
     Colorize { dark: [u8; 3], light: [u8; 3] },
     Output,
 }
@@ -53,6 +55,7 @@ impl NodeKind {
             Self::Blend { .. } => "Blend",
             Self::Bricks { .. } => "Bricks",
             Self::Voronoi { .. } => "Voronoi",
+            Self::Strata { .. } => "Strata",
             Self::Colorize { .. } => "Colorize",
             Self::Output => "Material Output",
         }
@@ -61,7 +64,7 @@ impl NodeKind {
     pub fn input_count(&self) -> usize {
         match self {
             Self::Noise { .. } | Self::Checker { .. } | Self::Color { .. }
-                | Self::Bricks { .. } | Self::Voronoi { .. } => 0,
+                | Self::Bricks { .. } | Self::Voronoi { .. } | Self::Strata { .. } => 0,
             Self::Invert | Self::Colorize { .. } => 1,
             Self::Blend { .. } => 2,
             Self::Output => 4,
@@ -214,6 +217,8 @@ impl Graph {
                     => return Err("Brick settings out of range".into()),
                 NodeKind::Voronoi { cells, .. } if !(2..=32).contains(&cells)
                     => return Err("Voronoi cells out of range".into()),
+                NodeKind::Strata { bands, warp, .. } if !(1..=64).contains(&bands) || !warp.is_finite() || !(0.0..=1.0).contains(&warp)
+                    => return Err("Strata settings out of range".into()),
                 _ => {}
             }
         }
@@ -368,6 +373,14 @@ impl Graph {
                     }
                 }
                 [(best * 1.15).clamp(0.0, 1.0); 3]
+            }
+            NodeKind::Strata { bands, warp, seed } => {
+                // Periodic warp makes layered wood, water and shell-band patterns.
+                // sin(2π·bands·(v + 1)) repeats exactly at opposing edges.
+                let perturb = periodic_noise(u, v, 8, seed) - 0.5;
+                let phase = std::f32::consts::TAU * bands as f32 * (v + perturb * warp * 0.08);
+                let stripe = phase.sin() * 0.5 + 0.5;
+                [stripe; 3]
             }
             NodeKind::Colorize { dark, light } => {
                 let input = self.sample_input(id, 0, u, v);
@@ -546,6 +559,20 @@ mod tests {
         let loaded:Graph=serde_json::from_value(value).unwrap();
         assert_eq!(loaded.voxel.shape,VoxelShape::Cube);
         loaded.validate().unwrap();
+    }
+
+    #[test]
+    fn strata_is_seamless_and_parameters_valid() {
+        let mut graph=Graph::default();
+        let id=graph.add_node(NodeKind::Strata { bands: 17, warp: 0.4, seed: 3 }, [0.0,0.0]);
+        graph.connect(id,2,0).unwrap();
+        graph.validate().unwrap();
+        for p in [0.0, 0.1, 0.5, 0.93] {
+            assert!((graph.sample(id, p, 0.0)[0] - graph.sample(id, p, 1.0)[0]).abs() < 0.0001);
+            assert!((graph.sample(id, 0.0, p)[0] - graph.sample(id, 1.0, p)[0]).abs() < 0.0001);
+        }
+        graph.node_mut(id).unwrap().kind = NodeKind::Strata { bands: 0, warp: 0.4, seed: 3 };
+        assert!(graph.validate().is_err());
     }
 
     #[test]
