@@ -29,37 +29,49 @@ pub fn hex_center(cell: [i32;3], size: f32) -> [f32;3] {
     ]
 }
 
-/// Signed distances of a point from all eight outward-facing halfspaces.
-/// All components <= 0 means the point is inside the hexagonal prism.
-fn halfspaces(pos: [f32;3], cell:[i32;3], size:f32)->[f32;8] {
-    let c=hex_center(cell,size);
-    let dx=pos[0]-c[0];
-    let dy=pos[1]-c[1];
-    let dz=pos[2]-c[2];
-    let mut ds=[0.0;8];
-    for (i,d) in ds.iter_mut().enumerate().take(6) {
-        let angle=i as f32*std::f32::consts::PI/3.0;
-        *d=angle.cos()*dx+angle.sin()*dy-0.5*size;
+/// Fixed side normals for the six faces of a pointy-vertex hexagon.
+/// Avoid trigonometric functions in the hot per-triangle clipping loop.
+const NORMALS: [[f32;2];6]=[
+    [1.0,0.0],[0.5,0.866_025_4],[-0.5,0.866_025_4],
+    [-1.0,0.0],[-0.5,-0.866_025_4],[0.5,-0.866_025_4],
+];
+
+fn signed_distance(pos:[f32;3],c:[f32;3],size:f32,plane:usize)->f32 {
+    match plane {
+        0..=5=>{
+            let n=NORMALS[plane];
+            n[0]*(pos[0]-c[0])+n[1]*(pos[1]-c[1])-0.5*size
+        }
+        6=>pos[2]-c[2]-0.5*size,
+        _=>c[2]-pos[2]-0.5*size,
     }
-    ds[6]=dz-0.5*size;
-    ds[7]=-dz-0.5*size;
-    ds
 }
 
 pub fn contains(pos:[f32;3],cell:[i32;3],size:f32)->bool {
-    halfspaces(pos,cell,size).iter().all(|&d|d<=0.000_03)
+    let center=hex_center(cell,size);
+    (0..8).all(|i|signed_distance(pos,center,size,i)<=0.000_03)
 }
 
 pub fn clip_to_hex_prism(triangle: ClippedTriangle,cell:[i32;3],size:f32)
     ->Vec<ClippedTriangle> {
+    let center=hex_center(cell,size);
+    // Reject whole triangles against any plane without allocating.
+    if (0..8).any(|plane|triangle.iter().all(|v|
+        signed_distance(v.position,center,size,plane)>EPS)) {
+        return Vec::new();
+    }
+    // Convex region fast path; the full triangle is already inside.
+    if triangle.iter().all(|v|contains(v.position,cell,size)) {
+        return vec![triangle];
+    }
     let mut polygon=triangle.to_vec();
     for plane in 0..8 {
         if polygon.is_empty(){break;}
         let mut next=Vec::with_capacity(polygon.len()+1);
         let mut previous=*polygon.last().unwrap();
-        let mut previous_d=halfspaces(previous.position,cell,size)[plane];
+        let mut previous_d=signed_distance(previous.position,center,size,plane);
         for &current in &polygon {
-            let d=halfspaces(current.position,cell,size)[plane];
+            let d=signed_distance(current.position,center,size,plane);
             let inside=d<=EPS;
             let was_inside=previous_d<=EPS;
             if inside!=was_inside {
