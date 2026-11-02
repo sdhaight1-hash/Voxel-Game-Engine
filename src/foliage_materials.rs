@@ -3,13 +3,23 @@
 
 use crate::foliage::{leaf_cutout_for_species, PlantPreset};
 use crate::leaf_vector::{LeafSilhouetteSource,vector_oak_cutout_rgba,
-    vector_willow_cutout_rgba,vector_cottonwood_cutout_rgba};
+    vector_willow_cutout_rgba,vector_cottonwood_cutout_rgba,
+    vector_subpixel_cutout_rgba};
 use crate::presets::{builtin_presets, Preset};
 use crate::{Graph, VoxelSettings};
 use crate::material_functions::{MaterialFunctionInstance,MaterialFunctionLibrary};
 use serde::{Deserialize, Serialize};
 
 pub const MATERIAL_SIZE: u32 = 128;
+
+/// Subpixel coverage is authored and cached only for vector base silhouettes.
+/// Binary remains the default for all legacy projects.
+#[derive(Clone,Copy,Debug,PartialEq,Eq,Serialize,Deserialize,Default)]
+pub enum LeafAlphaSampling {
+    #[default]
+    Binary,
+    Coverage2x2,
+}
 
 fn default_threshold() -> f32 { 0.5 }
 fn default_bark_tint_strength() -> f32 { 0.0 }
@@ -150,6 +160,8 @@ pub struct FoliageMaterials {
     /// Optional base leaf cutout replacement; legacy species art is default.
     #[serde(default)]
     pub leaf_silhouette: LeafSilhouetteSource,
+    #[serde(default)]
+    pub leaf_alpha_sampling: LeafAlphaSampling,
     /// Ripe fruit colour for a small visual indication on foliage cards.
     /// Real fruit items, harvesting and seasonal ripening are world systems.
     pub fruit_color: Option<[u8;3]>,
@@ -168,6 +180,7 @@ impl Default for FoliageMaterials {
             bark_preset: None, leaf_preset: None,
             leaf_species: PlantPreset::Oak,
             leaf_silhouette: LeafSilhouetteSource::LegacySpecies,
+            leaf_alpha_sampling: LeafAlphaSampling::Binary,
             fruit_color: None,
             seasonal_palettes: None, cutout_threshold: 0.5 }
     }
@@ -181,6 +194,10 @@ impl FoliageMaterials {
 
     pub fn validate(&self) -> Result<(), String> {
         self.leaf_silhouette.validate(self.leaf_species)?;
+        if self.leaf_alpha_sampling==LeafAlphaSampling::Coverage2x2 &&
+            matches!(self.leaf_silhouette,LeafSilhouetteSource::LegacySpecies) {
+            return Err("2x2 leaf-card coverage requires an authored vector silhouette".into());
+        }
         if !self.bark_tint_strength.is_finite()
             || !(0.0..=1.0).contains(&self.bark_tint_strength) {
             return Err("Bark tint strength must be 0..1".into());
@@ -314,14 +331,16 @@ impl FoliageMaterials {
     pub fn bake_leaf(&self, size:u32, leaf_tint:[u8;3]) -> Result<Vec<u8>,String> {
         self.validate()?;
         if size==0 || size>1024 {return Err("Foliage bake must be 1..1024 px".into());}
-        let base=match self.leaf_silhouette {
+        let base=if self.leaf_alpha_sampling==LeafAlphaSampling::Coverage2x2 {
+            vector_subpixel_cutout_rgba(self.leaf_silhouette,self.leaf_species)?
+        } else {match self.leaf_silhouette {
             LeafSilhouetteSource::LegacySpecies=>leaf_cutout_for_species(self.leaf_species),
             LeafSilhouetteSource::VectorOak{lobe_width}=>vector_oak_cutout_rgba(lobe_width),
             LeafSilhouetteSource::VectorWillow{blade_width}=>
                 vector_willow_cutout_rgba(blade_width),
             LeafSilhouetteSource::VectorCottonwood{blade_width}=>
                 vector_cottonwood_cutout_rgba(self.leaf_species,blade_width),
-        };
+        }};
         let graph=self.leaf.as_ref().map(|g|g.render_rgba(size,size)).transpose()?;
         let opacity=self.leaf_opacity.as_ref()
             .map(|g|g.render_rgba(size,size)).transpose()?;
@@ -469,6 +488,40 @@ mod tests {
         let saved=serde_json::to_string(&materials).unwrap();
         let loaded:FoliageMaterials=serde_json::from_str(&saved).unwrap();
         assert_eq!(loaded.bake_leaf(64,[65,145,68]).unwrap(),vector);
+    }
+
+    #[test]
+    fn vector_subpixel_coverage_preserves_tint_and_subtractive_masks() {
+        for (species,source) in [
+            (PlantPreset::Oak,LeafSilhouetteSource::VectorOak{lobe_width:1.0}),
+            (PlantPreset::Willow,LeafSilhouetteSource::VectorWillow{blade_width:1.0}),
+            (PlantPreset::BlackCottonwood,
+                LeafSilhouetteSource::VectorCottonwood{blade_width:1.0}),
+        ] {
+            let mut mat=FoliageMaterials::for_species(species);
+            mat.leaf_silhouette=source;
+            let binary=mat.bake_leaf(64,[62,146,73]).unwrap();
+            mat.leaf_alpha_sampling=LeafAlphaSampling::Coverage2x2;
+            let covered=mat.bake_leaf(64,[62,146,73]).unwrap();
+            assert_ne!(binary,covered);
+            assert!(covered.chunks_exact(4)
+                .any(|px|px[3]>0 && px[3]<255));
+            let mut black=Graph::default();
+            black.node_mut(1).unwrap().kind=crate::NodeKind::Color{rgb:[0,0,0]};
+            mat.set_graph(MaterialRole::Opacity,black);
+            let empty=mat.bake_leaf(64,[62,146,73]).unwrap();
+            assert!(empty.chunks_exact(4).all(|px|px[3]==0));
+            mat.leaf_opacity=None;
+            assert_eq!(mat.bake_leaf(64,[62,146,73]).unwrap(),covered);
+            let restored:FoliageMaterials=serde_json::from_str(
+                &serde_json::to_string(&mat).unwrap()).unwrap();
+            assert_eq!(restored.bake_leaf(64,[62,146,73]).unwrap(),covered);
+        }
+        let legacy:FoliageMaterials=serde_json::from_str("{}").unwrap();
+        assert_eq!(legacy.leaf_alpha_sampling,LeafAlphaSampling::Binary);
+        let mut bad=FoliageMaterials::default();
+        bad.leaf_alpha_sampling=LeafAlphaSampling::Coverage2x2;
+        assert!(bad.validate().is_err());
     }
 
     #[test]
