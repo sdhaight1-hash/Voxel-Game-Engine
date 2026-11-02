@@ -139,7 +139,45 @@ The exact voxel representation (dense chunks, palettes, implicit solids, hybrid)
 - **Hierarchical ecological simulation** inspired by Eco: coarse world-wide aggregates, regional vegetation/wildlife/water state, and fine individual entities/physics around active players.
 - Persist ecological effects and resource depletion where gameplay requires them.
 
-Not decided: tectonic solver, atmospheric solver, water mass accounting, ecology tick rates, region aggregation, cave/ore generation, or player-impact fidelity.
+### Finite water and hydrological simulation
+
+**Decided design principle:** **Water is finite and globally conserved.** There are no unlimited source blocks, arbitrarily replenishing springs, infinite reservoirs, or rainfall that silently adds water to the world. The total planetary water inventory is accounted for across **oceans, rivers/lakes/wetlands, groundwater, snow/ice, atmospheric moisture, organisms, player containers, pipes and constructed reservoirs**. Transfers change location, phase, or owner—not total water mass. If water is chemically transformed or bound into another material, its water-equivalent mass must be explicitly accounted for rather than discarded. A closed world has no unexplained sources or sinks.
+
+**Conservation invariant (conceptual):**
+
+`total_water_before = total_water_after`
+
+The invariant applies across region/chunk borders, toroidal wrap seams, changes in simulation detail, loading/unloading, persistence and multiplayer interactions. Use units and a precise accounting scheme that can represent partial-cell volumes; explore integer/fixed-point transfer amounts or a similarly auditable conservative method, including rounding remainders. The **physical/numerical solver is open**, but duplicating or deleting water during transfers is not acceptable.
+
+**Decided behavioural goals:**
+
+- Rivers follow real drainage structure, not arbitrary noise lines; channels descend according to water-surface potential and hydraulic conditions. Under pressure, local water may move uphill in elevation without violating physics.
+- Terrain depressions collect water and may create lakes with spill elevations and overflow routes. Closed basins can instead lose water through evaporation or infiltration.
+- Lakes and rivers have **finite stored volumes and variable water levels/discharge**. Droughts can dry riverbeds; storms and snowmelt can flood floodplains.
+- Excavation, dams, canals, pumping, irrigation and mining can divert water, drain lakes, flood caves, and change groundwater availability without creating or destroying water.
+- Rain/snow draw from atmospheric moisture; melt, evaporation, transpiration, infiltration and springs debit/credit their actual source/destination reservoirs.
+- Oceans are **enormous finite reservoirs**, not infinite source blocks. Ordinary player-scale effects may be imperceptible, but ocean mass remains accounted for.
+- Water may cross the X/Z periodic world seams with no loss, duplication or artificial boundary.
+
+**Provisional multi-resolution architecture (not a chosen solver):**
+
+1. **Global:** coarse ocean/atmosphere/ice/groundwater budgets and climate-driven transport, maintaining whole-world accounting without per-voxel ocean simulation.
+2. **Regional:** connected catchments, river reaches, lakes with level–area–volume curves, springs and aquifers; store volume and transfers as persistent state.
+3. **Local:** activate fine-grained surface/voxel fluid behaviour near player interaction, breaches, waterfalls, caves and floods; show currents that physically affect entities.
+
+When transitioning between regional aggregates and locally active water cells, **transfer ownership of the volume**. Never leave the same water counted in both representations. On chunk unload, aggregate remaining local water back into persistent state, keeping river throughput and partial transfers consistent. Remote water can use animated shader waves/foam/spray without simulating each visible droplet; graphics are not a water source.
+
+**World-creation integration:** After the tectonic and Terrain Diffusion surface is finalized, derive a **whole-world periodic drainage graph**, watersheds, river corridors, depressions, lakes and spillways; carve/refine appropriate channels and floodplains, then reconcile any affected flow paths. Initialize finite stores in oceans, lakes, soil, aquifers and snow/ice; atmospheric water is included in the budget. The ~31.25 m proposed global elevation raster cannot resolve every narrow stream or dam: finer riverbeds and local hydrology need deterministic sub-grid geometry. Compute actual playable lake/ocean storage capacities from the **final world-height-transformed terrain**, not directly from the original unscaled geographic elevations.
+
+**Candidate local solver approaches to benchmark:** a conservative grid-based shallow-water scheme for surface channels/flooding, with a volume-transfer voxel solver for enclosed spaces; a cellular automaton can be a simpler local prototype. These are **not finalized choices**. Also unresolved: stable pressures, velocities, erosion, groundwater permeability, evaporation rates, numerical time steps, inactive-region updates and multiplayer authority.
+
+**Reference concepts (not assumptions of full conservation in other implementations):**
+- [Streams Reflowing (Modrinth)](https://modrinth.com/mod/streams-reflowing) — flowing river/terrain-water design reference; **do not assume it guarantees global water conservation**.
+- [latticeGlade — *How I Made Advanced Procedural Voxel Water*](https://www.youtube.com/watch?v=ZxSRJJiw5Gk) — downhill terrain-guided river routing, lakes at depressions, waterfalls, water currents, visual foam, local cellular-automata water response when blocks are removed, rain visuals and distant animated water. The demonstration **does not establish whole-world mass conservation**.
+- [Plate-local river generation](https://github.com/Davismk3/plate-local-river-generation) — river-generation technique credited by the video; investigate its region-based routing ideas for a tectonic world, while still validating global drainage.
+- [Eco](https://play.eco/) — ecological consequence/resource-accounting inspiration; not a claim that its water simulation matches ours.
+
+Not decided: tectonic solver, atmospheric and hydrological transport solvers, water accounting representation and numerical precision, ecology tick rates, region aggregation, cave/ore generation, or player-impact fidelity.
 
 ## 9. Performance, compression and generation/runtime separation
 
@@ -161,12 +199,16 @@ No end-to-end performance numbers or compression ratios have yet been demonstrat
 - **Eco:** finite wraparound voxel worlds, globe-like presentation, ecology and persistent human/environment interactions.
 - **Terrain Diffusion / InfiniteDiffusion:** surface-height and climate synthesis, hierarchical regional generation.
 - **Tellus:** retained as research for geographic data handling; no longer the planned synthetic-world base.
+- **Streams Reflowing and latticeGlade's voxel-water showcase:** references for river geometry, lakes, currents, waterfalls, responsive local fluids and shader-driven visuals; not proof of strict water conservation.
 
 External references:
 - https://github.com/xandergos/terrain-diffusion
 - https://xandergos.github.io/terrain-diffusion/
 - https://mods.vintagestory.at/show/mod/63560
 - https://github.com/Techmo2/VS-Terrain-Diffusion
+- https://modrinth.com/mod/streams-reflowing
+- https://www.youtube.com/watch?v=ZxSRJJiw5Gk
+- https://github.com/Davismk3/plate-local-river-generation
 
 ## 11. Outstanding decisions (must not be silently treated as settled)
 
@@ -179,7 +221,8 @@ External references:
 7. **3D subsurface generation:** caves, ore, rock structure, material rules, and surface-to-voxel interpolation.
 8. **Voxel chunk representation and persistence format:** including edits, snapshots, caches and generator version upgrades.
 9. **Generation time/storage/performance budgets:** quantify on target hardware.
-10. **Climate, hydrology and ecological simulation detail:** periodicity and physical plausibility versus cost.
+10. **Climate and ecological simulation detail:** periodicity and physical plausibility versus cost.
+11. **Conserved-water implementation:** choose quantization/accounting, reservoir/basin and groundwater models, local fluid solver, active/inactive reconciliation, and validation limits; the **finite-water rule itself is decided**.
 
 ## 12. Initial validation plan
 
@@ -189,11 +232,14 @@ External references:
 4. Generate local **32³** chunks and persist edits over immutable base data; verify reload and regeneration preserve modifications.
 5. Run an end-to-end **limited-area** tectonics → diffusion → voxel test, then test a wrapped seam. Do not commit to generating an entire 1,024 km world until memory, runtime and seam tests pass.
 6. Add fixed-budget terrain streaming tests and document measured hardware and results.
+7. Build a **small finite lake → player-dug channel → downstream reservoir** fixture. Dig a new outlet, allow water levels to change, then assert the total before and after is identical without rain/evaporation.
+8. Test **lake/river boundary transfers across chunk unloads and both toroidal seams**, including local ↔ regional representation handoff, save/reload, parallel updates, and large player-built dams; never count the same water twice.
+9. Test a closed **evaporation → atmospheric moisture → rain/snow → infiltration/runoff** cycle with explicit budgets and mass-balance diagnostics. Measure solver stability and worst-case active-region cost.
 
 ---
 
 ### Summary
 
-**Chosen direction:** A **1,024 × 1,024 km**, finite **X/Z toroidal** synthetic world; **512-block default** vertical height with **256/768/1,024** options; **complete pre-generation and permanent compression of base Terrain Diffusion geography**; **no diffusion inference in gameplay**; **streamed, regenerable detailed voxel terrain**; **persistent independent edit data**; tectonics-first geography and coherent global climate/ecology.
+**Chosen direction:** A **1,024 × 1,024 km**, finite **X/Z toroidal** synthetic world; **512-block default** vertical height with **256/768/1,024** options; **complete pre-generation and permanent compression of base Terrain Diffusion geography**; **no diffusion inference in gameplay**; **streamed, regenerable detailed voxel terrain**; **persistent independent edit data**; tectonics-first geography, **finite conserved water** and coherent global climate/ecology.
 
 **Important open problem:** How to map geographic kilometres and realistic mountain elevation into a fixed-height voxel game **without unacceptable slope distortion**. Do not hard-code a metre-per-voxel equivalence until this is resolved.
