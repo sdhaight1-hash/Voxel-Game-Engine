@@ -207,6 +207,14 @@ mod tests {
         let project = FoliageProject::from_preset(PlantPreset::Willow);
         let tree = project.generate().unwrap();
         let mut asset = VoxelAsset::from_tree(&project, &tree, &Graph::default());
+        assert_eq!(asset.materials.leaf_species, PlantPreset::Willow);
+        let willow_mask=asset.materials.bake_leaf(64,asset.leaf_color).unwrap();
+        let oak_mask=FoliageMaterials::for_species(PlantPreset::Oak)
+            .bake_leaf(64,asset.leaf_color).unwrap();
+        assert_ne!(
+            willow_mask.chunks_exact(4).map(|p|p[3]).collect::<Vec<_>>(),
+            oak_mask.chunks_exact(4).map(|p|p[3]).collect::<Vec<_>>()
+        );
         assert_eq!(asset.shape, VoxelShape::HexPrism);
         assert_eq!(asset.voxel_size, 1.0);
         assert_eq!(asset.voxels.len(), tree.voxels.len());
@@ -215,6 +223,9 @@ mod tests {
         asset.erase([first.x, first.y, first.z]);
         assert_eq!(asset.voxels.len() + 1, tree.voxels.len());
         let decoded = VoxelAsset::from_json(&asset.to_json().unwrap()).unwrap();
+        assert_eq!(decoded.materials.leaf_species, PlantPreset::Willow);
+        assert_eq!(decoded.materials.bake_leaf(64,decoded.leaf_color).unwrap(),
+            willow_mask);
         assert_eq!(decoded.voxels.len(), asset.voxels.len());
         assert!(decoded.mesh().unwrap().triangle_count() > 0);
         assert!(decoded.obj().unwrap().contains("mtllib asset.mtl"));
