@@ -12,7 +12,9 @@ species' silhouette panel. This is off by default. Enabling it changes the
 **baked 64×64 card alpha** to an estimate of subpixel area coverage: four
 fixed UV subpixel occupancy tests per output texel produce the deterministic
 alpha values **0, 64, 128, 191 or 255**. The authored leaf and twig shape
-and 64px raster output dimensions are otherwise unchanged.
+and 64px raster output dimensions are otherwise unchanged. Pixels with fractional leaf coverage retain leaf tint even
+when their center point falls just outside the blade contour; this avoids
+unintended dark twig-colored fringes.
 
 To inspect the result, also enable **Experimental ordered leaf edge
 coverage** in the GPU Foliage/Asset viewport. That independent option
