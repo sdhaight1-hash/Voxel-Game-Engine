@@ -317,7 +317,7 @@ impl Studio {
 
     fn foliage_stage_list(&mut self, ui: &mut egui::Ui) {
         ui.label(egui::RichText::new("PROCEDURAL VEGETATION").strong());
-        ui.small("Build actual 3D tree and leaf meshes; independent from texture nodes.");
+        ui.small("Build real 3D cube/hex voxels for bark, branches and foliage.");
         ui.separator();
         for stage in FoliageStage::ALL {
             if stage == FoliageStage::PresetLoader ||
@@ -332,7 +332,7 @@ impl Studio {
         }
         ui.separator();
         ui.small("Select a stage to edit parameters on the right.");
-        ui.small("All stages affect one deterministic mesh. Export OBJ/MTL or JSON.");
+        ui.small("Stages fill an occupied block grid. Export blocks as JSON, plus OBJ/MTL.");
         ui.small("Not Unreal Nanite, skeleton animation or world scattering.");
     }
 
@@ -367,7 +367,7 @@ impl Studio {
     fn export_foliage(&mut self) {
         let Some(folder) = rfd::FileDialog::new().pick_folder() else { return; };
         let result: Result<(),String> = (||{
-            let names=["foliage.obj","foliage.mtl","foliage.json"];
+            let names=["foliage.voxels.json","foliage.obj","foliage.mtl","foliage.json"];
             for name in names {
                 if folder.join(name).exists() {
                     return Err(format!("{name} already exists; choose an empty folder"));
@@ -377,6 +377,7 @@ impl Studio {
             let project = serde_json::to_string_pretty(&self.foliage)
                 .map_err(|e|e.to_string())?;
             let files=[
+                ("foliage.voxels.json", mesh.voxel_json(&self.foliage)?),
                 ("foliage.obj",mesh.obj()),
                 ("foliage.mtl",texture_studio::foliage::mtl(&self.foliage)),
                 ("foliage.json",project),
@@ -387,7 +388,7 @@ impl Studio {
             Ok(())
         })();
         self.status = match result {
-            Ok(()) => format!("Exported procedural foliage mesh to {}",folder.display()),
+            Ok(()) => format!("Exported voxel blocks, culled OBJ surface, materials and settings to {}",folder.display()),
             Err(err) => format!("Foliage export failed: {err}"),
         };
     }
@@ -417,7 +418,7 @@ impl Studio {
                 changed |= ui.add(egui::Slider::new(&mut tree.height,0.5..=30.0).text("Height")).changed();
                 changed |= ui.add(egui::Slider::new(&mut tree.branch_count,1..=90).text("Branch count")).changed();
                 changed |= ui.add(egui::Slider::new(&mut tree.branch_length,0.1..=1.5).text("Branch length")).changed();
-                ui.small("Choose a species, seed, height and skeletal branch density.");
+                ui.small("Voxelize the selected species and branch layout at the grid resolution.");
             }
             FoliageStage::Carve => {
                 changed |= ui.add(egui::Slider::new(&mut tree.carve_bottom,0.0..=0.85).text("Clear lower canopy")).changed();
@@ -441,10 +442,21 @@ impl Studio {
                 ui.small("Deterministic branch removal using the current seed.");
             }
             FoliageStage::MeshBuilder => {
-                changed |= ui.add(egui::Slider::new(&mut tree.trunk_radius,0.02..=2.0).text("Trunk thickness")).changed();
-                changed |= ui.add(egui::Slider::new(&mut tree.radial_segments,3..=12).text("Radial segments")).changed();
-                ui.small("Creates tapered polygonal trunk, branch and twig geometry.");
-                ui.small("Lower segments produce low-poly game-ready trees.");
+                ui.label("Voxel block shape");
+                egui::ComboBox::from_id_salt("tree_voxel_shape")
+                    .selected_text(tree.shape.name())
+                    .show_ui(ui, |ui| {
+                        changed |= ui.selectable_value(&mut tree.shape,
+                            VoxelShape::Cube, "Cube voxels").changed();
+                        changed |= ui.selectable_value(&mut tree.shape,
+                            VoxelShape::HexPrism, "Hexagonal prism voxels").changed();
+                    });
+                changed |= ui.add(egui::Slider::new(&mut tree.voxel_size,
+                    0.1..=1.5).text("Voxel cell size")).changed();
+                changed |= ui.add(egui::Slider::new(&mut tree.trunk_radius,
+                    0.02..=2.0).text("Trunk width")).changed();
+                ui.small("Cells are discrete occupied cubes or axial hex prisms.");
+                ui.small("Smaller cells = finer detail and more blocks; internal faces are culled.");
             }
             FoliageStage::FoliagePalette => {
                 ui.label("Bark color");
@@ -458,15 +470,19 @@ impl Studio {
                 changed |= ui.add(egui::Slider::new(&mut tree.leaf_scale,0.02..=1.5).text("Leaf size")).changed();
                 changed |= ui.add(egui::Slider::new(&mut tree.leaf_angle,-1.0..=1.0).text("Leaf orientation")).changed();
                 changed |= ui.add(egui::Slider::new(&mut tree.leaf_variation,0.0..=1.0).text("Size variation")).changed();
-                ui.small("Distributes real triangular leaf cards along the branching canopy.");
+                ui.small("Grows volumetric leaf voxel clusters around branch tips.");
             }
             FoliageStage::Output => {
                 if let Some(mesh)=&self.foliage_mesh {
-                    ui.label(format!("{} triangles",mesh.triangle_count()));
+                    ui.label(format!("{} occupied voxels",mesh.voxel_count()));
+                    ui.label(format!("{} exposed-surface triangles",mesh.triangle_count()));
+                    ui.label(format!("Voxel type: {}",mesh.shape.name()));
+                    ui.label(format!("Cell size: {:.2}",mesh.voxel_size));
                     ui.label(format!("Nominal height: {:.1}",mesh.height));
                 }
-                ui.small("Export static OBJ with bark/leaf MTL, plus editable foliage JSON.");
-                if ui.button("Export foliage OBJ").clicked() { self.export_foliage(); }
+                ui.small("Exports each occupied block and material in foliage.voxels.json.");
+                ui.small("Also exports the culled cube/hex surface as OBJ with MTL.");
+                if ui.button("Export voxel tree").clicked() { self.export_foliage(); }
                 if ui.button("Save foliage project").clicked() { self.save_foliage(); }
                 if ui.button("Open foliage project").clicked() { self.open_foliage(); }
             }
@@ -476,14 +492,14 @@ impl Studio {
             ui.colored_label(Color32::from_rgb(232,133,104),err);
         }
         ui.separator();
-        ui.small("This tree mesh is separate from the procedural 2D material graph.");
+        ui.small("This voxel tree is separate from the procedural 2D material graph.");
     }
 
     fn foliage_canvas(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            ui.heading("PROCEDURAL TREE PREVIEW");
+            ui.heading("VOXEL TREE PREVIEW");
             ui.separator();
-            ui.small("Static triangular mesh • adjustable growth stages");
+            ui.small("Occupied cube / hex cells • adjustable growth stages");
         });
         ui.add(egui::Slider::new(&mut self.foliage_yaw,
             0.0..=std::f32::consts::TAU).text("Orbit"));
@@ -523,7 +539,10 @@ impl Studio {
         faces.sort_by(|a,b|a.0.total_cmp(&b.0));
         let bark=self.foliage.bark_color;
         let leaf=self.foliage.leaf_color;
-        for (_,index) in faces {
+        // A bounded rasterized preview avoids flooding egui with tiny faces.
+        // Exports always use the complete voxel surface, never this decimation.
+        let stride = (faces.len() / 16000).max(1);
+        for (_,index) in faces.into_iter().step_by(stride) {
             let tri=&mesh.triangles[index];
             let base=match tri.material {
                 Material::Bark=>bark,
@@ -541,7 +560,9 @@ impl Studio {
                 color,Stroke::NONE));
         }
         painter.text(rect.left_top()+Vec2::new(12.0,12.0),Align2::LEFT_TOP,
-            format!("{}  •  {} triangles",self.foliage.preset.name(),mesh.triangle_count()),
+            format!("{} • {} {} voxels • {} surface triangles",
+                self.foliage.preset.name(),mesh.voxel_count(),mesh.shape.name(),
+                mesh.triangle_count()),
             FontId::proportional(14.0),Color32::LIGHT_GRAY);
     }
 
@@ -1164,7 +1185,7 @@ impl eframe::App for Studio {
                     }
                     if ui.button("Open Tree").clicked() { self.open_foliage(); }
                     if ui.button("Save Tree").clicked() { self.save_foliage(); }
-                    if ui.button("Export Tree OBJ").clicked() { self.export_foliage(); }
+                    if ui.button("Export Voxel Tree").clicked() { self.export_foliage(); }
                     ui.separator();
                 } else {
                 if ui.button("New").clicked() { self.new_project(); }
