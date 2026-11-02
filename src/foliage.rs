@@ -511,9 +511,24 @@ impl FoliageProject {
         Ok(())
     }
 
+    /// Radial crown envelope as a function of normalized attachment height.
+    /// These multipliers affect real wood and leaf hexel occupancy.
+    fn crown_reach(&self, t: f32) -> f32 {
+        let crown_t = ((t-self.carve_bottom) /
+            (1.0-self.carve_bottom-self.carve_top)).clamp(0.0,1.0);
+        let center = 2.0*crown_t-1.0;
+        match self.preset {
+            PlantPreset::Oak => 0.82+0.35*(1.0-center*center),
+            PlantPreset::Pine => 0.20+1.15*(1.0-crown_t),
+            PlantPreset::Birch => 0.66+0.24*(1.0-crown_t),
+            PlantPreset::Willow => 1.22-0.16*crown_t,
+            PlantPreset::Maple => 0.96+0.35*(1.0-center*center),
+            PlantPreset::Shrub => 1.14-0.18*crown_t,
+        }
+    }
+
     /// All foliage is directly authored on the game's 1m Q/R/Z hexel grid.
     /// Each wood or leaf entry is a real removable world-cell definition.
-    /// Generate discrete occupied cells, then surface-triangulate exposed faces only.
     pub fn generate(&self) -> Result<FoliageMesh, String> {
         self.validate()?;
         let mut cells: BTreeMap<[i32; 3], Material> = BTreeMap::new();
@@ -554,18 +569,33 @@ impl FoliageProject {
         for i in 0..self.branch_count {
             let rand = |c| hash01(self.seed, i, c);
             if rand(0) < self.prune { continue; }
-            let t = self.carve_bottom +
-                (1.0 - self.carve_bottom - self.carve_top) *
-                ((i as f32 + 0.5 + 0.25 * (rand(1) - 0.5)) / self.branch_count as f32);
-            let base = trunk(t);
-            let angle = TAU * (i as f32 * 0.6180339 + rand(2) * 0.2);
-            let mut reach = self.branch_length * h * (0.38 + 0.55 * rand(3));
-            let base_rise = match self.preset {
-                PlantPreset::Pine => { reach *= (1.0 - t).max(0.18); 0.12 },
-                PlantPreset::Willow => -0.12,
-                PlantPreset::Birch => 0.30,
-                PlantPreset::Shrub => 0.30,
-                _ => 0.23,
+            let (height_fraction,angle) = if self.preset==PlantPreset::Pine {
+                // Six-way whorls staggered between layers instead of a
+                // broadleaf spiral. The conifer envelope tapers upward.
+                let layer=i/6;
+                let layers=self.branch_count.div_ceil(6);
+                let fraction=(layer as f32+0.48+0.12*(rand(1)-0.5))
+                    /layers as f32;
+                let azimuth=(i%6) as f32/6.0+layer as f32*0.083
+                    +0.035*(rand(2)-0.5);
+                (fraction,TAU*azimuth)
+            } else {
+                ((i as f32+0.5+0.25*(rand(1)-0.5))
+                    /self.branch_count as f32,
+                    TAU*(i as f32*0.6180339+rand(2)*0.2))
+            };
+            let t=self.carve_bottom+
+                (1.0-self.carve_bottom-self.carve_top)*height_fraction;
+            let base=trunk(t);
+            let reach=self.branch_length*h*(0.38+0.55*rand(3))
+                *self.crown_reach(t);
+            let base_rise=match self.preset {
+                PlantPreset::Pine=>0.12,
+                PlantPreset::Willow=>-0.12,
+                PlantPreset::Birch=>0.43,
+                PlantPreset::Shrub=>0.18,
+                PlantPreset::Maple=>0.15,
+                _=>0.23,
             };
             let rise = reach * (base_rise + 0.65 * self.phototropism - 0.85 * self.gravity);
             let mut tip = [
@@ -584,10 +614,15 @@ impl FoliageProject {
                         };
                         distance(a).total_cmp(&distance(b))
                     }).unwrap();
-                tip = lerp3(tip, targets.swap_remove(chosen), 0.75);
+                // Don't erase the species' branch habit when guiding crowns.
+                tip = lerp3(tip, targets.swap_remove(chosen), 0.55);
                 tip[2] = tip[2].max(s * 0.5);
             }
-            let mid = lerp3(base, tip, 0.56);
+            let mut mid=lerp3(base,tip,0.56);
+            if self.preset==PlantPreset::Willow {
+                // Outward-arching limb followed by hanging tips.
+                mid[2]=(mid[2]+0.24*reach).min(h);
+            }
             let thickness = (self.trunk_radius * self.overall_scale *
                 (0.28 + 0.25 * (1.0 - t))).max(s * 0.17);
             let major_id=2*i+1;
@@ -605,12 +640,18 @@ impl FoliageProject {
                 }
             }
             let fork_angle = angle + (rand(4) - 0.5) * 1.6;
-            let fork_reach = reach * (0.28 + 0.2 * rand(5));
-            let fork = [
-                mid[0] + fork_reach * fork_angle.cos(),
-                mid[1] + fork_reach * fork_angle.sin(),
-                (mid[2] + fork_reach *
-                    (0.32 + self.phototropism * 0.26 - self.gravity * 0.65)).max(s * 0.5),
+            let fork_reach=reach*(0.28+0.2*rand(5));
+            let fork_rise=match self.preset {
+                PlantPreset::Willow=>-0.82,
+                PlantPreset::Birch=>0.45,
+                PlantPreset::Pine=>0.10,
+                PlantPreset::Shrub=>0.12,
+                _=>0.32+self.phototropism*0.26-self.gravity*0.65,
+            };
+            let fork=[
+                mid[0]+fork_reach*fork_angle.cos(),
+                mid[1]+fork_reach*fork_angle.sin(),
+                (mid[2]+fork_reach*fork_rise).max(s*0.5),
             ];
             branches.push(TreeBranch {id:fork_id,parent:Some(major_id),
                 root:grid_key(shape,s,mid),tip:grid_key(shape,s,fork),
@@ -630,11 +671,12 @@ impl FoliageProject {
             for (cluster, location) in leaf_tips.into_iter().enumerate() {
                 let r = ((self.leaf_scale * self.overall_scale * 2.3)
                     * (0.75 + 0.5 * rand(6 + cluster as u32))).max(s * 0.82);
-                let rz = match self.preset {
-                    PlantPreset::Pine => r * 1.55,
-                    PlantPreset::Willow => r * 1.3,
-                    PlantPreset::Shrub => r * 0.7,
-                    _ => r * 0.85,
+                let rz=match self.preset {
+                    PlantPreset::Pine=>r*1.75,
+                    PlantPreset::Willow=>r*1.65,
+                    PlantPreset::Birch=>r*1.12,
+                    PlantPreset::Shrub=>r*0.65,
+                    _=>r*0.85,
                 };
                 let offset_z = match self.preset {
                     PlantPreset::Willow => -0.58 * rz,
@@ -1176,6 +1218,42 @@ mod tests {
             assert!(a.voxels.iter().any(|v| v.material.is_wood()), "{preset:?}");
             assert!(a.voxels.iter().any(|v| v.material.is_foliage()), "{preset:?}");
         }
+    }
+
+    #[test]
+    fn species_have_characteristic_whorls_taper_and_droop() {
+        let branches_for=|preset| {
+            FoliageProject::from_preset(preset).generate().unwrap()
+                .structure.unwrap().branches.into_iter()
+                .filter(|b|b.part==TreePart::MajorBranch)
+                .collect::<Vec<_>>()
+        };
+        let pine=branches_for(PlantPreset::Pine);
+        let mut whorls=BTreeMap::<i32,usize>::new();
+        for b in &pine {*whorls.entry(b.root[2]).or_default()+=1;}
+        assert!(whorls.values().filter(|&&n|n>=4).count()>=4,
+            "Pine branches should cluster into horizontal tiers");
+        let distance=|b:&TreeBranch| {
+            let q=(b.tip[0]-b.root[0]).abs();
+            let r=(b.tip[1]-b.root[1]).abs();
+            let s=(b.tip[0]+b.tip[1]-b.root[0]-b.root[1]).abs();
+            (q+r+s)/2
+        };
+        let half=pine.len()/2;
+        let lower=pine[..half].iter().map(distance).sum::<i32>() as f32/half as f32;
+        let upper=pine[half..].iter().map(distance).sum::<i32>() as f32
+            /(pine.len()-half) as f32;
+        assert!(lower>upper+1.0,"Pine must taper: {lower} versus {upper}");
+        let willow=branches_for(PlantPreset::Willow);
+        let droop=willow.iter().filter(|b|b.tip[2]<b.root[2]).count();
+        assert!(droop*2>willow.len(),"Willow branches should descend");
+        let birch=branches_for(PlantPreset::Birch);
+        let ascending=birch.iter().filter(|b|b.tip[2]>b.root[2]).count();
+        assert!(ascending*2>birch.len(),"Birch branches should rise");
+        let shrub=FoliageProject::from_preset(PlantPreset::Shrub).generate().unwrap();
+        let oak=FoliageProject::from_preset(PlantPreset::Oak).generate().unwrap();
+        assert!(shrub.height<oak.height*0.4);
+        assert!(shrub.voxels.iter().any(|v|v.material.is_foliage()));
     }
 
     #[test]
