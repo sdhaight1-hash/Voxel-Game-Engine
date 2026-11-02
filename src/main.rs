@@ -954,11 +954,15 @@ impl Studio {
             Pos2::new(rect.center().x+dot(d,right)*scale,
                 rect.center().y-dot(d,up)*scale)
         };
-        let mut faces:Vec<(f32,usize)>=mesh.triangles.iter().enumerate().map(|(i,tri)|{
-            let p=std::array::from_fn(|axis|
-                (tri.points[0][axis]+tri.points[1][axis]+tri.points[2][axis])/3.0);
-            (dot(p,depth),i)
-        }).collect();
+        let needs_cpu_picking=self.gpu.is_none() ||
+            response.clicked_by(egui::PointerButton::Primary);
+        let mut faces:Vec<(f32,usize)>=if needs_cpu_picking {
+            mesh.triangles.iter().enumerate().map(|(i,tri)|{
+                let p=std::array::from_fn(|axis|
+                    (tri.points[0][axis]+tri.points[1][axis]+tri.points[2][axis])/3.0);
+                (dot(p,depth),i)
+            }).collect()
+        } else {Vec::new()};
         faces.sort_by(|a,b|a.0.total_cmp(&b.0));
         let pointer=if response.clicked_by(egui::PointerButton::Primary) {
             response.interact_pointer_pos()
@@ -1034,6 +1038,19 @@ impl Studio {
                     self.edit_asset(|asset|if asset.paint(cell,mat) {Ok(())}
                         else {Err("Cell is already empty".into())});
                     self.asset_selected=Some(cell);
+                }
+            }
+        }
+        if self.gpu.is_some() {
+            // The GPU owns all visible mesh triangles. Only highlight the handful
+            // of faces belonging to the active selected cell on the CPU.
+            if let Some(cell)=self.asset_selected {
+                for tri in mesh.triangles.iter().filter(|t|t.cell==cell).take(36) {
+                    let corners=tri.points.map(project);
+                    for i in 0..3 {
+                        painter.line_segment([corners[i],corners[(i+1)%3]],
+                            Stroke::new(1.0,Color32::from_rgb(255,204,95)));
+                    }
                 }
             }
         }
@@ -1275,6 +1292,16 @@ impl Studio {
                 FontId::proportional(15.0),Color32::LIGHT_GRAY);
             return;
         };
+        if self.gpu.is_some() {
+            if mesh.leaf_render.wind_strength>0.0 && mesh.leaf_render.wind_speed>0.0 {
+                ui.ctx().request_repaint_after(std::time::Duration::from_millis(70));
+            }
+            painter.text(rect.left_top()+Vec2::new(12.0,12.0),Align2::LEFT_TOP,
+                format!("wgpu • {} • {} voxels • {} GPU triangles",
+                    self.foliage.preset.name(),mesh.voxel_count(),mesh.triangle_count()),
+                FontId::proportional(14.0),Color32::LIGHT_GRAY);
+            return;
+        }
         let yaw=self.foliage_yaw;
         let right=[yaw.cos(),yaw.sin(),0.0];
         let elevation=0.35_f32;
