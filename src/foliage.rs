@@ -1983,9 +1983,165 @@ fn add_tapered_branch_section(out:&mut Vec<Triangle>,cell:[i32;3],
     }
 }
 
-/// Same underlying mesh for Foliage, Assets, GPU preview and OBJ export.
-/// Continuous source paths are sampled solely for display; the voxel map
-/// determines which individual pieces are allowed to exist.
+/// Clip a visible wood fragment to every intersected *occupied* hexel.
+/// The clipped polygon inherits the world-cell owner for deletion, picking,
+/// rendering and OBJ export. No mesh fragment can survive an erased wood cell.
+fn emit_owned_wood(
+    out:&mut Vec<Triangle>, raw:Triangle,
+    cells:&BTreeMap<[i32;3],Material>,
+    roles:&BTreeMap<[i32;3],TreePart>,
+    size:f32, visualized:&mut BTreeSet<[i32;3]>,
+) {
+    use crate::hexel_clip::{Vertex, triangle_candidates, clip_to_hex_prism};
+    let source=raw.points.map(|position| Vertex{position,uv:[0.0;2]});
+    let source=std::array::from_fn::<_,3,_>(|i| Vertex {
+        position:source[i].position,uv:raw.uv[i],
+    });
+    for cell in triangle_candidates(source,size) {
+        // Artist-painted blocks are separate solids, never replaced by an
+        // old generated path. Other generated limbs may share the same cell.
+        if cells.get(&cell)!=Some(&Material::Bark)
+            || !matches!(roles.get(&cell),
+                Some(TreePart::Trunk|TreePart::MajorBranch|TreePart::SmallBranch)) {
+            continue;
+        }
+        for piece in clip_to_hex_prism(source,cell,size) {
+            visualized.insert(cell);
+            out.push(Triangle {
+                points:piece.map(|v|v.position),
+                uv:piece.map(|v|v.uv),
+                cell, ..raw.clone()
+            });
+        }
+    }
+}
+
+/// The same rings are reused on both sides of each curve section, with a
+/// transported local frame rather than choosing a new axis at every joint.
+/// Bark UVs grow with distance and do not reset at branch knees.
+fn emit_continuous_span_chain(
+    out:&mut Vec<Triangle>, segments:&[&BranchSpan],
+    cells:&BTreeMap<[i32;3],Material>,
+    roles:&BTreeMap<[i32;3],TreePart>,
+    size:f32, visualized:&mut BTreeSet<[i32;3]>,
+) {
+    if segments.is_empty(){return;}
+    let mut positions:Vec<[f32;3]>=Vec::new();
+    let mut radii:Vec<f32>=Vec::new();
+    for span in segments {
+        let a=span.from_mm.map(|x|x as f32/1000.0);
+        let b=span.to_mm.map(|x|x as f32/1000.0);
+        let d=sub3(b,a);
+        let distance=d.iter().map(|v|v*v).sum::<f32>().sqrt();
+        if distance<0.001 {continue;}
+        // Subdivide long spans before clipping. Shorter quads avoid crossing
+        // many hex boundaries and keep the candidate-cell search bounded.
+        let steps=(distance/0.70).ceil().max(1.0) as usize;
+        for i in 0..steps {
+            let t=i as f32/steps as f32;
+            positions.push(lerp3(a,b,t));
+            radii.push(((1.0-t)*span.start_radius_mm as f32+
+                t*span.end_radius_mm as f32)/1000.0);
+        }
+    }
+    let Some(last)=segments.last() else {return;};
+    positions.push(last.to_mm.map(|x|x as f32/1000.0));
+    radii.push(last.end_radius_mm as f32/1000.0);
+    if positions.len()<2{return;}
+    let mut tangents=Vec::with_capacity(positions.len());
+    let mut normals=Vec::with_capacity(positions.len());
+    let mut binormals=Vec::with_capacity(positions.len());
+    let mut previous_normal:Option<[f32;3]>=None;
+    for i in 0..positions.len() {
+        let d=if i==0 {sub3(positions[1],positions[0])}
+        else if i+1==positions.len() {sub3(positions[i],positions[i-1])}
+        else {sub3(positions[i+1],positions[i-1])};
+        let tangent=normalize3(d);
+        let reference=previous_normal.unwrap_or_else(||{
+            if tangent[2].abs()<0.90 {[0.0,0.0,1.0]} else {[0.0,1.0,0.0]}
+        });
+        // Project the previous frame into the new tangent plane. For
+        // near-parallel tangents this is a minimal-twist transport.
+        let dot=reference.iter().zip(tangent).map(|(a,b)|a*b).sum::<f32>();
+        let projected=sub3(reference,mul3(tangent,dot));
+        let norm=projected.iter().map(|v|v*v).sum::<f32>().sqrt();
+        let u=if norm<0.0001 {
+            let axis=if tangent[2].abs()<0.90 {[0.0,0.0,1.0]}
+                else {[0.0,1.0,0.0]};
+            normalize3(cross3(tangent,axis))
+        } else {mul3(projected,1.0/norm)};
+        let v=normalize3(cross3(tangent,u));
+        tangents.push(tangent);
+        normals.push(u);
+        binormals.push(v);
+        previous_normal=Some(u);
+    }
+    let mut uv_v=0.0;
+    const SIDES:usize=6;
+    for i in 0..positions.len()-1 {
+        let a=positions[i];
+        let b=positions[i+1];
+        let len=sub3(b,a).iter().map(|v|v*v).sum::<f32>().sqrt();
+        if len<0.00001 {continue;}
+        let mut raw=Vec::new();
+        if radii[i].max(radii[i+1])<=0.085 {
+            // Fine twigs remain crossed bark ribbons, still clipped to their
+            // owning wood hexels instead of creating non-harvestable geometry.
+            add_twig_ribbons(&mut raw,[0,0,0],a,b,
+                radii[i],radii[i+1],normals[i],binormals[i]);
+        } else {
+            let ring=|j:usize,center:[f32;3],radius:f32| {
+                let angle=TAU*j as f32/SIDES as f32;
+                add3(center,add3(mul3(normals[i],angle.cos()*radius),
+                    mul3(binormals[i],angle.sin()*radius)))
+            };
+            let next_ring=|j:usize,center:[f32;3],radius:f32| {
+                let angle=TAU*j as f32/SIDES as f32;
+                add3(center,add3(mul3(normals[i+1],angle.cos()*radius),
+                    mul3(binormals[i+1],angle.sin()*radius)))
+            };
+            for j in 0..SIDES {
+                let k=(j+1)%SIDES;
+                let q0=ring(j,a,radii[i]);
+                let q1=ring(k,a,radii[i]);
+                let q2=next_ring(k,b,radii[i+1]);
+                let q3=next_ring(j,b,radii[i+1]);
+                let outward=branch_outward(normalize3(sub3(q0,a)));
+                let u0=j as f32/SIDES as f32;
+                let u1=(j+1) as f32/SIDES as f32;
+                push_triangle(&mut raw,q0,q1,q2,Material::Bark,[0,0,0],
+                    outward,[[u0,uv_v],[u1,uv_v],[u1,uv_v+len]]);
+                push_triangle(&mut raw,q0,q2,q3,Material::Bark,[0,0,0],
+                    outward,[[u0,uv_v],[u1,uv_v+len],[u0,uv_v+len]]);
+            }
+            // Cap *true* path tips only, not every artificial subdivision.
+            // A later world harvesting system may add exposed cut scars.
+            if i==0 {
+                for j in 1..SIDES-1 {
+                    push_triangle(&mut raw,ring(0,a,radii[i]),
+                        ring(j+1,a,radii[i]),ring(j,a,radii[i]),
+                        Material::Bark,[0,0,0],branch_outward(mul3(tangents[i],-1.0)),
+                        [[0.0,0.0],[1.0,0.0],[0.5,0.5]]);
+                }
+            }
+            if i+2==positions.len() {
+                for j in 1..SIDES-1 {
+                    push_triangle(&mut raw,next_ring(0,b,radii[i+1]),
+                        next_ring(j,b,radii[i+1]),
+                        next_ring(j+1,b,radii[i+1]),Material::Bark,[0,0,0],
+                        branch_outward(tangents[i+1]),
+                        [[0.0,0.0],[0.5,0.5],[1.0,0.0]]);
+                }
+            }
+        }
+        for tri in raw {emit_owned_wood(out,tri,cells,roles,size,visualized);}
+        uv_v+=len;
+    }
+}
+
+/// Common organic render surface for Foliage, editable Assets, GPU preview and
+/// OBJ export. The actual 1m occupied hexels are never regenerated here.
+/// Legacy saves without a trunk spine keep their original solid trunk.
 fn tree_surface_triangles(
     cells:&BTreeMap<[i32;3],Material>,shape:VoxelShape,size:f32,
     render:LeafRenderSettings,structure:Option<&TreeStructure>,
@@ -1995,59 +2151,31 @@ fn tree_surface_triangles(
         return surface_triangles(cells,shape,size,render);
     };
     let roles:BTreeMap<_,_>=tree.cells.iter().map(|part|(part.cell,part.part)).collect();
+    let smooth_trunk=tree.spans.iter().any(|span|span.branch_id==0);
     let mut solids=cells.clone();
-    // Remove block surfaces only for cells represented by tapered limbs.
-    // Full-size trunk and manually added wood cells stay solid.
     for (cell,material) in cells {
-        if material.is_wood() &&
-            matches!(roles.get(cell),Some(TreePart::MajorBranch|TreePart::SmallBranch)) {
+        if material.is_wood() && matches!(roles.get(cell),
+            Some(TreePart::MajorBranch|TreePart::SmallBranch)) ||
+            (material.is_wood() && smooth_trunk &&
+                roles.get(cell)==Some(&TreePart::Trunk)) {
             solids.remove(cell);
         }
     }
     let mut triangles=surface_triangles(&solids,shape,size,render);
     let mut visualized=BTreeSet::new();
+    // Source span order follows parent-before-child generation and is stable
+    // across source JSON, Tree Designer, Asset conversion and OBJ export.
+    let mut paths:BTreeMap<u32,Vec<&BranchSpan>>=BTreeMap::new();
     for span in &tree.spans {
-        let a=span.from_mm.map(|v|v as f32/1000.0);
-        let b=span.to_mm.map(|v|v as f32/1000.0);
-        let distance=sub3(b,a);
-        let length=(distance[0]*distance[0]+distance[1]*distance[1]
-                    +distance[2]*distance[2]).sqrt();
-        let steps=(length/0.08).ceil().max(1.0) as usize;
-        // Coalesce each run of the smooth path inside one harvestable
-        // hexel. One section is emitted per occupied cell, not per sample.
-        let mut active:Option<([i32;3],usize)>=None;
-        for i in 0..=steps {
-            let key=if i<steps {
-                let t=(i as f32+0.5)/steps as f32;
-                let cell=grid_key(shape,size,lerp3(a,b,t));
-                if cells.get(&cell)==Some(&Material::Bark) &&
-                    matches!(roles.get(&cell),Some(TreePart::MajorBranch|TreePart::SmallBranch)) {
-                    Some(cell)
-                } else {None}
-            } else {None};
-            if let Some((old,first))=active {
-                if key!=Some(old) {
-                    let t0=first as f32/steps as f32;
-                    let t1=i as f32/steps as f32;
-                    let r0=(span.start_radius_mm as f32+
-                        (span.end_radius_mm as f32-span.start_radius_mm as f32)*t0)/1000.0;
-                    let r1=(span.start_radius_mm as f32+
-                        (span.end_radius_mm as f32-span.start_radius_mm as f32)*t1)/1000.0;
-                    add_tapered_branch_section(&mut triangles,old,
-                        lerp3(a,b,t0),lerp3(a,b,t1),r0,r1);
-                    visualized.insert(old);
-                    active=None;
-                }
-            }
-            if let Some(cell)=key {
-                if active.is_none(){active=Some((cell,i));}
-            }
-        }
+        paths.entry(span.branch_id).or_default().push(span);
     }
-    // Rasterization inserts face-adjacent bridge hexels to preserve
-    // harvestable connectivity, even when the smooth centreline narrowly
-    // misses their centers. Give every such cell a thin visible connection
-    // toward its owner path rather than an invisible collision/harvest block.
+    for path in paths.values() {
+        emit_continuous_span_chain(&mut triangles,path,cells,&roles,size,
+            &mut visualized);
+    }
+    // Diagonal wood-hexel bridging may introduce occupied cells outside the
+    // source tube's sampled surface. Give only these residual owned branch
+    // hexels a thin *clipped* connector, never invisible physical material.
     for part in &tree.cells {
         if !matches!(part.part,TreePart::MajorBranch|TreePart::SmallBranch)
             || visualized.contains(&part.cell)
@@ -2076,7 +2204,22 @@ fn tree_surface_triangles(
             let (a,b)=if best<0.005 {
                 (add3(center,mul3(dir,-0.30)),add3(center,mul3(dir,0.30)))
             } else {(point,center)};
-            add_tapered_branch_section(&mut triangles,part.cell,a,b,0.07,0.045);
+            let mut raw=Vec::new();
+            add_tapered_branch_section(&mut raw,[0,0,0],a,b,0.07,0.045);
+            for t in raw {
+                // A bridge-cell fallback is never allowed to cross the
+                // specified ownership boundary.
+                use crate::hexel_clip::{Vertex,clip_to_hex_prism};
+                let input=std::array::from_fn(|i|Vertex{
+                    position:t.points[i],uv:t.uv[i]});
+                for piece in clip_to_hex_prism(input,part.cell,size) {
+                    triangles.push(Triangle{
+                        points:piece.map(|v|v.position),
+                        uv:piece.map(|v|v.uv),
+                        cell:part.cell,..t.clone()
+                    });
+                }
+            }
         }
     }
     triangles
