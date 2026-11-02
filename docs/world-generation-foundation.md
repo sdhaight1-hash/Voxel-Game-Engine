@@ -1,110 +1,99 @@
-# World-generation option 1: InfiniteDiffusion-inspired synthetic worlds
+# Synthetic world generation — current design and InfiniteDiffusion research
 
-**Status:** Candidate world-generation mode (not yet a running terrain implementation). See [Option 2 — Tellus-inspired real-Earth worlds](real-earth-world-generation.md).
-**Project:** Voxel Game Engine (Rust + wgpu)
-**Research basis:** Alexander Goslin, *InfiniteDiffusion: Bridging Learned Fidelity and Procedural Utility for Open-World Terrain Generation*, SIGGRAPH 2026.
+**Status:** Current **proposed** synthetic-world architecture, not implemented. Reconciled with [Procedural World Design Decisions](procedural-world-design-decisions.md) on 2026-11-01.
+**Project:** Voxel Game Engine (Rust + wgpu); currently a procedural material and voxel asset editor, **not** a working planetary terrain engine.
+**Earlier title:** “World-generation option 1: InfiniteDiffusion-inspired synthetic worlds.” The original unbounded, inference-on-demand plan is superseded for our default world.
 
-Reference sources:
-- Project: https://xandergos.github.io/terrain-diffusion/
-- Implementation: https://github.com/xandergos/terrain-diffusion
-- API contract: https://github.com/xandergos/terrain-diffusion/blob/master/API_README.md
-- Infinite Tensor: https://github.com/xandergos/infinite-tensor
-- Minecraft integration example: https://github.com/xandergos/terrain-diffusion-mc
-- 30m model: https://huggingface.co/xandergos/terrain-diffusion-30m
+> **Source of truth:** [Procedural World — Design Decisions](procedural-world-design-decisions.md) is the authoritative design record for world size, topology, vertical presets, finite water, hexel preference, persistence, reactive state and open decisions. This page goes deeper on the **synthetic generation pipeline** and retains research that might be useful in its world-creation backend. It does not specify an additional world mode.
 
-## Architectural commitment
+## Current architectural direction
 
-Voxel Game Engine is a *game engine*, not only a procedural texture editor or a terrain renderer. Its world layer must support:
+- **Finite two-axis periodic torus**, with a nominal **1,024 × 1,024 km** geographic footprint. A flat world grid that wraps in both horizontal directions is intentional; a sphere is not the base geometry.
+- **Tectonics first:** generate periodic large-scale plates, uplift, subsidence, continents and ocean basins. Compute climate/hydrological constraints informed by geography.
+- **Terrain Diffusion during world creation only:** refine global surface geography in bounded batches/tiles. Persist the **complete** canonical surface so gameplay does not depend on model inference or Python.
+- **Precompute geography, not all 3D voxels:** save periodic elevation, drainage networks, geology/climate maps and initial reservoir information; generate detailed editable chunks on demand from saved geography and pinned deterministic local rules.
+- **Playable geometry preference:** hexagonal prisms with axial Q/R and vertical Y; chunk dimensions and hexel physical scale are not finalized. A square/rectangular geographic raster is still suitable for diffusion output and map storage.
+- **Persist edits and finite resources:** regenerated base chunks may be discarded; changes to blocks, mined deposits, constructed works, water reservoirs and ecosystem state must survive reload and cannot be restored merely by rerunning a generator.
+- **Reactive world-state direction:** authoritative state, controlled edits and conservative water transfers, coalesced spatial invalidation and region/field interests. This remains a proposal to test, not an installed SpaceTimeDB runtime.
 
-1. Unbounded coordinate space and bounded runtime memory.
-2. Seed- and coordinate-addressable **generated base world**. Request order must not affect the result.
-3. Random-access chunk generation and asynchronous streaming, including far-away teleports.
-4. Deterministic regeneration from a pinned world configuration and model revision.
-5. Editable, persistent player/world changes layered **over** regenerable content.
-6. GPU rendering through wgpu, independent from the choice of terrain inference backend.
-7. Terrain-informed climate, biomes, vegetation, water and procedural material selection.
+These are **design choices**, not claims about existing code. The current repository's working functionality is focused on procedural materials, foliage and editable voxel assets.
 
-InfiniteDiffusion's core idea (lazy, stateless, coordinate-addressable learned synthesis with a bounded cache) is the foundation **for synthetic world mode**. The external Terrain Diffusion models are an important generator **backend**, not a required dependency of the entire game loop. An independent Tellus-inspired real-Earth mode supplies geographic data through the same normalized world-generation contract. All runtime/gameplay APIs consume normalized terrain data; they do not call Python or a neural network directly.
-
-## Minimum data flow
+## Pipeline at world creation
 
 ```text
-WorldConfig (seed, generator/model revision, resolution, world scale)
-                |
-                v
-TerrainProvider: request geographic tiles by global coordinates
-       |                              |
-   deterministic fallback       learned Terrain Diffusion
-       |                              |
-       +------ normalized elevation + climate samples
-                                      |
-                                biome/erosion rules
-                                      |
-                             3D voxel density/materials
-                                      |
-                  +-------------------+-------------------+
-                  |                                       |
-             regenerated base                   persistent edit deltas
-                  |                                       |
-                  +-------------------+-------------------+
-                                      |
-                        chunk mesh / gameplay / physics
-                                      |
-                         wgpu renderer and world editor
+World configuration (seed, finite periodic domain, height preset, model revisions)
+  -> periodic synthetic tectonic/continent model
+  -> broad climate, ocean and rainfall constraints
+  -> batched Terrain Diffusion surface refinement
+  -> reconcile periodic seams and coastlines
+  -> final drainage/watershed/lake/spillway pass and local channel carving
+  -> initialize accounted finite water reservoirs
+  -> canonical elevation + environmental fields -> tiled compressed world data
+  -> mark world generation complete only after validated persistent output
+
+During gameplay:
+  saved geographic tiles + deterministic local geology/terrain detail
+  -> streamed hexel chunks + persistent user/world edit overrides
+  -> meshes, physics, AI and ecological field updates
+  -> wgpu renderer
 ```
 
-The same base can be consumed by the editor and by the playable runtime. The procedural node graph and existing tree/leaf asset system stay intact, and become part of biome-aware terrain material and vegetation placement.
+Terrain Diffusion is an **elevation/surface-field model**, not a volumetric hexel generator. Underground cavities, strata, ores, overhangs and one-hexel-scale surface detail require independent procedures. The current discussion has **not validated** a conditioning API that will reliably make Terrain Diffusion respect tectonic constraints or periodic seams; the integration must be proven at limited scale.
 
-## Terrain data contract
+## Geographic data and storage contract
 
-Begin with 2D spatial tiles holding at least:
-- Elevation in meters.
-- Annual mean temperature and temperature seasonality.
-- Precipitation and precipitation seasonality.
-- Tile origin, sample spacing, dimensions and generator revision.
+Each canonical tile should record:
 
-The upstream REST prototype supports `GET /terrain?i1=...&j1=...&i2=...&j2=...&scale=...` and returns int16 little-endian elevation followed by 4 interleaved little-endian float32 climate channels, with `X-Width` / `X-Height` response headers. This format is an **integration adapter**, not our permanent world-file format. Its API examples are explicitly in terms of a 90m base resolution; confirm coordinates/scale against the selected model before shipping the 30m variant.
+- Origin and span in the **finite periodic geographic domain**, sample spacing, dimensions, datum, orientation and wrap convention.
+- Quantized elevation in geographic units, not already mapped to a playable Y level; coverage/validity flags must be distinct from a valid zero elevation.
+- Generator/model identifiers, seed, settings/revisions and format version, plus checksums/integrity information.
+- Separate fields for geology, precipitation/seasonality, temperature/seasonality, ocean mask, watersheds, river routes and relevant ecological inputs, at resolutions appropriate to each field.
 
-**Important:** this upstream output is a 2D height/climate field, *not* a 3D voxel density volume. The engine must build playable-resolution topsoil, rock, water, caves, overhangs and custom blocks using additional deterministic rules or separate models. A 30m/px source cannot directly supply one-meter block-level detail. Treat it as large-scale geography and climate.
+**Provisional storage target:** 32,768 × 32,768 elevation samples across 1,024 km, exactly **31.25 m** spacing; 16-bit storage is **2 GiB raw** for elevation alone. Consider signed 16-bit values quantized at 0.5 m vertical increments, then independent **512 × 512 sample tiles** compressed with Zstd. Those are engineering starting points; quantization, compression ratios, model output resolution, height ranges and total disk footprint still need benchmarks. The entire environmental state is **not** 2 GiB.
 
-## Seed and tile invariants
+**Playable height** is separately selected as 256, **512 default**, 768 or 1,024 Y levels. A Vintage Story-like proportional sea level is provisional (at 512: Y220). How many geographic metres each hexel represents horizontally and the vertical height mapping are **open**; do not assume square grid pixels, metres or elevation samples equal hexel cells.
 
-- Global positions use signed 64-bit voxel/world coordinates. Convert to tile/chunk keys with Euclidean division so negative coordinates work.
-- Define tile content using `(world_seed, generator_id, generator_version, coordinate, scale, settings_hash)`. Versions and settings are saved with the world.
-- Overlapping or adjacent tile queries must agree on their shared samples. Tests must compare the generated seam.
-- Parallel, reversed-order and distant teleport requests must not change a tile's generated content.
-- A cache is a *performance optimization*, not an authority. Keep separate bounded CPU sample, mesh and GPU resource caches.
-- GPU/AI inference can exhibit floating-point differences across providers; do not claim bit-for-bit cross-driver determinism without measuring it. Persist canonical sample tiles when strict multiplayer replay or save reproducibility needs it.
-- Author modifications (digging, building, planting) must persist as sparse deltas/overrides; regenerated procedural base data must never overwrite those edits.
+**Hex-grid caveat:** map geographic sample coordinates to axial Q/R via an explicitly chosen layout and two valid lattice-period translations. Prove reciprocal neighbours, unique canonical cells, equal geometric seams and height continuity when crossing either periodic boundary. Do not simply apply independent modulo to geometric world-space coordinates without defining these periods.
 
-## Implementation sequencing
+## Runtime contract and deterministic regeneration
 
-### M1 — World contract, no heavyweight ML runtime
-Build a minimal `TerrainProvider` trait and async/request-queue terrain-tile cache; define signed coordinates, world config, sample schema and chunk identity. Supply a small deterministic procedural provider for tests and offline fallback. Test negatives, seams, seed identity, order-independent queries and bounded cache eviction.
+- Read and decompress **already-created** surface tiles asynchronously around active regions. Far teleport should not require generating every area along the path.
+- Use deterministic local 3D generation keyed by world seed, canonical cell/chunk identity, local generator revision and immutable input-map versions. Preserve or migrate this versioning so updates cannot change terrain underneath player edits.
+- Keep bounded independent geographic tile, voxel occupancy, mesh and GPU caches. Eviction must never delete authoritative edits or finite water quantities.
+- Provide persistence that atomically accounts for water moving between reservoirs/chunks; do not publish or save only the debit half of a transfer.
+- Generate off-thread where appropriate; high-frequency fluid-cell transfers and physics should not be routed through one generic pub/sub callback for every cell.
+- Climate, water, ecology and landscape fields should be periodically updated at global/regional/local scales, while **water mass remains finite and conserved** across these representations.
+- Derived outputs such as chunk meshes, local AI views, navigation and lighting should invalidate only when relevant world revisions change.
 
-### M2 — Exploreable chunked world
-Convert terrain samples into chunk occupancy/material slots, greedy/visibility-aware mesh generation and wgpu rendering; implement camera/player position, chunk streaming and far-distance teleport. Attach the current procedural materials and voxel foliage/tree assets by biome. Persist sparse world-edit deltas.
+## Terrain Diffusion / InfiniteDiffusion research retained
 
-### M3 — Terrain Diffusion reference integration
-Integrate a separately managed local inference worker/adapter using the published REST interface as the first proof of concept. Do not run inference on the UI/render thread. Pin and record model revision, request resolution, seed and source geometry. Test that remote-worker failure falls back cleanly and never corrupts saved chunks.
+The earlier InfiniteDiffusion proposal described **lazy, stateless, coordinate-addressable learned synthesis** at arbitrary positions and a bounded inference cache. It also proposed a second, Tellus-derived Earth-data world mode. That is **historical research**, not the current default world topology or gameplay inference strategy.
 
-### M4 — Production inference strategy
-Evaluate native ONNX Runtime or a dedicated process and platform-specific providers (CUDA, DirectML, CoreML/CPU), model packaging, warm-up, cache budgets, streaming latency and VRAM. wgpu/Vulkan rendering does **not** automatically run PyTorch/diffusion models; inference acceleration is a separate design decision. Optionally replace the initial Python adapter only after measuring parity and performance.
+Reusable lessons:
 
-## Not implied by this decision
+- Batch and cache expensive inference at **world creation**; separate a model adapter from engine runtime code.
+- Preserve canonical generated samples: floating-point inference and GPU backends are not guaranteed to reproduce bit-for-bit identical outputs without testing.
+- Independent overlapping tile requests should agree at seams; query order, parallel completion and tile generation order must not alter canonical results.
+- Use a local procedural fixture provider to test the world storage schema and seam logic without requiring inference hardware.
+- Read external model/source licenses and notices before bundling code, weights or data. A published project's licensing may change; confirm at integration time.
+- The original upstream REST prototype described elevation encoded as int16 and interleaved climate float32 channels. Treat that protocol as an **adapter reference**, not our persistent world-file schema. Its examples targeted a 90 m base, so actual coordinates and 30 m model behaviour need validation.
 
-- No claim of a fully 3D diffusion-generated voxel volume.
-- No requirement that players run NVIDIA CUDA, Python, or download model weights just to use the editor.
-- No assumption that the paper's "O(1) random access" means constant real-time latency independent of hardware, model, batch size, cache and requested tile count. It concerns independence from the *distance* to the requested region.
-- No obligation to train new models before building a functioning world runtime.
-- No copying of original source or model weights without separately checking terms and preserving copyright/license notices. The cited project source and 30m Hugging Face model currently identify as MIT; verify each asset's license before redistribution.
+Research references:
+- [Terrain Diffusion project](https://xandergos.github.io/terrain-diffusion/)
+- [Terrain Diffusion implementation](https://github.com/xandergos/terrain-diffusion)
+- [API reference](https://github.com/xandergos/terrain-diffusion/blob/master/API_README.md)
+- [Infinite Tensor](https://github.com/xandergos/infinite-tensor)
+- [Terrain Diffusion Minecraft integration](https://github.com/xandergos/terrain-diffusion-mc)
+- [30 m model](https://huggingface.co/xandergos/terrain-diffusion-30m)
 
-## Initial measurable acceptance criteria
+## Incremental implementation and acceptance tests (not yet implemented)
 
-- Same world seed, provider revision and coordinates produce matching terrain whether requested first, last, or concurrently.
-- Adjacent tiles agree along their boundary without visible cracks; negative coordinate edges work.
-- On-demand world generation does not block the render thread.
-- A far teleport can request target chunks without generating every chunk along the path.
-- Unloaded chunk caches stay within fixed memory budgets.
-- Player-edited blocks survive unloading/reopening and take precedence over regenerated base terrain.
-- World rendering, material presets and planted foliage all consume terrain samples without being coupled to the inference backend.
+1. **Finite domain fixture:** define immutable world config and test periodic geographic tiles, wrapped axial neighbours and stable canonical identities without inference.
+2. **Compressed world store:** write/read multiple 16-bit elevation tiles with checksums, revisions, bounded random access and measured Zstd compression/decompression.
+3. **Limited-area geology → diffusion test:** establish what conditioning is actually possible; compare adjacent tiles and periodically wrapped seams.
+4. **Hydrology from finalized geography:** calculate reservoirs, watersheds, spill elevations and drainage connections, including across the torus; initialize and audit a **finite** water inventory.
+5. **Local hexel runtime:** stream and mesh hexel chunks from canonical geography plus deterministic microterrain, caves and geology, preserving sparse player modifications.
+6. **Reactive validity and water transaction fixture:** editing a boundary cell rebuilds only necessary neighbours; dam breach moves water with equal debit/credit, including unload/reload and seam crossings.
+7. **Benchmark before scaling to 1,024 km:** measure inference time, disk, load latency, peak RAM/VRAM, frame impact and persistent data size; don't claim the full world is practical until measured.
+
+**Out of scope for this document:** implementation of a second Earth-data world mode, realtime terrain inference during gameplay, a true spherical planet, server deployment, or universal object-level event buses.
