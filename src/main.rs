@@ -353,6 +353,410 @@ impl Studio {
         self.status = format!("Added {} node", kind.name());
     }
 
+    fn new_asset(&mut self) {
+        self.asset = VoxelAsset::default();
+        self.asset_path = None;
+        self.asset_selected = Some([0, 0, 0]);
+        self.asset_cursor = [0, 0, 1];
+        self.asset_undo.clear();
+        self.asset_redo.clear();
+        self.asset_dirty = true;
+        self.status = "New editable cube voxel asset".into();
+    }
+
+    fn import_tree_as_asset(&mut self) {
+        match self.foliage.generate() {
+            Ok(mesh) => {
+                self.asset = VoxelAsset::from_tree(&self.foliage, &mesh, &self.graph);
+                self.asset_selected = mesh.voxels.first().map(|v| [v.x, v.y, v.z]);
+                self.asset_undo.clear();
+                self.asset_redo.clear();
+                self.asset_path = None;
+                self.asset_dirty = true;
+                self.library_tab = 3;
+                self.status = format!("Converted {} into {} editable voxels",
+                    self.foliage.preset.name(), mesh.voxel_count());
+            }
+            Err(e) => self.status = format!("Could not convert tree: {e}"),
+        }
+    }
+
+    /// Each successful edit is an atomic undo step; invalid edits keep the old asset.
+    fn edit_asset(&mut self, edit: impl FnOnce(&mut VoxelAsset) -> Result<(), String>) {
+        let original = self.asset.clone();
+        match edit(&mut self.asset) {
+            Ok(()) => {
+                // Reject invalid shapes/parameters before recording a change.
+                if let Err(e) = self.asset.validate() {
+                    self.asset = original;
+                    self.status = format!("Asset edit rejected: {e}");
+                    return;
+                }
+                if self.asset_undo.len() >= 20 { self.asset_undo.remove(0); }
+                self.asset_undo.push(original);
+                self.asset_redo.clear();
+                self.asset_dirty = true;
+            }
+            Err(e) => {
+                self.asset = original;
+                self.status = format!("Edit rejected: {e}");
+            }
+        }
+    }
+
+    fn undo_asset(&mut self) {
+        if let Some(previous) = self.asset_undo.pop() {
+            self.asset_redo.push(std::mem::replace(&mut self.asset, previous));
+            self.asset_dirty = true;
+            self.status = "Undid voxel edit".into();
+        }
+    }
+
+    fn redo_asset(&mut self) {
+        if let Some(next) = self.asset_redo.pop() {
+            self.asset_undo.push(std::mem::replace(&mut self.asset, next));
+            self.asset_dirty = true;
+            self.status = "Redid voxel edit".into();
+        }
+    }
+
+    fn save_asset(&mut self, save_as: bool) {
+        let path = if !save_as { self.asset_path.clone() } else { None }
+            .or_else(||rfd::FileDialog::new()
+                .add_filter("Texture Studio voxel asset", &["json"])
+                .set_file_name("asset.voxelasset.json").save_file());
+        let Some(path) = path else { return; };
+        let result = self.asset.to_json()
+            .and_then(|json|std::fs::write(&path, json).map_err(|e|e.to_string()));
+        self.status = match result {
+            Ok(()) => {
+                self.asset_path = Some(path.clone());
+                format!("Saved editable voxel asset: {}",path.display())
+            }
+            Err(e) => format!("Could not save asset: {e}"),
+        };
+    }
+
+    fn open_asset(&mut self) {
+        let Some(path) = rfd::FileDialog::new().add_filter("Voxel asset", &["json"])
+            .pick_file() else { return; };
+        let result = std::fs::read_to_string(&path).map_err(|e|e.to_string())
+            .and_then(|json|VoxelAsset::from_json(&json));
+        match result {
+            Ok(asset) => {
+                self.asset_selected = asset.voxels.first().map(|v|[v.x,v.y,v.z]);
+                self.asset = asset;
+                self.asset_path = Some(path);
+                self.asset_undo.clear();
+                self.asset_redo.clear();
+                self.asset_dirty = true;
+                self.status = "Loaded editable voxel asset".into();
+            }
+            Err(e) => self.status = format!("Could not open asset: {e}"),
+        }
+    }
+
+    fn export_asset(&mut self) {
+        let Some(folder) = rfd::FileDialog::new().pick_folder() else { return; };
+        let result: Result<(),String> = (|| {
+            let names = ["asset.voxelasset.json", "asset.obj", "asset.mtl"];
+            for name in names {
+                if folder.join(name).exists() {
+                    return Err(format!("{name} already exists — choose an empty folder"));
+                }
+            }
+            let files = [
+                ("asset.voxelasset.json", self.asset.to_json()?),
+                ("asset.obj", self.asset.obj()?),
+                ("asset.mtl", self.asset.mtl()),
+            ];
+            for (name, contents) in files {
+                std::fs::write(folder.join(name), contents).map_err(|e|e.to_string())?;
+            }
+            Ok(())
+        })();
+        self.status = match result {
+            Ok(()) => format!("Exported voxel data + OBJ/MTL to {}",folder.display()),
+            Err(e) => format!("Export asset failed: {e}"),
+        };
+    }
+
+    fn asset_outliner(&mut self, ui: &mut egui::Ui) {
+        ui.heading("ASSET OUTLINER");
+        ui.label(egui::RichText::new(&self.asset.name).strong());
+        ui.small(format!("{} cells • {}",self.asset.voxels.len(),self.asset.shape.name()));
+        ui.separator();
+        if ui.button("Import Procedural Tree").clicked() {
+            self.import_tree_as_asset();
+        }
+        ui.small("Tree generator → editable voxel cells. The copy can be edited independently.");
+        ui.separator();
+        for material in [Material::Bark,Material::Leaf,Material::LeafDark,Material::LeafLight] {
+            let count = self.asset.voxels.iter().filter(|v|v.material==material).count();
+            let label = match material {
+                Material::Bark=>"Bark / body",Material::Leaf=>"Foliage / green",
+                Material::LeafDark=>"Foliage / dark",Material::LeafLight=>"Foliage / light",
+            };
+            ui.small(format!("{label}: {count}"));
+        }
+        ui.separator();
+        ui.label(egui::RichText::new("CELLS").strong());
+        egui::ScrollArea::vertical().id_salt("asset_voxel_outliner")
+            .show_rows(ui, 22.0, self.asset.voxels.len(), |ui, rows| {
+                for index in rows {
+                    let c = self.asset.voxels[index];
+                    let pos = [c.x,c.y,c.z];
+                    if ui.selectable_label(self.asset_selected==Some(pos),
+                        format!("{:>3}, {:>3}, {:>3}   {:?}",c.x,c.y,c.z,c.material)).clicked() {
+                        self.asset_selected = Some(pos);
+                        self.asset_cursor = pos;
+                        self.status = format!("Selected voxel ({}, {}, {})",c.x,c.y,c.z);
+                    }
+                }
+            });
+        ui.small("Click a cell to select; use the right inspector to move or paint it.");
+    }
+
+    fn asset_inspector(&mut self, ui: &mut egui::Ui) {
+        ui.heading("VOXEL ASSET");
+        ui.label("Asset name");
+        ui.add(egui::TextEdit::singleline(&mut self.asset.name));
+        ui.small(format!("{} blocks",self.asset.voxels.len()));
+        ui.separator();
+        ui.heading("TOOLS");
+        ui.horizontal_wrapped(|ui| {
+            ui.selectable_value(&mut self.asset_tool,AssetTool::Select,"Select");
+            ui.selectable_value(&mut self.asset_tool,AssetTool::Add,"Add");
+            ui.selectable_value(&mut self.asset_tool,AssetTool::Erase,"Erase");
+            ui.selectable_value(&mut self.asset_tool,AssetTool::Paint,"Paint");
+        });
+        ui.small("Click a visible voxel face: select, add adjacent, erase or recolor.");
+        ui.separator();
+        ui.label("Brush material");
+        for (material,label) in [
+            (Material::Bark,"Bark"),(Material::LeafDark,"Dark leaf"),
+            (Material::Leaf,"Leaf"),(Material::LeafLight,"Light leaf"),
+        ] {
+            ui.selectable_value(&mut self.asset_material,material,label);
+        }
+        ui.horizontal(|ui| {
+            ui.label("Bark"); ui.color_edit_button_srgb(&mut self.asset.bark_color);
+        });
+        ui.horizontal(|ui| {
+            ui.label("Leaf"); ui.color_edit_button_srgb(&mut self.asset.leaf_color);
+        });
+        ui.separator();
+        ui.heading("SELECTED CELL");
+        if let Some(old) = self.asset_selected {
+            if self.asset.contains(old) {
+                let mut next=old;
+                ui.horizontal(|ui| {
+                    for (i,axis) in ["X","Y","Z"].iter().enumerate() {
+                        ui.label(*axis);
+                        ui.add(egui::DragValue::new(&mut next[i]).range(-128..=128));
+                    }
+                });
+                if next != old {
+                    self.edit_asset(|asset|asset.move_voxel(old,next));
+                    if self.asset.contains(next) {
+                        self.asset_selected=Some(next);
+                        self.asset_cursor=next;
+                    }
+                }
+                ui.horizontal(|ui| {
+                    if ui.button("Paint selection").clicked() {
+                        let material=self.asset_material;
+                        self.edit_asset(|asset|if asset.paint(old,material) {Ok(())}
+                            else {Err("Selected voxel no longer exists".into())});
+                    }
+                    if ui.button("Delete selection").clicked() {
+                        self.edit_asset(|asset|if asset.erase(old) {Ok(())}
+                            else {Err("Selected voxel no longer exists".into())});
+                        self.asset_selected=None;
+                    }
+                });
+            } else {
+                ui.small("Selection no longer exists; choose another voxel.");
+            }
+        } else {
+            ui.small("No voxel selected.");
+        }
+        ui.separator();
+        ui.heading("ADD BY COORDINATE");
+        ui.horizontal(|ui| {
+            for (i,axis) in ["X","Y","Z"].iter().enumerate() {
+                ui.label(*axis);
+                ui.add(egui::DragValue::new(&mut self.asset_cursor[i]).range(-128..=128));
+            }
+        });
+        if ui.button("Add block at coordinates").clicked() {
+            let pos=self.asset_cursor;
+            let material=self.asset_material;
+            self.edit_asset(|asset|asset.add(pos,material));
+            if self.asset.contains(pos) {self.asset_selected=Some(pos);}
+        }
+        ui.separator();
+        ui.heading("ASSET GRID");
+        ui.label("Voxel size");
+        let mut size=self.asset.voxel_size;
+        if ui.add(egui::Slider::new(&mut size,0.1..=1.5)).changed() {
+            self.edit_asset(|asset|{asset.voxel_size=size;Ok(())});
+        }
+        ui.small(format!("Shape: {}",self.asset.shape.name()));
+        ui.small("Changing a cube grid to a hex grid requires rebuilding or re-importing the asset.");
+        ui.separator();
+        ui.heading("PROCEDURAL MATERIAL");
+        ui.small(if self.asset.material_graph.is_some() {
+            "A procedural material graph is attached."
+        } else { "No material graph attached." });
+        if ui.button("Capture current material nodes").clicked() {
+            self.asset.material_graph=Some(self.graph.clone());
+            self.status="Saved current material graph into voxel asset".into();
+        }
+        if ui.add_enabled(self.asset.material_graph.is_some(),
+            egui::Button::new("Edit attached material in Nodes")).clicked() {
+            if let Some(graph)=&self.asset.material_graph {
+                self.graph=graph.clone();
+                self.library_tab=0;
+                self.dirty=true;
+                self.status="Material graph loaded; capture it again to update the asset".into();
+            }
+        }
+        ui.small("The 3D asset preview uses palette colors; PBR texturing remains in Nodes.");
+    }
+
+    fn asset_canvas(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            ui.heading("VOXEL MODEL EDITOR");
+            ui.separator();
+            ui.small(format!("{} • {} blocks",self.asset.shape.name(),self.asset.voxels.len()));
+        });
+        ui.horizontal(|ui| {
+            ui.label("Orbit");
+            ui.add(egui::Slider::new(&mut self.asset_yaw,
+                0.0..=std::f32::consts::TAU).show_value(false));
+            ui.label("Zoom");
+            ui.add(egui::Slider::new(&mut self.asset_zoom,0.5..=3.0).show_value(false));
+        });
+        let available=ui.available_size();
+        let desired=Vec2::new(available.x.max(50.0),available.y.max(240.0));
+        let (rect,response)=ui.allocate_exact_size(desired,Sense::click_and_drag());
+        let painter=ui.painter_at(rect);
+        painter.rect_filled(rect,4.0,Color32::from_rgb(23,27,35));
+        if response.dragged_by(egui::PointerButton::Secondary) {
+            self.asset_yaw=(self.asset_yaw+
+                response.drag_delta().x*0.008).rem_euclid(std::f32::consts::TAU);
+        }
+        let Some(mesh)=&self.asset_mesh else {
+            painter.text(rect.center(),Align2::CENTER_CENTER,"Asset geometry is invalid",
+                FontId::proportional(16.0),Color32::LIGHT_GRAY);
+            return;
+        };
+        if mesh.triangles.is_empty() {
+            painter.text(rect.center(),Align2::CENTER_CENTER,"Empty asset: add a block using the inspector",
+                FontId::proportional(16.0),Color32::LIGHT_GRAY);
+            return;
+        }
+        let mut lo=[f32::INFINITY;3];
+        let mut hi=[f32::NEG_INFINITY;3];
+        for tri in &mesh.triangles {
+            for p in tri.points {
+                for axis in 0..3 {
+                    lo[axis]=lo[axis].min(p[axis]);
+                    hi[axis]=hi[axis].max(p[axis]);
+                }
+            }
+        }
+        let center=std::array::from_fn(|i|(hi[i]+lo[i])*0.5);
+        let delta=[hi[0]-lo[0],hi[1]-lo[1],hi[2]-lo[2]];
+        let span=delta[0].max(delta[1]).max(delta[2]).max(self.asset.voxel_size);
+        let yaw=self.asset_yaw;
+        let right=[yaw.cos(),yaw.sin(),0.0];
+        let elevation=0.4_f32;
+        let up=[-yaw.sin()*elevation.sin(),yaw.cos()*elevation.sin(),elevation.cos()];
+        let depth=[-yaw.sin()*elevation.cos(),yaw.cos()*elevation.cos(),elevation.sin()];
+        let dot=|a:[f32;3],b:[f32;3]| -> f32 {
+            a[0]*b[0]+a[1]*b[1]+a[2]*b[2]
+        };
+        let scale=rect.width().min(rect.height())*0.70*self.asset_zoom/span;
+        let project=|p:[f32;3]| {
+            let d=[p[0]-center[0],p[1]-center[1],p[2]-center[2]];
+            Pos2::new(rect.center().x+dot(d,right)*scale,
+                rect.center().y-dot(d,up)*scale)
+        };
+        let mut faces:Vec<(f32,usize)>=mesh.triangles.iter().enumerate().map(|(i,tri)|{
+            let p=std::array::from_fn(|axis|
+                (tri.points[0][axis]+tri.points[1][axis]+tri.points[2][axis])/3.0);
+            (dot(p,depth),i)
+        }).collect();
+        faces.sort_by(|a,b|a.0.total_cmp(&b.0));
+        let pointer=if response.clicked_by(egui::PointerButton::Primary) {
+            response.interact_pointer_pos()
+        } else {None};
+        let mut picked=None;
+        let stride=(faces.len()/18000).max(1);
+        let mut drawn=0usize;
+        for (_,index) in faces.into_iter().step_by(stride) {
+            drawn+=1;
+            let tri=&mesh.triangles[index];
+            let projected=[
+                project(tri.points[0]),project(tri.points[1]),project(tri.points[2])
+            ];
+            if let Some(p)=pointer {
+                if hit_triangle(p,projected[0],projected[1],projected[2]) {
+                    picked=Some((tri.cell,tri.outward));
+                }
+            }
+            let base=match tri.material {
+                Material::Bark=>self.asset.bark_color,
+                Material::LeafDark=>self.asset.leaf_color.map(|c|(c as f32*0.72) as u8),
+                Material::Leaf=>self.asset.leaf_color,
+                Material::LeafLight=>self.asset.leaf_color.map(|c|
+                    (c as f32*1.22).min(255.0) as u8),
+            };
+            let shade=(0.8+0.2*(index as f32*0.013).cos().abs()).min(1.0);
+            let color=Color32::from_rgb(
+                (base[0] as f32*shade) as u8,
+                (base[1] as f32*shade) as u8,
+                (base[2] as f32*shade) as u8);
+            let selected=self.asset_selected==Some(tri.cell);
+            painter.add(egui::Shape::convex_polygon(projected.to_vec(),
+                color,if selected {
+                    Stroke::new(1.2,Color32::from_rgb(255,204,95))
+                } else {Stroke::NONE}));
+        }
+        if let Some((cell,face))=picked {
+            match self.asset_tool {
+                AssetTool::Select => {
+                    self.asset_selected=Some(cell);
+                    self.asset_cursor=cell;
+                }
+                AssetTool::Add => {
+                    let pos=[cell[0]+face[0],cell[1]+face[1],cell[2]+face[2]];
+                    let mat=self.asset_material;
+                    self.edit_asset(|asset|asset.add(pos,mat));
+                    if self.asset.contains(pos) {self.asset_selected=Some(pos);}
+                }
+                AssetTool::Erase => {
+                    self.edit_asset(|asset|if asset.erase(cell) {Ok(())}
+                        else {Err("Cell is already empty".into())});
+                    self.asset_selected=None;
+                }
+                AssetTool::Paint => {
+                    let mat=self.asset_material;
+                    self.edit_asset(|asset|if asset.paint(cell,mat) {Ok(())}
+                        else {Err("Cell is already empty".into())});
+                    self.asset_selected=Some(cell);
+                }
+            }
+        }
+        painter.text(rect.left_top()+Vec2::new(10.0,10.0),Align2::LEFT_TOP,
+            format!("{} voxels • {} visible faces • {:?} tool",
+                mesh.voxel_count(),drawn/2,self.asset_tool as u8),
+            FontId::proportional(13.0),Color32::LIGHT_GRAY);
+        ui.small("Left-click a voxel face to edit. Right-drag to orbit. Select a block in the outliner.");
+    }
+
     fn foliage_stage_list(&mut self, ui: &mut egui::Ui) {
         ui.label(egui::RichText::new("PROCEDURAL VEGETATION").strong());
         ui.small("Build real 3D cube/hex voxels for bark, branches and foliage.");
