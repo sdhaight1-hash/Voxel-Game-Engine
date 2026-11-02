@@ -1,6 +1,6 @@
 # Texture Studio — Rust Procedural Material Editor
 
-An offline, standalone **Rust desktop application** for building procedural textures and PBR material maps in a node graph. Material Maker inspired, but independently implemented — no Material Maker code is copied and Blender/Godot are not required.
+An offline, standalone **Rust desktop application** for voxel asset creation, procedural tree modeling, and editable PBR material maps. Material Maker inspired, but independently implemented — no Material Maker code is copied and Blender/Godot are not required.
 
 > **Status: early prototype.** This release emphasizes a working node graph and CPU rendering. The 3D tab shows an approximate lit sphere, not a full physically based GPU renderer.
 
@@ -16,6 +16,26 @@ An offline, standalone **Rust desktop application** for building procedural text
 - **Voxel UV mapping:** wrap the texture continuously around side walls or repeat it per face; caps use planar UVs and hex-cap pixels outside the shape are transparent.
 - **Voxel export:** generate five per-face RGBA texture atlases, a UV-unwrapped `voxel.obj`, `voxel.mtl` and machine-readable `voxel_layout.json`. The OBJ material connects albedo; other PBR maps can be assigned in the target renderer.
 - **Projects:** save/load JSON node graphs *including voxel shape and side UV mode*; older projects without voxel settings load as cubes.
+
+## Voxel Asset Workspace (Blockbench-inspired foundation)
+
+Texture Studio is now organized around **four linked workspaces**. **Assets** is the new primary editing workspace; **Foliage** supplies generated voxel-tree geometry; **Presets** and **Nodes** remain responsible for procedural surface materials. The design takes inspiration from Blockbench's viewport/outliner/modeling/texturing workflow while keeping our own native Rust code and cube/hex voxel representation.
+
+**Asset editing:** Open **Library → Assets** to create, save, load or export a standalone voxel model. The left panel is a scrollable voxel outliner with per-material counts and selectable occupied cells. The center panel shows a rotatable 3D viewport. The right inspector includes:
+
+- **Select**: click a visible voxel face or choose a cell in the outliner to edit its integer X/Y/Z position
+- **Add**: click a face to place an adjacent cube or hexagonal-prism voxel, or enter an exact coordinate
+- **Erase**: click a visible occupied voxel face to remove it
+- **Paint**: choose Bark, Dark Leaf, Leaf or Light Leaf and click a voxel to change its material slot
+- **Undo/Redo**: 20-step asset-edit history for add, erase, move, recolor and voxel-size changes
+- **Palette**: customize bark and foliage colors; the viewport shows these directly
+- **Voxel size**: uniformly rescale the grid geometry while retaining integer cell coordinates
+
+**Convert procedural growth to editable modeling:** Build a tree under **Foliage**, then click **Edit Tree as Asset**, or use **Import Procedural Tree** from the asset outliner. The tree's occupied cells become a separate editable model, preserving its cube/hex grid and material colors. Manual changes are not overwritten when its originating tree parameters change. You can also **Open Asset** on a previously exported `foliage.voxels.json` from the older tree workflow.
+
+**Asset files:** **Save Asset** stores `asset.voxelasset.json`, including name, cube/hex grid, cell size, each occupied voxel and material slot, palette, plus an optional embedded procedural node graph. **Export Asset** also writes `asset.obj` (only exposed cell faces) and `asset.mtl` (four palette colors). In the Assets inspector, **Capture current material nodes** attaches the active procedural graph; **Edit attached material in Nodes** loads it back to the node editor. Changes in Nodes must be captured again to update the saved asset.
+
+**Current boundaries:** This is a first usable voxel asset editor, **not full Blockbench feature parity**. It does not yet have per-pixel UV painting, automatic multi-part UV atlas baking, arbitrary hierarchies or named groups, rigging/animation timelines, skeletal binding, mesh sculpting, plug-ins, Blockbench project-file compatibility, or direct 3D surface painting from the procedural PBR graph. The viewport currently colors individual voxels through four material slots, with the procedural material graph stored alongside the asset for further integration. These are deliberate next stages, not implemented features.
 
 ## Native Voxel Tree Designer
 
@@ -167,7 +187,8 @@ The OBJ/MTL format directly links the albedo map. Roughness, metallic, height, a
 - `src/lib.rs`: deterministic tileable procedural graph renderer, input validation, PBR channels, and unit tests.
 - `src/presets.rs` and `src/presets/catalog.json`: embedded 1,039-preset natural material catalog and procedural node-graph builder.
 - `src/node_library.rs`: 76 executable original Rust generators, filters, math/mix operations and transforms with tests.
-- `src/foliage.rs`: deterministic cube/hex-prism voxel tree generation, occupied-cell JSON and culled OBJ/MTL export, and tests.
+- `src/foliage.rs`: deterministic cube/hex-prism voxel tree generation and shared exposed-face geometry for editing/export.
+- `src/asset.rs`: standalone editable voxel asset model, tree imports, block operations and asset serialization.
 - `src/main.rs`: native egui interface, graph controls, sphere and node previews, project dialogs, and PNG output.
 - `.github/workflows/ci.yml`: build/test validation on push.
 - `.github/workflows/desktop-builds.yml`: manual downloadable desktop executables.
