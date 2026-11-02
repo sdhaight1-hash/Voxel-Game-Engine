@@ -1,6 +1,6 @@
 mod gpu_renderer;
 use std::sync::Arc;
-use gpu_renderer::{GpuViewport, Scene as GpuScene};
+use gpu_renderer::{GpuViewport, Scene as GpuScene,LeafAaMode};
 use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, TextureHandle, Vec2};
 use std::{collections::HashMap, path::{Path, PathBuf}, time::Instant};
 use texture_studio::{Graph, NodeKind, LibraryNode, VoxelShape, SideMapping};
@@ -38,6 +38,27 @@ fn authored_function_noise_scale(function:&MaterialFunction)->Option<u32> {
             .reference.overrides.iter()
             .find(|item|item.key==param.key).map(|item|item.value),
     }
+}
+
+/// Keeps GPU edge-quality modes mutually exclusive and never touches the
+/// material bake, seasonal palette or scene-upload invalidation state.
+fn leaf_aa_editor(ui:&mut egui::Ui,mode:&mut LeafAaMode,msaa4_supported:bool) {
+    ui.horizontal_wrapped(|ui|{
+        ui.label("GPU leaf edges");
+        ui.selectable_value(mode,LeafAaMode::Legacy,"Legacy");
+        ui.selectable_value(mode,LeafAaMode::Ordered,"Ordered 4×4");
+        if msaa4_supported {
+            ui.selectable_value(mode,LeafAaMode::Msaa4,"4× MSAA");
+        } else {
+            ui.add_enabled(false,egui::Button::new("4× MSAA"))
+                .on_disabled_hover_text("4× MSAA is unsupported on this GPU or the GPU viewport is unavailable.");
+        }
+    });
+    ui.small(match mode {
+        LeafAaMode::Legacy=>"Default: original 0.5 leaf alpha cutoff.",
+        LeafAaMode::Ordered=>"Single-sample screen-door coverage; possible visible dither pattern.",
+        LeafAaMode::Msaa4=>"Four depth/color samples, hardware leaf alpha-to-coverage, resolved to the same preview texture.",
+    });
 }
 
 const NODE_W: f32 = 170.0;
@@ -290,7 +311,7 @@ struct Studio {
     /// 0 Spring, 1 Summer, 2 Autumn, 3 Winter; 4 loops to Spring.
     season_preview: f32,
     /// GPU preview only; never changes saved foliage geometry or textures.
-    ordered_leaf_coverage: bool,
+    leaf_aa_mode: LeafAaMode,
     leaf_texture: Option<TextureHandle>,
     bark_texture: Option<TextureHandle>,
     asset_leaf_texture: Option<TextureHandle>,
@@ -364,7 +385,7 @@ impl Default for Studio {
             foliage_stage: FoliageStage::PresetLoader,
             foliage_yaw: 0.8,
             season_preview: 1.0,
-            ordered_leaf_coverage: false,
+            leaf_aa_mode: LeafAaMode::Legacy,
             leaf_texture: None,
             bark_texture: None,
             asset_leaf_texture: None,
@@ -1481,9 +1502,8 @@ impl Studio {
         ui.add(egui::Slider::new(&mut self.season_preview,0.0..=4.0)
             .text("Season preview").fixed_decimals(2));
         ui.small("0 Spring • 1 Summer • 2 Autumn • 3 Winter • 4 Spring");
-        ui.checkbox(&mut self.ordered_leaf_coverage,
-            "Experimental ordered leaf edge coverage")
-            .on_hover_text("GPU preview only: deterministic 4×4 screen-door coverage. May show a dither pattern at some zoom levels; material exports and legacy alpha stay unchanged.");
+        leaf_aa_editor(ui,&mut self.leaf_aa_mode,
+            self.gpu.as_ref().is_some_and(|gpu|gpu.msaa4_supported));
         let available=ui.available_size();
         let desired=Vec2::new(available.x.max(50.0),available.y.max(240.0));
         let (rect,response)=ui.allocate_exact_size(desired,Sense::click_and_drag());
@@ -1492,7 +1512,7 @@ impl Studio {
         if let (Some(gpu),Some(scene))=(&self.gpu,&self.asset_gpu_scene) {
             gpu.paint(ui,rect,Arc::clone(scene),self.asset_yaw,self.asset_zoom,
                 ui.ctx().input(|i|i.time as f32),self.season_preview,
-                self.ordered_leaf_coverage);
+                self.leaf_aa_mode);
         }
         if response.dragged_by(egui::PointerButton::Secondary) {
             self.asset_yaw=(self.asset_yaw+
@@ -1993,9 +2013,8 @@ impl Studio {
         ui.add(egui::Slider::new(&mut self.season_preview,0.0..=4.0)
             .text("Season preview").fixed_decimals(2));
         ui.small("0 Spring • 1 Summer • 2 Autumn • 3 Winter • 4 Spring");
-        ui.checkbox(&mut self.ordered_leaf_coverage,
-            "Experimental ordered leaf edge coverage")
-            .on_hover_text("GPU preview only: deterministic 4×4 screen-door coverage. May show a dither pattern at some zoom levels; material exports and legacy alpha stay unchanged.");
+        leaf_aa_editor(ui,&mut self.leaf_aa_mode,
+            self.gpu.as_ref().is_some_and(|gpu|gpu.msaa4_supported));
         let available=ui.available_size();
         let desired=Vec2::new(available.x.max(50.0),available.y.max(250.0));
         let (rect,_) = ui.allocate_exact_size(desired,Sense::hover());
@@ -2004,7 +2023,7 @@ impl Studio {
         if let (Some(gpu),Some(scene))=(&self.gpu,&self.foliage_gpu_scene) {
             gpu.paint(ui,rect,Arc::clone(scene),self.foliage_yaw,1.0,
                 ui.ctx().input(|i|i.time as f32),self.season_preview,
-                self.ordered_leaf_coverage);
+                self.leaf_aa_mode);
         }
         let Some(mesh)=&self.foliage_mesh else {
             painter.text(rect.center(),Align2::CENTER_CENTER,
@@ -3617,6 +3636,12 @@ mod wire_interaction_tests {
             [1.0,0.0]);
         assert_eq!(bezier_uv_drag([0.25,0.75],
             Vec2::ZERO,Vec2::splat(100.0)),[0.25,0.75]);
+    }
+
+    #[test]
+    fn leaf_edge_preview_mode_defaults_to_original_cutout() {
+        let app=Studio::default();
+        assert_eq!(app.leaf_aa_mode,LeafAaMode::Legacy);
     }
 
     #[test]
