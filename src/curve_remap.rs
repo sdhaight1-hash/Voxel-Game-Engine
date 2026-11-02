@@ -48,8 +48,11 @@ impl CurveRemap {
                 return Err("Curve Remap positions must be finite and values in 0..1".into());
             }
         }
-        if active.windows(2).any(|pair|pair[0].position>=pair[1].position) {
-            return Err("Curve Remap positions must increase strictly".into());
+        // A minimum interval prevents tiny imported float spans from
+        // producing overflowing cubic tangents or an unusable editor slider.
+        if active.windows(2).any(|pair|
+            pair[1].position-pair[0].position<0.001) {
+            return Err("Curve Remap positions must be separated by at least 0.001".into());
         }
         Ok(())
     }
@@ -172,6 +175,8 @@ mod tests {
         curve.points[1].position=f32::NAN;
         assert!(curve.validate().is_err());
         curve.points[1].position=curve.points[2].position;
+        assert!(curve.validate().is_err());
+        curve.points[1].position=0.000001;
         assert!(curve.validate().is_err());
         curve.points[1].position=0.25;
         curve.points[1].value=-0.1;
