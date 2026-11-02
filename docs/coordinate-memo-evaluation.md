@@ -22,8 +22,12 @@ the original float UV bit pattern agree. It does not quantize intermediate
 colors to u8, does not interpolate source images and does not assume
 regular pixel-center sampling.
 
-The per-pixel map is cleared between pixels and capped at 4,096 entries.
-This is an in-flight evaluation cache, not a persistent preview cache; the
+A short planning pass identifies nodes in the upstream dependency closure
+of more than one requested output channel. Only those nodes are memoized.
+The per-pixel storage is a compact linear array (not a hash map) cleared
+between pixels and capped at 64 entries; once full, new evaluations proceed
+uncached. This is an in-flight evaluation cache, not a persistent preview
+cache; the
 existing `GraphRenderCache` remains responsible for complete rendered
 outputs and the `FoliageBakeCache` remains responsible for full bark/leaf
 material recipes.
