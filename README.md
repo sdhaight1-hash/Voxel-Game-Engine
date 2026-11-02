@@ -37,6 +37,23 @@ Every operation is implemented directly in Rust, runs locally, can be saved in p
 
 **Not yet implemented:** the entire 200+ / ~250-node Material Maker library, 3D SDF and mesh/projection nodes, custom GLSL shaders, arbitrary multi-output nodes, group/subgraph editing, GPU buffer and iterative nodes, image/text/glyph loading, texture painting, GPU shader live preview, or material imports from Material Maker files. Full parity requires a GPU graph architecture and broader project schema. The added operations intentionally retain the current one-image-per-node graph model.
 
+## Geometryless 2D material mode
+
+Select **Material Geometry → Geometryless (2D)** in the right panel to work entirely in texture space. This is a true mesh-free workflow, not a flat cube preview.
+
+- **2D tab:** view Albedo, Roughness, Metallic, Height, or derived Normal.
+- **Node tab:** inspect any intermediate image, including procedural generators.
+- **Export image:** save one square channel as PNG.
+- **Export PBR maps:** save five independent square PNGs. No mesh, OBJ or face atlas is generated.
+- **Switch back:** choose **Cube** or **Hexagonal prism** to enable the textured voxel preview and **Export voxel OBJ + atlases** again.
+- The geometryless switch is stored in project JSON, along with the last selected voxel shape/UV mapping; old projects default to Cube.
+
+## Updated natural-material preset graphs
+
+All **1,039 built-in natural texture presets** now use the expanded node library. Each selection assembles an editable, validated network using material-family-specific primary patterns (Fractal Noise, Dirt, Crystal, Spots, Fibers, Clouds or Sine Wave, or Strata for layered wood/shell textures), a family-appropriate filter, secondary micro-detail, Colorize, an adjustable Lerp blend, an editable roughness network, and a metallic channel. Unlike the previous simple five-node templates, these graphs expose the new generators and filters for further editing. Presets work identically in geometryless, Cube, and Hexagonal Prism modes.
+
+These remain **procedural approximations**, not exact scientific or source-game material scans, species-accurate foliage meshes, or copies of proprietary textures.
+
 ## Built-in Natural Preset Library
 
 This build includes **1,039 named material/appearance presets across 14 categories**, derived from the provided *Complete Natural Texture Catalog*. The catalog is embedded in the executable at `src/presets/catalog.json` — no network connection or texture downloads needed.
@@ -49,7 +66,7 @@ This build includes **1,039 named material/appearance presets across 14 categori
 - **Mushrooms; Wild Crops:** 45 mushroom species and growth stages of wild plants.
 - **Water, Lava & Ice; Natural Formations; Seashells:** surface states, organic/mineral formations and all 42 shell combinations.
 
-**Using a preset:** On the left choose **Presets**, filter by category or search any material/variant name, select a result, then click **Apply selected preset**. This replaces the current node graph with an editable generator + Colorize + Roughness + Metallic + Height graph. It **preserves your cube/hexagonal-prism shape and side UV settings**. Save your project before replacing the graph. Switch to **Nodes** to customize the generators.
+**Using a preset:** On the left choose **Presets**, filter by category or search any material/variant name, select a result, then click **Apply selected preset**. This replaces the current node graph with an editable layered generator/filter/detail/color/roughness/metallic network. It **preserves your cube/hexagonal-prism shape and side UV settings**. Save your project before replacing the graph. Switch to **Nodes** to customize the generators.
 
 **Accuracy limitation:** These are original, algorithmic **tileable surface material approximations**, not imported Vintage Story PNGs, photographs, plant models, or species-accurate foliage/mushroom/flower illustrations. Non-surface visual states such as blossoms, mushrooms, leaf clusters, snow accumulation and crop stages are color/pattern presets only; they do not generate geometry, transparency cutouts, animations, physics or seasonal changes. The catalog's wording is descriptive reference data, not a claim that every entry is an ordinary in-game natural deposit.
 
