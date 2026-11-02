@@ -790,8 +790,16 @@ impl FoliageProject {
         let mut spans=Vec::new();
         let s = WORLD_HEXEL_SIZE_METRES;
         let shape = VoxelShape::HexPrism;
-        let h = self.height * self.overall_scale;
         let rules = self.preset.growth_rules();
+        let trunk_rules = self.preset.trunk_growth_rules();
+        // Per-individual dimensions vary independently of branch/leaf hashes.
+        // Constrain values to the existing author's 96-level / 8-cell limits.
+        let h=(self.height*self.overall_scale*(1.0+
+            (hash01(self.seed,0,172)*2.0-1.0)*
+            trunk_rules.height_seed_variation)).min(96.0*s);
+        let trunk_radius=(self.trunk_radius*self.overall_scale*(1.0+
+            (hash01(self.seed,0,173)*2.0-1.0)*
+            trunk_rules.radius_seed_variation)).min(8.0*s);
         // Seed changes individual trunk habit, not its species or material.
         // Squaring t keeps the trunk anchored at the world-space origin.
         let seed_lean_x=(hash01(self.seed,0,170)*2.0-1.0)*rules.lean_fraction*h;
@@ -805,8 +813,11 @@ impl FoliageProject {
         for step in 0..=((h / (s * 0.35)).ceil() as u32) {
             let t = (step as f32 * s * 0.35 / h).min(1.0);
             let p = trunk(t);
-            let radius = (self.trunk_radius * self.overall_scale *
-                (1.0 - t * 0.80)).max(s * 0.20);
+            // Taper is species-defined; some mature trunks broaden near
+            // their base, bamboo stays close to cylindrical.
+            let flare=(1.0-t/0.18).max(0.0).powi(2);
+            let radius=(trunk_radius*(1.0-t*trunk_rules.taper)*
+                (1.0+trunk_rules.base_flare*flare)).clamp(s*0.20,8.0*s);
             paint_sphere(&mut cells, shape, s, p, radius, Material::Bark);
         }
         for cell in cells.keys() { ownership.insert(*cell,(TreePart::Trunk,Some(0))); }
@@ -893,7 +904,7 @@ impl FoliageProject {
                 // Outward-arching limb followed by hanging tips.
                 mid[2]=(mid[2]+0.24*reach).min(h);
             }
-            let thickness = (self.trunk_radius * self.overall_scale *
+            let thickness = (trunk_radius *
                 (0.28 + 0.25 * (1.0 - t))).max(s * 0.17);
             // Visible branch radii are independent of the 1m wood cell.
             // Major branches transition to thin tips, rather than building
@@ -1844,6 +1855,22 @@ mod tests {
             geometry(PlantPreset::YellowApple));
         assert_eq!(geometry(PlantPreset::GreenBamboo),
             geometry(PlantPreset::BrownBamboo));
+    }
+
+    #[test]
+    fn seeded_height_radius_and_base_flare_stay_bounded() {
+        for species in [PlantPreset::Kapok,PlantPreset::Redwood,
+            PlantPreset::Oak,PlantPreset::GreenBamboo] {
+            let project=FoliageProject::from_preset(species);
+            let nominal=project.height*project.overall_scale;
+            let tree=project.generate().unwrap();
+            assert!((tree.height-nominal).abs()<=nominal*0.056);
+            let next=FoliageProject {seed:99,..project.clone()}
+                .generate().unwrap();
+            assert_ne!(tree.height,next.height,"{species:?}");
+            assert_eq!(tree.structure.as_ref().unwrap().origin,[0,0,0]);
+            assert!(tree.structure.as_ref().unwrap().root_footprint.len()>0);
+        }
     }
 
     #[test]
