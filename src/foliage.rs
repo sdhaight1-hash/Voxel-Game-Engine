@@ -599,8 +599,10 @@ impl FoliageProject {
             paint_line(&mut main_cells,shape,s,base,mid,thickness,Material::Bark);
             paint_line(&mut main_cells,shape,s,mid,tip,s*0.18,Material::Bark);
             for (cell,material) in main_cells {
-                cells.insert(cell,material);
-                ownership.entry(cell).or_insert((TreePart::MajorBranch,Some(major_id)));
+                let previous=cells.insert(cell,material);
+                if previous.is_none() || previous.is_some_and(|m|m.is_foliage()) {
+                    ownership.insert(cell,(TreePart::MajorBranch,Some(major_id)));
+                }
             }
             let fork_angle = angle + (rand(4) - 0.5) * 1.6;
             let fork_reach = reach * (0.28 + 0.2 * rand(5));
@@ -616,8 +618,10 @@ impl FoliageProject {
             let mut fork_cells=BTreeMap::new();
             paint_line(&mut fork_cells,shape,s,mid,fork,s*0.17,Material::Bark);
             for (cell,material) in fork_cells {
-                cells.insert(cell,material);
-                ownership.entry(cell).or_insert((TreePart::SmallBranch,Some(fork_id)));
+                let previous=cells.insert(cell,material);
+                if previous.is_none() || previous.is_some_and(|m|m.is_foliage()) {
+                    ownership.insert(cell,(TreePart::SmallBranch,Some(fork_id)));
+                }
             }
             if self.leaf_density == 0.0 { continue; }
             // Foliage clusters are attached to their owning branch tips.
