@@ -8,6 +8,7 @@ pub mod voxel;
 pub mod foliage;
 pub mod tree_growth_rules;
 pub mod plant_climate;
+pub mod flora_prefab;
 pub mod asset;
 pub mod foliage_materials;
 pub mod presets;
