@@ -50,8 +50,10 @@ fn species_growth_editor(ui:&mut egui::Ui,tree:&mut FoliageProject)->bool {
     let mut trunk=tree.effective_trunk_rules();
     let mut edited=false;
     let mut reset=false;
-    ui.collapsing("Species growth rules (trunk, branches, twigs, leaves)",|ui| {
-        ui.small(format!("Branch pattern: {:?} • leaf arrangement: {:?}",
+    ui.collapsing(if tree.preset.is_palm() {
+        "Palm growth rules (trunk, fronds, leaves)"
+    } else {"Species growth rules (trunk, branches, twigs, leaves)"},|ui| {
+        ui.small(format!("Growth pattern: {:?} • leaf arrangement: {:?}",
             base.phyllotaxy,base.foliage));
         ui.small("Growth patterns are locked to the species. Sliders stay inside its limits.");
         ui.separator();
@@ -73,7 +75,7 @@ fn species_growth_editor(ui:&mut egui::Ui,tree:&mut FoliageProject)->bool {
             (base.lean_fraction+0.012).min(0.08))
             .text("Seed lean")).changed();
         ui.separator();
-        ui.strong("Primary branches");
+        ui.strong(if tree.preset.is_palm() {"Frond petioles"} else {"Primary branches"});
         edited |= ui.add(egui::Slider::new(&mut rules.primary_pitch[0],
             (base.primary_pitch[0]-0.20)..=(base.primary_pitch[0]+0.20))
             .text("Lowest pitch")).changed();
@@ -84,6 +86,7 @@ fn species_growth_editor(ui:&mut egui::Ui,tree:&mut FoliageProject)->bool {
         edited |= ui.add(egui::Slider::new(&mut rules.reach_factor,
             base.reach_factor*0.80..=base.reach_factor*1.20)
             .text("Crown reach")).changed();
+        if !tree.preset.is_palm() {
         ui.separator();
         ui.strong("Twigs");
         edited |= ui.add(egui::Slider::new(&mut rules.secondary_pitch[0],
@@ -97,6 +100,9 @@ fn species_growth_editor(ui:&mut egui::Ui,tree:&mut FoliageProject)->bool {
             (base.extra_twig_chance-0.20).max(0.0)..=
             (base.extra_twig_chance+0.20).min(1.0))
             .text("Extra twig chance")).changed();
+        } else {
+            ui.small("Palms have no branching woody twigs; fronds emerge at the crown.");
+        }
         ui.separator();
         ui.strong("Leaf clusters");
         edited |= ui.add(egui::Slider::new(&mut rules.foliage_factor,
@@ -1317,8 +1323,11 @@ impl Studio {
                     }
                 });
                 changed |= ui.add(egui::Slider::new(&mut tree.height,0.5..=30.0).text("Height")).changed();
-                changed |= ui.add(egui::Slider::new(&mut tree.branch_count,1..=90).text("Branch count")).changed();
-                changed |= ui.add(egui::Slider::new(&mut tree.branch_length,0.1..=1.5).text("Branch length")).changed();
+                changed |= ui.add(egui::Slider::new(&mut tree.branch_count,1..=90)
+                    .text(if tree.preset.is_palm() {"Frond count"} else {"Branch count"})).changed();
+                changed |= ui.add(egui::Slider::new(&mut tree.branch_length,0.1..=1.5)
+                    .text(if tree.preset.is_palm() {"Frond reach"} else {"Branch length"})).changed();
+                if !tree.preset.is_palm() {
                 ui.label("Branch growth");
                 egui::ComboBox::from_id_salt("foliage_branch_growth")
                     .selected_text(match tree.branch_growth {
@@ -1331,17 +1340,27 @@ impl Studio {
                         changed |= ui.selectable_value(&mut tree.branch_growth,
                             BranchGrowth::CanopyGuided,"Canopy guided").changed();
                     });
+                }
                 let rules=tree.preset.growth_rules();
                 ui.small(format!("Species architecture: {:?} branches, {:?} foliage",
                     rules.phyllotaxy,rules.foliage));
-                ui.small("Seed changes trunk lean, branches, twigs and leaf locations within species rules.");
+                ui.small(if tree.preset.is_palm() {
+                    "Seed changes the trunk lean, crown petioles and frond foliage."
+                } else {
+                    "Seed changes trunk lean, branches, twigs and leaf locations within species rules."
+                });
                 if tree.preset==PlantPreset::CherryBlossom {
                     ui.small("Ornamental sakura: short pink spring bloom, green summer leaves.");
                     ui.small("Select Spring (0) in the season preview to see flowers.");
                 }
+                if tree.preset.is_palm() {
+                    ui.small("Pinnate palms have feather fronds; fan palms have radial blades.");
+                }
                 changed |= species_growth_editor(ui,tree);
-                ui.small("Canopy guided steers branches toward seeded crown targets.");
-                ui.small("Voxelize the selected species and branch layout at the grid resolution.");
+                if !tree.preset.is_palm() {
+                    ui.small("Canopy guided steers branches toward seeded crown targets.");
+                }
+                ui.small("Voxelize the selected plant at the grid resolution.");
             }
             FoliageStage::Carve => {
                 changed |= ui.add(egui::Slider::new(&mut tree.carve_bottom,0.0..=0.85).text("Clear lower canopy")).changed();
@@ -1409,7 +1428,11 @@ impl Studio {
                             .filter(|b|b.part==texture_studio::foliage::TreePart::MajorBranch).count();
                         let forks=structure.branches.iter()
                             .filter(|b|b.part==texture_studio::foliage::TreePart::SmallBranch).count();
-                        ui.label(format!("Trunk + {majors} main branches + {forks} forks"));
+                        if tree.preset.is_palm() {
+                            ui.label(format!("Trunk + {majors} crown fronds (no woody forks)"));
+                        } else {
+                            ui.label(format!("Trunk + {majors} main branches + {forks} forks"));
+                        }
                         ui.label(format!("Root footprint: {} support hexes",
                             structure.root_footprint.len()));
                         ui.small("Every leaf cell belongs to a branch; unsupported leaf islands are removed.");
