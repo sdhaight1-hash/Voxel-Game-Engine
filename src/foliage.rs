@@ -414,17 +414,17 @@ impl FoliageProject {
                     self.seed, i * 2 + cluster as u32);
             }
             if cells.len() > 40_000 {
-                return Err("Voxel tree exceeds 40,000 blocks: increase voxel size or reduce canopy size".into());
+                return Err("Tree exceeds 40,000 game hexels: reduce size, branching or canopy density".into());
             }
         }
         if cells.len() > 40_000 {
-            return Err("Voxel tree exceeds 40,000 blocks: increase voxel size or reduce canopy size".into());
+            return Err("Tree exceeds 40,000 game hexels: reduce size, branching or canopy density".into());
         }
         let voxels = cells.iter().map(|(pos, material)| VoxelCell {
             x: pos[0], y: pos[1], z: pos[2], material: *material,
         }).collect();
         let triangles = surface_triangles(&cells, shape, s, self.leaf_render);
-        Ok(FoliageMesh { voxels, triangles, shape: shape,
+        Ok(FoliageMesh { voxels, triangles, shape,
             voxel_size: s, height: h, leaf_render: self.leaf_render })
     }
 }
