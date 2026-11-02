@@ -4,7 +4,7 @@
 //! Core data: integer cell positions + material slots, not an OBJ mesh.
 //! The PBR graph can travel with the asset for continued surface design.
 
-use crate::foliage::{FoliageMesh, FoliageProject, Material, VoxelCell};
+use crate::foliage::{FoliageMesh, FoliageProject, Material, VoxelCell, LeafRenderSettings};
 use crate::voxel::VoxelShape;
 use crate::Graph;
 use serde::{Deserialize, Serialize};
@@ -19,6 +19,8 @@ pub struct VoxelAsset {
     pub voxels: Vec<VoxelCell>,
     pub bark_color: [u8; 3],
     pub leaf_color: [u8; 3],
+    #[serde(default)]
+    pub leaf_render: LeafRenderSettings,
     /// Optional procedural surface material project. Kept editable in Nodes.
     pub material_graph: Option<Graph>,
 }
@@ -33,6 +35,7 @@ impl Default for VoxelAsset {
             voxels: vec![VoxelCell { x: 0, y: 0, z: 0, material: Material::Bark }],
             bark_color: [125, 94, 68],
             leaf_color: [77, 142, 65],
+            leaf_render: LeafRenderSettings::default(),
             material_graph: None,
         }
     }
@@ -48,6 +51,7 @@ impl VoxelAsset {
             voxels: mesh.voxels.clone(),
             bark_color: project.bark_color,
             leaf_color: project.leaf_color,
+            leaf_render: project.leaf_render,
             material_graph: Some(graph.clone()),
         }
     }
@@ -65,7 +69,8 @@ impl VoxelAsset {
     }
 
     pub fn mesh(&self) -> Result<FoliageMesh, String> {
-        FoliageMesh::from_voxels(self.shape, self.voxel_size, self.voxels.clone())
+        FoliageMesh::from_voxels_with_render(self.shape, self.voxel_size,
+            self.voxels.clone(), self.leaf_render)
     }
 
     pub fn contains(&self, pos: [i32; 3]) -> bool {
@@ -135,6 +140,7 @@ impl VoxelAsset {
                 voxels: cells,
                 bark_color: project.bark_color,
                 leaf_color: project.leaf_color,
+                leaf_render: project.leaf_render,
                 ..Self::default()
             }
         } else {
@@ -153,6 +159,7 @@ impl VoxelAsset {
         let mut pseudo_project = FoliageProject::default();
         pseudo_project.bark_color = self.bark_color;
         pseudo_project.leaf_color = self.leaf_color;
+        pseudo_project.leaf_render = self.leaf_render;
         crate::foliage::mtl(&pseudo_project)
     }
 }
