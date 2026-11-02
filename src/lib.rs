@@ -49,6 +49,8 @@ pub enum NodeKind {
     Color { rgb: [u8; 3] },
     /// Typed scalar source; automatically broadcasts into legacy RGB inputs.
     Scalar { value: f32 },
+    /// Explicit conversion from RGB to a luminance scalar.
+    Luminance,
     /// Scalar-only, three-parameter levels remap. Does not mutate old node kinds.
     Levels { black: f32, white: f32, gamma: f32 },
     Invert,
@@ -68,6 +70,7 @@ impl NodeKind {
             Self::Checker { .. } => "Checker",
             Self::Color { .. } => "Color",
             Self::Scalar { .. } => "Scalar",
+            Self::Luminance => "Luminance",
             Self::Levels { .. } => "Levels",
             Self::Invert => "Invert",
             Self::Blend { .. } => "Blend",
@@ -85,7 +88,8 @@ impl NodeKind {
             Self::Noise { .. } | Self::Checker { .. } | Self::Color { .. }
                 | Self::Scalar { .. } | Self::Bricks { .. } | Self::Voronoi { .. }
                 | Self::Strata { .. } => 0,
-            Self::Invert | Self::Colorize { .. } | Self::Levels { .. } => 1,
+            Self::Invert | Self::Colorize { .. } | Self::Luminance
+                | Self::Levels { .. } => 1,
             Self::Blend { .. } => 2,
             Self::Library { operation, .. } => operation.input_count(),
             Self::Output => 4,
@@ -101,6 +105,7 @@ impl NodeKind {
             (Self::Output, 2) => "Metallic",
             (Self::Output, 3) => "Height",
             (Self::Levels { .. }, 0) => "Scalar",
+            (Self::Luminance,0) => "Color",
             (Self::Invert | Self::Colorize { .. }, 0) => "Image",
             (Self::Library { operation, .. }, i) => operation.input_name(i),
             _ => "",
@@ -115,6 +120,7 @@ impl NodeKind {
             Self::Checker{..}=>"checker".into(),
             Self::Color{..}=>"color".into(),
             Self::Scalar{..}=>"scalar".into(),
+            Self::Luminance=>"luminance".into(),
             Self::Levels{..}=>"levels".into(),
             Self::Invert=>"invert".into(),
             Self::Blend{..}=>"blend".into(),
@@ -129,7 +135,7 @@ impl NodeKind {
 
     pub fn output_type(&self) -> SocketType {
         match self {
-            Self::Scalar{..}|Self::Levels{..}=>SocketType::Scalar,
+            Self::Scalar{..}|Self::Luminance|Self::Levels{..}=>SocketType::Scalar,
             _=>SocketType::Color, // Existing RGB evaluation semantics.
         }
     }
@@ -434,6 +440,12 @@ impl Graph {
             }
             NodeKind::Color { rgb } => rgb.map(|c| c as f32 / 255.0),
             NodeKind::Scalar { value } => [value;3],
+            NodeKind::Luminance => {
+                let rgb=self.sample_input(id,0,u,v);
+                let grey=(0.2126*rgb[0]+0.7152*rgb[1]+0.0722*rgb[2])
+                    .clamp(0.0,1.0);
+                [grey;3]
+            }
             NodeKind::Levels { black,white,gamma } => {
                 let value=self.sample_input(id,0,u,v)[0];
                 let mapped=((value-black)/(white-black)).clamp(0.0,1.0).powf(gamma);
@@ -705,6 +717,25 @@ mod tests {
         graph.connect(scalar,2,0).unwrap();
         assert_eq!(&graph.render_rgba(1,1).unwrap()[..4],&[128,128,128,255]);
         assert_eq!(graph.node(levels).unwrap().kind.parameters().len(),3);
+    }
+
+    #[test]
+    fn explicit_luminance_converts_legacy_rgb_for_scalar_levels() {
+        let mut graph=Graph::default();
+        let luminance=graph.add_node(NodeKind::Luminance,[10.0,10.0]);
+        let levels=graph.add_node(NodeKind::Levels{
+            black:0.2,white:0.8,gamma:1.0
+        },[20.0,10.0]);
+        graph.connect(1,luminance,0).unwrap();
+        graph.connect(luminance,levels,0).unwrap();
+        graph.connect(levels,2,0).unwrap();
+        assert_eq!(graph.node(luminance).unwrap().kind.input_type(0),
+            Some(SocketType::Color));
+        assert_eq!(graph.node(luminance).unwrap().kind.output_type(),
+            SocketType::Scalar);
+        let pixels=graph.render_rgba(32,32).unwrap();
+        let restored:Graph=serde_json::from_str(&serde_json::to_string(&graph).unwrap()).unwrap();
+        assert_eq!(restored.render_rgba(32,32).unwrap(),pixels);
     }
 
     #[test]
