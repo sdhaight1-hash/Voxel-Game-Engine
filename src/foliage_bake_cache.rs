@@ -111,6 +111,25 @@ mod tests {
     use crate::foliage_materials::SeasonalPalettes;
 
     #[test]
+    fn generated_tree_and_converted_asset_share_both_material_bakes() {
+        use crate::foliage::FoliageProject;
+        use crate::asset::VoxelAsset;
+        let tree=FoliageProject::from_preset(PlantPreset::Shrub);
+        let mesh=tree.generate().unwrap();
+        let asset=VoxelAsset::from_tree(&tree,&mesh);
+        let mut cache=FoliageBakeCache::new(1024*1024);
+        let tree_leaf=cache.bake_leaf(&tree.materials,64,tree.leaf_color).unwrap();
+        let tree_bark=cache.bake_bark(&tree.materials,64,tree.bark_color).unwrap();
+        let asset_leaf=cache.bake_leaf(&asset.materials,64,asset.leaf_color).unwrap();
+        let asset_bark=cache.bake_bark(&asset.materials,64,asset.bark_color).unwrap();
+        assert!(Arc::ptr_eq(&tree_leaf,&asset_leaf));
+        assert!(Arc::ptr_eq(&tree_bark,&asset_bark));
+        assert!(asset.material_graph.is_none());
+        assert_eq!(cache.stats().hits,2);
+        assert_eq!(cache.stats().misses,2);
+    }
+
+    #[test]
     fn identical_species_bakes_share_arc_and_preserve_exact_pixels() {
         let first=FoliageMaterials::for_species(PlantPreset::Willow);
         let second=first.clone();
