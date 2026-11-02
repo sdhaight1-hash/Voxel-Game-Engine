@@ -11,3 +11,6 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 png = "0.18"
 rfd = "0.17"
+
+[dev-dependencies]
+naga = { version = "30", features = ["wgsl-in"] }
