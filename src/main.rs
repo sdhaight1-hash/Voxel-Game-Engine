@@ -4,6 +4,7 @@ use gpu_renderer::{GpuViewport, Scene as GpuScene};
 use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, TextureHandle, Vec2};
 use std::{collections::HashMap, path::{Path, PathBuf}, time::Instant};
 use texture_studio::{Graph, NodeKind, LibraryNode, VoxelShape, SideMapping};
+use texture_studio::node_definitions::{SocketType, ParameterControl};
 use texture_studio::presets::{builtin_presets, Preset};
 use texture_studio::foliage::{FoliageProject, FoliageMesh, FoliageStage, PlantPreset, Material,
     BranchGrowth, LeafGeometry, sway_leaf_vertex};
@@ -1724,6 +1725,9 @@ impl Studio {
                 ("Luminance", NodeKind::Luminance),
                 ("Colorize", NodeKind::Colorize { dark: [24, 37, 54], light: [204, 175, 130] }),
                 ("Levels", NodeKind::Levels { black: 0.0, white: 1.0, gamma: 1.0 }),
+                ("Threshold Mask", NodeKind::ThresholdMask {
+                    threshold:0.5,softness:0.0
+                }),
             ]),
             ("MIX", vec![
                 ("Blend", NodeKind::Blend { factor: 0.5 }),
@@ -1900,6 +1904,13 @@ impl Studio {
                     .text("Gamma")).changed();
                 ui.small("Typed scalar input; RGB to scalar requires an explicit conversion.");
             }
+            NodeKind::ThresholdMask { threshold,softness } => {
+                changed |= ui.add(egui::Slider::new(threshold,0.0..=1.0)
+                    .text("Threshold")).changed();
+                changed |= ui.add(egui::Slider::new(softness,0.0..=1.0)
+                    .text("Edge softness")).changed();
+                ui.small("Outputs a grayscale Mask; opacity is still authored in the Leaf Cutout slot.");
+            }
             NodeKind::Bricks { columns, rows, mortar } => {
                 changed |= ui.add(egui::Slider::new(columns, 2..=64).text("Columns")).changed();
                 let mut half_rows = *rows / 2;
@@ -1946,6 +1957,28 @@ impl Studio {
                 ui.small("Normal map is derived from Height during export.");
             }
         }
+        ui.collapsing("Socket types and parameter definitions",|ui| {
+            if let Some(output)=node.kind.output_definition() {
+                ui.small(format!("Output {}: {:?}", output.id, output.data_type));
+            }
+            for index in 0..node.kind.input_count() {
+                if let Some(port)=node.kind.input_definition(index) {
+                    ui.small(format!("{} ({}) — {:?}",
+                        port.label, port.id, port.data_type));
+                }
+            }
+            for param in node.kind.parameters() {
+                let details=match param.control {
+                    ParameterControl::Float{min,max,default,unit} =>
+                        format!("{min}..{max}, default {default} {unit}"),
+                    ParameterControl::Integer{min,max,step,default} =>
+                        format!("{min}..{max} (step {step}), default {default}"),
+                    ParameterControl::Seed{default} => format!("seed, default {default}"),
+                    ParameterControl::Color{default} => format!("RGB, default {default:?}"),
+                };
+                ui.small(format!("{} [{}]: {details}",param.label,param.id));
+            }
+        });
         self.dirty |= changed;
         if !matches!(node.kind, NodeKind::Output) && ui.button("Delete selected node").clicked() {
             if let Err(err) = self.graph.remove_node(id) {
@@ -2181,7 +2214,7 @@ impl Studio {
                 (NodeKind::Output, 1) => Color32::from_rgb(175, 179, 190),
                 (NodeKind::Output, 2) => Color32::from_rgb(177, 132, 207),
                 (NodeKind::Output, 3) => Color32::from_rgb(100, 207, 222),
-                _ => Color32::from_rgb(103, 170, 233),
+                _ => port_type_color(source.kind.output_type()),
             };
             draw_wire(&painter, from, to, color);
         }
@@ -2236,7 +2269,8 @@ impl Studio {
             if !matches!(kind, NodeKind::Output) {
                 let output = socket_output(rect.min, self.pan, z, position, kind.input_count());
                 painter.circle_filled(output, 6.0 * z,
-                    if self.connecting == Some(id) { Color32::LIGHT_GREEN } else { Color32::from_rgb(103, 200, 232) });
+                    if self.connecting == Some(id) { Color32::LIGHT_GREEN }
+                    else { port_type_color(kind.output_type()) });
             }
             for input in 0..kind.input_count() {
                 let socket = socket_input(rect.min, self.pan, z, position, input);
@@ -2247,7 +2281,7 @@ impl Studio {
                         2 => Color32::from_rgb(177, 132, 207),
                         _ => Color32::from_rgb(100, 207, 222),
                     }
-                } else { Color32::from_rgb(234, 185, 96) };
+                } else { port_type_color(kind.input_type(input).unwrap_or(SocketType::Color)) };
                 painter.circle_filled(socket, 6.0 * z, color);
                 painter.text(socket + Vec2::new(12.0 * z, 0.0), Align2::LEFT_CENTER,
                     kind.input_name(input), FontId::proportional(11.0 * z), Color32::WHITE);
@@ -2649,6 +2683,18 @@ fn socket_input(canvas: Pos2, pan: Vec2, zoom: f32, position: [f32; 2], input: u
     screen_point(canvas, pan, zoom, position[0], position[1] + 84.0 + input as f32 * 25.0)
 }
 
+/// Keep the existing semantic colors for four PBR output channels,
+/// while displaying actual typed internal graph sockets consistently.
+fn port_type_color(kind: SocketType)->Color32 {
+    match kind {
+        SocketType::Color => Color32::from_rgb(103,170,233),
+        SocketType::Scalar => Color32::from_rgb(116,212,190),
+        SocketType::Mask => Color32::from_rgb(240,196,107),
+        SocketType::Vector2 | SocketType::Vector3 => Color32::from_rgb(178,156,233),
+        SocketType::Gradient | SocketType::Curve => Color32::from_rgb(233,147,191),
+    }
+}
+
 fn node_accent(kind: NodeKind) -> Color32 {
     match kind {
         NodeKind::Noise { .. } | NodeKind::Checker { .. } | NodeKind::Color { .. }
@@ -2661,6 +2707,7 @@ fn node_accent(kind: NodeKind) -> Color32 {
         },
         NodeKind::Invert | NodeKind::Luminance | NodeKind::Blend { .. }
             | NodeKind::Colorize { .. } | NodeKind::Levels { .. }
+            | NodeKind::ThresholdMask { .. }
             => Color32::from_rgb(115, 64, 127),
         NodeKind::Output => Color32::from_rgb(43, 105, 77),
     }

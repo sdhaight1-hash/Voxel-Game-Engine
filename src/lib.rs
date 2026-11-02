@@ -53,6 +53,8 @@ pub enum NodeKind {
     Luminance,
     /// Scalar-only, three-parameter levels remap. Does not mutate old node kinds.
     Levels { black: f32, white: f32, gamma: f32 },
+    /// Explicit scalar-to-mask conversion with optional smooth edge coverage.
+    ThresholdMask { threshold: f32, softness: f32 },
     Invert,
     Blend { factor: f32 },
     Bricks { columns: u32, rows: u32, mortar: f32 },
@@ -72,6 +74,7 @@ impl NodeKind {
             Self::Scalar { .. } => "Scalar",
             Self::Luminance => "Luminance",
             Self::Levels { .. } => "Levels",
+            Self::ThresholdMask { .. } => "Threshold Mask",
             Self::Invert => "Invert",
             Self::Blend { .. } => "Blend",
             Self::Bricks { .. } => "Bricks",
@@ -89,7 +92,7 @@ impl NodeKind {
                 | Self::Scalar { .. } | Self::Bricks { .. } | Self::Voronoi { .. }
                 | Self::Strata { .. } => 0,
             Self::Invert | Self::Colorize { .. } | Self::Luminance
-                | Self::Levels { .. } => 1,
+                | Self::Levels { .. } | Self::ThresholdMask { .. } => 1,
             Self::Blend { .. } => 2,
             Self::Library { operation, .. } => operation.input_count(),
             Self::Output => 4,
@@ -104,7 +107,7 @@ impl NodeKind {
             (Self::Output, 1) => "Roughness",
             (Self::Output, 2) => "Metallic",
             (Self::Output, 3) => "Height",
-            (Self::Levels { .. }, 0) => "Scalar",
+            (Self::Levels { .. } | Self::ThresholdMask { .. }, 0) => "Scalar",
             (Self::Luminance,0) => "Color",
             (Self::Invert | Self::Colorize { .. }, 0) => "Image",
             (Self::Library { operation, .. }, i) => operation.input_name(i),
@@ -122,6 +125,7 @@ impl NodeKind {
             Self::Scalar{..}=>"scalar".into(),
             Self::Luminance=>"luminance".into(),
             Self::Levels{..}=>"levels".into(),
+            Self::ThresholdMask{..}=>"threshold_mask".into(),
             Self::Invert=>"invert".into(),
             Self::Blend{..}=>"blend".into(),
             Self::Bricks{..}=>"bricks".into(),
@@ -136,13 +140,14 @@ impl NodeKind {
     pub fn output_type(&self) -> SocketType {
         match self {
             Self::Scalar{..}|Self::Luminance|Self::Levels{..}=>SocketType::Scalar,
+            Self::ThresholdMask{..}=>SocketType::Mask,
             _=>SocketType::Color, // Existing RGB evaluation semantics.
         }
     }
 
     pub fn input_type(&self, index:usize) -> Option<SocketType> {
         if index>=self.input_count() {return None;}
-        Some(if matches!(self,Self::Levels{..}) {
+        Some(if matches!(self,Self::Levels{..}|Self::ThresholdMask{..}) {
             SocketType::Scalar
         } else {
             SocketType::Color
@@ -315,6 +320,11 @@ impl Graph {
                     !(0.0..1.0).contains(&black) || !(0.0..=1.0).contains(&white) ||
                     black>=white || !(0.1..=5.0).contains(&gamma)
                     => return Err("Levels require 0 <= black < white <= 1 and gamma 0.1..5".into()),
+                NodeKind::ThresholdMask { threshold,softness }
+                    if !threshold.is_finite() || !softness.is_finite() ||
+                    !(0.0..=1.0).contains(&threshold) ||
+                    !(0.0..=1.0).contains(&softness)
+                    => return Err("Threshold Mask requires threshold and softness in 0..1".into()),
                 _ => {}
             }
         }
@@ -450,6 +460,16 @@ impl Graph {
                 let value=self.sample_input(id,0,u,v)[0];
                 let mapped=((value-black)/(white-black)).clamp(0.0,1.0).powf(gamma);
                 [mapped;3]
+            }
+            NodeKind::ThresholdMask { threshold,softness } => {
+                let value=self.sample_input(id,0,u,v)[0];
+                let coverage=if softness==0.0 {
+                    if value>=threshold {1.0} else {0.0}
+                } else {
+                    let t=((value-threshold)/softness+0.5).clamp(0.0,1.0);
+                    t*t*(3.0-2.0*t)
+                };
+                [coverage;3]
             }
             NodeKind::Invert => self.sample_input(id, 0, u, v).map(|c| 1.0 - c),
             NodeKind::Blend { factor } => {
@@ -736,6 +756,49 @@ mod tests {
         let pixels=graph.render_rgba(32,32).unwrap();
         let restored:Graph=serde_json::from_str(&serde_json::to_string(&graph).unwrap()).unwrap();
         assert_eq!(restored.render_rgba(32,32).unwrap(),pixels);
+    }
+
+    #[test]
+    fn threshold_mask_is_typed_and_roundtrips_without_changing_legacy_outputs() {
+        let mut graph=Graph::default();
+        let scalar=graph.add_node(NodeKind::Scalar{value:0.5},[0.0,0.0]);
+        let mask=graph.add_node(NodeKind::ThresholdMask{
+            threshold:0.5,softness:0.2
+        },[100.0,0.0]);
+        let levels=graph.add_node(NodeKind::Levels{
+            black:0.0,white:1.0,gamma:1.0
+        },[200.0,0.0]);
+        assert!(graph.connect(1,mask,0).unwrap_err().contains("Color to Scalar"));
+        graph.connect(scalar,mask,0).unwrap();
+        graph.connect(mask,levels,0).unwrap();
+        graph.connect(mask,2,0).unwrap();
+        assert_eq!(graph.node(mask).unwrap().kind.output_type(),SocketType::Mask);
+        assert_eq!(&graph.render_rgba(1,1).unwrap()[..4],&[128,128,128,255]);
+        let restored:Graph=serde_json::from_str(&serde_json::to_string(&graph).unwrap()).unwrap();
+        assert_eq!(graph.render_rgba(16,16).unwrap(),restored.render_rgba(16,16).unwrap());
+        assert_eq!(graph.node(mask).unwrap().kind.type_id(),"threshold_mask");
+        assert_eq!(graph.node(mask).unwrap().kind.parameters().len(),2);
+        graph.node_mut(mask).unwrap().kind=NodeKind::ThresholdMask{
+            threshold:0.5,softness:0.0
+        };
+        assert_eq!(&graph.render_rgba(1,1).unwrap()[..4],&[255,255,255,255]);
+    }
+
+    #[test]
+    fn threshold_mask_rejects_invalid_parameters() {
+        let mut graph=Graph::default();
+        let mask=graph.add_node(NodeKind::ThresholdMask{
+            threshold:f32::NAN,softness:0.0
+        },[0.0,0.0]);
+        assert!(graph.validate().is_err());
+        graph.node_mut(mask).unwrap().kind=NodeKind::ThresholdMask{
+            threshold:0.5,softness:-0.1
+        };
+        assert!(graph.validate().is_err());
+        graph.node_mut(mask).unwrap().kind=NodeKind::ThresholdMask{
+            threshold:0.5,softness:0.0
+        };
+        assert!(graph.validate().is_ok());
     }
 
     #[test]
