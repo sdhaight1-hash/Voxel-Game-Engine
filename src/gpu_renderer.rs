@@ -38,8 +38,21 @@ struct Uniforms {
     leaf_base: [f32; 4],
 }
 
-fn leaf_coverage_uniform(enabled:bool)->f32 {
-    if enabled {1.0} else {0.0}
+/// Preview-only render mode. Never persisted to tree materials or assets.
+#[derive(Clone,Copy,Debug,Default,PartialEq,Eq)]
+pub enum LeafAaMode {
+    #[default]
+    Legacy,
+    Ordered,
+    Msaa4,
+}
+
+fn leaf_coverage_uniform(mode:LeafAaMode)->f32 {
+    match mode {
+        LeafAaMode::Legacy=>0.0,
+        LeafAaMode::Ordered=>1.0,
+        LeafAaMode::Msaa4=>2.0,
+    }
 }
 
 /// The palette is uploaded only when the authored scene changes. Per-frame
@@ -183,10 +196,16 @@ pub struct GpuViewport {
     pub texture_id: egui::TextureId,
     pub backend: String,
     pub adapter: String,
+    pub msaa4_supported: bool,
 }
 
 struct Resources {
     pipeline: wgpu::RenderPipeline,
+    pipeline_msaa4: Option<wgpu::RenderPipeline>,
+    _msaa4_color: Option<wgpu::Texture>,
+    msaa4_color_view: Option<wgpu::TextureView>,
+    _msaa4_depth: Option<wgpu::Texture>,
+    msaa4_depth_view: Option<wgpu::TextureView>,
     group_layout: wgpu::BindGroupLayout,
     uniform: wgpu::Buffer,
     palette_buffer: wgpu::Buffer,
@@ -209,6 +228,16 @@ impl GpuViewport {
         let rs=cc.wgpu_render_state.as_ref()?;
         let device=&rs.device;
         let info=rs.adapter.get_info();
+        // The legacy single-sample preview remains available on adapters
+        // without 4x MSAA support for *both* color and depth formats.
+        let color_flags=rs.adapter.get_texture_format_features(
+            wgpu::TextureFormat::Rgba8Unorm).flags;
+        let depth_flags=rs.adapter.get_texture_format_features(
+            wgpu::TextureFormat::Depth24Plus).flags;
+        let msaa4_supported=color_flags.contains(
+            wgpu::TextureFormatFeatureFlags::MULTISAMPLE_X4 |
+            wgpu::TextureFormatFeatureFlags::MULTISAMPLE_RESOLVE)
+            && depth_flags.contains(wgpu::TextureFormatFeatureFlags::MULTISAMPLE_X4);
 
         let shader=device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label:Some("voxel-game-engine-wgsl"),
@@ -259,16 +288,22 @@ impl GpuViewport {
             bind_group_layouts:&[Some(&group_layout)],
             immediate_size:0,
         });
-        let pipeline=device.create_render_pipeline(&wgpu::RenderPipelineDescriptor{
+        let vertex_buffers=[Some(wgpu::VertexBufferLayout{
+            array_stride:std::mem::size_of::<Vertex>() as u64,
+            step_mode:wgpu::VertexStepMode::Vertex,
+            attributes:&ATTRIBUTES,
+        })];
+        let fragment_targets=[Some(wgpu::ColorTargetState{
+            format:wgpu::TextureFormat::Rgba8Unorm,
+            blend:None,
+            write_mask:wgpu::ColorWrites::ALL,
+        })];
+        let pipeline_descriptor=wgpu::RenderPipelineDescriptor{
             label:Some("voxel-depth-texture-cutout-pipeline"),
             layout:Some(&pipeline_layout),
             vertex:wgpu::VertexState{
                 module:&shader,entry_point:Some("vs_main"),
-                buffers:&[Some(wgpu::VertexBufferLayout{
-                    array_stride:std::mem::size_of::<Vertex>() as u64,
-                    step_mode:wgpu::VertexStepMode::Vertex,
-                    attributes:&ATTRIBUTES,
-                })],
+                buffers:&vertex_buffers,
                 compilation_options:wgpu::PipelineCompilationOptions::default(),
             },
             primitive:wgpu::PrimitiveState{
@@ -286,15 +321,20 @@ impl GpuViewport {
             multisample:wgpu::MultisampleState::default(),
             fragment:Some(wgpu::FragmentState{
                 module:&shader,entry_point:Some("fs_main"),
-                targets:&[Some(wgpu::ColorTargetState {
-                    format:wgpu::TextureFormat::Rgba8Unorm,
-                    blend:None,
-                    write_mask:wgpu::ColorWrites::ALL,
-                })],
+                targets:&fragment_targets,
                 compilation_options:wgpu::PipelineCompilationOptions::default(),
             }),
             multiview_mask:None,cache:None,
-        });
+        };
+        let pipeline=device.create_render_pipeline(&pipeline_descriptor);
+        let pipeline_msaa4=msaa4_supported.then(||device.create_render_pipeline(
+            &wgpu::RenderPipelineDescriptor{
+                label:Some("voxel-4x-msaa-alpha-to-coverage"),
+                multisample:wgpu::MultisampleState{
+                    count:4,mask:!0,alpha_to_coverage_enabled:true,
+                },
+                ..pipeline_descriptor
+            }));
         let texture_descriptor=wgpu::TextureDescriptor {
             label:Some("voxel-viewport-color"),
             size:wgpu::Extent3d{width:TARGET_SIZE,height:TARGET_SIZE,depth_or_array_layers:1},
@@ -313,6 +353,32 @@ impl GpuViewport {
             ..texture_descriptor
         });
         let depth_view=depth.create_view(&Default::default());
+        let msaa4_color=msaa4_supported.then(||
+            device.create_texture(&wgpu::TextureDescriptor{
+                label:Some("voxel-msaa4-color"),
+                size:wgpu::Extent3d{
+                    width:TARGET_SIZE,height:TARGET_SIZE,depth_or_array_layers:1,
+                },
+                mip_level_count:1,sample_count:4,
+                dimension:wgpu::TextureDimension::D2,
+                format:wgpu::TextureFormat::Rgba8Unorm,
+                usage:wgpu::TextureUsages::RENDER_ATTACHMENT,view_formats:&[],
+            }));
+        let msaa4_color_view=msaa4_color.as_ref()
+            .map(|t|t.create_view(&Default::default()));
+        let msaa4_depth=msaa4_supported.then(||
+            device.create_texture(&wgpu::TextureDescriptor{
+                label:Some("voxel-msaa4-depth"),
+                size:wgpu::Extent3d{
+                    width:TARGET_SIZE,height:TARGET_SIZE,depth_or_array_layers:1,
+                },
+                mip_level_count:1,sample_count:4,
+                dimension:wgpu::TextureDimension::D2,
+                format:wgpu::TextureFormat::Depth24Plus,
+                usage:wgpu::TextureUsages::RENDER_ATTACHMENT,view_formats:&[],
+            }));
+        let msaa4_depth_view=msaa4_depth.as_ref()
+            .map(|t|t.create_view(&Default::default()));
         let uniform=device.create_buffer_init(&wgpu::util::BufferInitDescriptor{
             label:Some("voxel-camera-and-wind"),
             contents:bytemuck::bytes_of(&Uniforms::zeroed()),
@@ -326,26 +392,32 @@ impl GpuViewport {
         let texture_id=rs.renderer.write().register_native_texture(
             device,&target_view,wgpu::FilterMode::Linear);
         rs.renderer.write().callback_resources.insert(Resources {
-            pipeline,group_layout,uniform,palette_buffer,bind_group:None,
+            pipeline,pipeline_msaa4,
+            _msaa4_color:msaa4_color,msaa4_color_view,
+            _msaa4_depth:msaa4_depth,msaa4_depth_view,
+            group_layout,uniform,palette_buffer,bind_group:None,
             bark_view:None,leaf_view:None,sampler:None,
             vertex:None,vertex_count:0,last_scene:None,
             upload_metrics:UploadMetrics::default(),
             _target:target,target_view,
             _depth:depth,depth_view,
         });
-        Some(Self{texture_id,backend:format!("{:?}",info.backend),adapter:info.name})
+        Some(Self{texture_id,backend:format!("{:?}",info.backend),
+            adapter:info.name,msaa4_supported})
     }
 
     pub fn paint(&self,ui:&egui::Ui, rect:egui::Rect,scene:Arc<Scene>,
                  yaw:f32, zoom:f32, time:f32,season_progress:f32,
-                 ordered_leaf_coverage:bool) {
+                 leaf_aa_mode:LeafAaMode) {
         // Egui presents the GPU render target, populated during callback.prepare.
         ui.painter().image(self.texture_id,rect,
             egui::Rect::from_min_max(egui::Pos2::ZERO,egui::Pos2::new(1.0,1.0)),
             egui::Color32::WHITE);
         ui.painter().add(egui_wgpu::Callback::new_paint_callback(
             rect,RenderScene{scene,yaw,zoom,time,season_progress,
-                ordered_leaf_coverage,
+                leaf_aa_mode:if leaf_aa_mode==LeafAaMode::Msaa4 && !self.msaa4_supported {
+                    LeafAaMode::Legacy
+                } else {leaf_aa_mode},
                 width:rect.width(),height:rect.height()}));
     }
 }
@@ -356,7 +428,7 @@ struct RenderScene {
     zoom:f32,
     time:f32,
     season_progress:f32,
-    ordered_leaf_coverage:bool,
+    leaf_aa_mode:LeafAaMode,
     width:f32,
     height:f32,
 }
@@ -450,16 +522,24 @@ impl egui_wgpu::CallbackTrait for RenderScene {
             wind:[self.time,self.scene.wind_strength,self.scene.wind_speed,self.scene.voxel_size],
             season:[self.season_progress.rem_euclid(4.0),
                 self.scene.flower_kind,
-                leaf_coverage_uniform(self.ordered_leaf_coverage),0.0],
+                leaf_coverage_uniform(self.leaf_aa_mode),0.0],
             leaf_base:self.scene.leaf_base,
         };
         queue.write_buffer(&resources.uniform,0,bytemuck::bytes_of(&globals));
 
+        let msaa4=self.leaf_aa_mode==LeafAaMode::Msaa4 &&
+            resources.pipeline_msaa4.is_some();
+        let color_view=if msaa4 {
+            resources.msaa4_color_view.as_ref().expect("MSAA4 color allocated")
+        } else {&resources.target_view};
+        let depth_view=if msaa4 {
+            resources.msaa4_depth_view.as_ref().expect("MSAA4 depth allocated")
+        } else {&resources.depth_view};
         let mut pass=encoder.begin_render_pass(&wgpu::RenderPassDescriptor{
             label:Some("voxel-3d-depth-pass"),
             color_attachments:&[Some(wgpu::RenderPassColorAttachment{
-                view:&resources.target_view,
-                resolve_target:None,
+                view:color_view,
+                resolve_target:if msaa4 {Some(&resources.target_view)} else {None},
                 ops:wgpu::Operations{
                     load:wgpu::LoadOp::Clear(wgpu::Color{
                         r:0.075,g:0.091,b:0.126,a:1.0
@@ -468,7 +548,7 @@ impl egui_wgpu::CallbackTrait for RenderScene {
                 depth_slice:None,
             })],
             depth_stencil_attachment:Some(wgpu::RenderPassDepthStencilAttachment{
-                view:&resources.depth_view,
+                view:depth_view,
                 depth_ops:Some(wgpu::Operations {
                     load:wgpu::LoadOp::Clear(1.0),
                     store:wgpu::StoreOp::Store,
@@ -480,7 +560,9 @@ impl egui_wgpu::CallbackTrait for RenderScene {
             multiview_mask:None,
         });
         if let (Some(vb),Some(group))=(&resources.vertex,&resources.bind_group) {
-            pass.set_pipeline(&resources.pipeline);
+            pass.set_pipeline(if msaa4 {
+                resources.pipeline_msaa4.as_ref().expect("MSAA4 pipeline allocated")
+            } else {&resources.pipeline});
             pass.set_bind_group(0,group,&[]);
             pass.set_vertex_buffer(0,vb.slice(..));
             pass.draw(0..resources.vertex_count,0..1);
@@ -574,6 +656,15 @@ mod tests {
     }
 
     #[test]
+    fn msaa_shader_output_preserves_fractional_alpha_and_legacy_branches() {
+        let shader=include_str!("voxel_gpu.wgsl");
+        assert!(shader.contains("globals.season.z > 1.5"));
+        assert!(shader.contains("select(1.0,coverage,globals.season.z > 1.5)"));
+        assert!(shader.contains("return vec4<f32>(rgba.rgb * input.tint.rgb, rgba.a);"));
+        assert!(shader.contains("if (rgba.a < 0.5 && blossom < 0.55) { discard; }"));
+    }
+
+    #[test]
     fn gpu_scene_uploads_only_changed_resources() {
         let mesh=FoliageMesh::from_voxels(VoxelShape::Cube,0.5,vec![
             VoxelCell{x:0,y:0,z:0,material:Material::Bark},
@@ -645,8 +736,9 @@ mod tests {
         let scene=Scene::from_mesh(&mesh,&bark,&leaves,[40,140,50],palette,0.0);
         // RenderScene.ordered_leaf_coverage is not part of Scene or the
         // upload key. It only goes into globals.season.z each frame.
-        assert_eq!(leaf_coverage_uniform(false),0.0);
-        assert_eq!(leaf_coverage_uniform(true),1.0);
+        assert_eq!(leaf_coverage_uniform(LeafAaMode::Legacy),0.0);
+        assert_eq!(leaf_coverage_uniform(LeafAaMode::Ordered),1.0);
+        assert_eq!(leaf_coverage_uniform(LeafAaMode::Msaa4),2.0);
         assert_eq!(scene_uploads(Some(&scene),&scene),SceneUploads {
             geometry:false,bark:false,leaf:false,palette:false,
         });

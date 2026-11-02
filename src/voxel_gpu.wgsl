@@ -167,16 +167,20 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         }
         // Petals can extend outside the permanent green-leaf silhouette.
         // When bloom fades, the original cutout remains unchanged.
-        if (globals.season.z > 0.5) {
-            // Blossoms are still solid silhouettes at the original .55
-            // threshold; leaf edges get an optional ordered coverage test.
-            let flower_opaque=select(0.0,1.0,blossom>=0.55);
-            let coverage=max(rgba.a,flower_opaque);
+        // Preserve the old full-opacity flower silhouette in all modes.
+        let flower_opaque=select(0.0,1.0,blossom>=0.55);
+        let coverage=max(rgba.a,flower_opaque);
+        if (globals.season.z > 1.5) {
+            // 4x MSAA pipeline: pass fractional alpha to hardware
+            // alpha-to-coverage; do not hard-discard partial leaf edges.
+            if (coverage <= 0.0) { discard; }
+        } else if (globals.season.z > 0.5) {
+            // Existing experimental single-sample ordered coverage.
             if (coverage < leaf_coverage_threshold(vec2<u32>(input.clip.xy))) {
                 discard;
             }
         } else {
-            // Keep old shader output unchanged when opt-in is disabled.
+            // Keep the legacy 0.5 cutoff unchanged by default.
             if (rgba.a < 0.5 && blossom < 0.55) { discard; }
         }
         let base=max(globals.leaf_base.rgb,vec3<f32>(0.12));
@@ -184,9 +188,10 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
             vec3<f32>(1.0));
         let petal_color=select(vec3<f32>(1.0,0.71,0.81),
             vec3<f32>(0.99,0.98,0.91),globals.season.y>1.5);
-        rgba=vec4<f32>(mix(leaf_color,petal_color,blossom),1.0);
+        rgba=vec4<f32>(mix(leaf_color,petal_color,blossom),
+            select(1.0,coverage,globals.season.z > 1.5));
     } else {
         rgba = vec4<f32>(1.0);
     }
-    return vec4<f32>(rgba.rgb * input.tint.rgb, 1.0);
+    return vec4<f32>(rgba.rgb * input.tint.rgb, rgba.a);
 }
