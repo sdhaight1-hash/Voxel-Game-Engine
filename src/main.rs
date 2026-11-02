@@ -1721,6 +1721,7 @@ impl Studio {
             ]),
             ("FILTERS", vec![
                 ("Invert", NodeKind::Invert),
+                ("Luminance", NodeKind::Luminance),
                 ("Colorize", NodeKind::Colorize { dark: [24, 37, 54], light: [204, 175, 130] }),
                 ("Levels", NodeKind::Levels { black: 0.0, white: 1.0, gamma: 1.0 }),
             ]),
@@ -1932,6 +1933,10 @@ impl Studio {
                 changed |= ui.color_edit_button_srgb(light).changed();
             }
             NodeKind::Invert => { ui.label("Inverts the RGB channels of its input."); }
+            NodeKind::Luminance => {
+                ui.label("Convert RGB to a scalar using luminance weights.");
+                ui.small("Use between legacy RGB generators and typed Scalar inputs.");
+            }
             NodeKind::Blend { factor } => {
                 changed |= ui.add(egui::Slider::new(factor, 0.0..=1.0).text("Mix")).changed();
             }
@@ -2654,8 +2659,9 @@ fn node_accent(kind: NodeKind) -> Color32 {
             "Math & Mix" => Color32::from_rgb(143, 96, 58),
             _ => Color32::from_rgb(115, 64, 127),
         },
-        NodeKind::Invert | NodeKind::Blend { .. } | NodeKind::Colorize { .. }
-            | NodeKind::Levels { .. } => Color32::from_rgb(115, 64, 127),
+        NodeKind::Invert | NodeKind::Luminance | NodeKind::Blend { .. }
+            | NodeKind::Colorize { .. } | NodeKind::Levels { .. }
+            => Color32::from_rgb(115, 64, 127),
         NodeKind::Output => Color32::from_rgb(43, 105, 77),
     }
 }
