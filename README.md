@@ -1,10 +1,23 @@
 # Voxel Game Engine — Procedural Voxel Asset Editor
 
-**World-generation foundations:** [Option 1 — InfiniteDiffusion-inspired synthetic worlds](docs/world-generation-foundation.md) and [Option 2 — Tellus-inspired real-Earth worlds](docs/real-earth-world-generation.md). Both are candidate terrain-data providers for **one** chunked Rust/wgpu engine, not two separate engines. Neither world mode is implemented yet.
+**World-design source of truth:** [Procedural World — Design Decisions v0.2](docs/procedural-world-design-decisions.md). Companion docs: [current synthetic world-generation direction](docs/world-generation-foundation.md) and [archived Tellus/real-Earth research](docs/real-earth-world-generation.md). **The world/gameplay architecture is proposed, not implemented in this repository.**
 
 An offline, standalone **Rust desktop application** for voxel asset creation, procedural tree modeling, and editable PBR material maps. Material Maker inspired, but independently implemented — no Material Maker code is copied and Blender/Godot are not required.
 
-> **Status: early prototype.** This release emphasizes a working node graph and CPU rendering. The 3D tab shows an approximate lit sphere, not a full physically based GPU renderer.
+> **Status: working procedural asset/material editor, planned world engine.** Node-graph materials are computed on CPU; the **Assets** and **Foliage** mesh viewports use the native wgpu renderer described below. The material-preview sphere remains an approximate lit preview, not a full physically based renderer. **No tectonic planet, Terrain Diffusion world, finite hydrology, reactive world runtime or multiplayer game is implemented yet.**
+
+## Planned playable world (design only)
+
+Our current future-world architecture is a **finite, flat-coordinate torus with both horizontal axes wrapping**, and an intended **1,024 × 1,024 km** geographic footprint. The terrain foundation is **synthetic periodic tectonics → Terrain Diffusion at world creation → permanently stored/compressed geography**, not real-Earth Tellus terrain or gameplay-time neural inference. It pre-generates **global 2D surface and environmental fields**, *not* the entire 3D voxel volume.
+
+- **World vertical presets:** 256, **512 default**, 768 and 1,024 block levels; a Vintage Story-style proportional sea level is currently provisional (Y220 at 512).
+- **Playable cell preference:** **hexagonal-prism voxels**, with axial Q/R and vertical Y coordinates; exact cell size, chunk dimensions, building ergonomics and periodic lattice mapping remain to be validated. The existing editor still supports **both cube and hexagonal-prism assets**.
+- **Terrain runtime proposal:** stream and deterministically regenerate local hexel detail from immutable geography; persist player edits, geology/resource depletion and environmental state independently.
+- **Water invariant:** all world water is **finite and conserved** across rivers, lakes, oceans, groundwater, ice, atmospheric moisture, and player storage. Use global/regional reservoirs plus local water physics, with accounted transfers at loading/unloading boundaries.
+- **Reactive state proposal:** SpaceTimeDB-inspired authoritative state, controlled/transaction-like mutations, selective region/field invalidations and dynamic spatial interests. **SpaceTimeDB itself is not required**.
+- **Provisional performance/storage plan:** ~31.25 m geographic elevation samples, 16-bit tiled heightmap, Zstd candidate compression and bounded runtime caches. Benchmarks, model conditioning, horizontal metre-per-hexel scale, and final fluid solver are open.
+
+**Important:** These are design decisions and candidates, **not currently shipping features**. See [the full decision register](docs/procedural-world-design-decisions.md) for agreed versus provisional choices, tests and unresolved issues. Existing material and foliage export workflows below remain unchanged.
 
 ## Screenshot-inspired workspace
 
@@ -212,11 +225,13 @@ The OBJ/MTL format directly links the albedo map. Roughness, metallic, height, a
 
 ## Current limitations
 
+- The complete procedural planetary world described in `docs/` is **not implemented**; these are architecture plans, not evidence of a terrain, hydrology, or gameplay runtime.
+
 - Procedural render is CPU-bound and can take time at 2048×2048, particularly with many nodes.
 - Sphere view is a fast approximate shading preview, not full ray tracing, custom mesh rendering, or accurate tangent-space lighting.
 - Nodes are single-image outputs. Multi-output nodes, subgraphs, undo/redo, external image textures, and painting are not implemented.
 - Generated normal maps use fixed-height finite differences rather than a configurable strength node.
-- Only a small initial set of nodes is provided; Material Maker offers a substantially broader library.
+- The implemented node library remains a subset of Material Maker's capabilities; it is not full feature parity. The expanded original node set is described above.
 
 ## Source
 
