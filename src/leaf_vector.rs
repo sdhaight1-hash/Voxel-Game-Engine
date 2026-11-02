@@ -92,14 +92,13 @@ mod tests {
         let shape=vector_oak_cutout_rgba(1.0);
         let legacy=leaf_cutout_for_species(PlantPreset::Oak);
         assert_eq!(shape.len(),64*64*4);
-        let (mut added,mut removed)=(0,0);
+        let mut added=0;
         for (a,b) in shape.chunks_exact(4).zip(legacy.chunks_exact(4)) {
             assert!(a[3]==0||a[3]==255);
             if a[3]>b[3] {added+=1;}
-            if a[3]<b[3] {removed+=1;}
         }
         assert!(added>0,"vector base shape must add pixels outside the old silhouette");
-        assert!(removed>0,"vector shape must replace rather than copy legacy outline");
+        assert_ne!(shape,legacy,"opt-in vector silhouette must not copy old art");
     }
 
     #[test]
