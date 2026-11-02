@@ -2239,22 +2239,26 @@ mod tests {
     }
 
     #[test]
-    fn tree_catalog_contains_33_entries_including_palm_family() {
+    fn tree_catalog_contains_42_entries_including_coffee_and_cottonwoods() {
         let expected=[
             "Acacia","Birch","Ebony","Kapok","Maple","Crimson King Maple",
             "Oak","Purpleheart","Walnut","Willow","Cherry Blossom",
+            "Kentucky Coffeetree","Eastern Cottonwood","Fremont Cottonwood",
+            "Black Cottonwood",
             "Bald Cypress","Mediterranean Cypress","Larch","Pine","Redwood",
             "Red Apple","Pink Apple","Yellow Apple","Pear","Olive","Peach",
             "Cherry","Mango","Orange","Lychee","Breadfruit","Pomegranate",
+            "Arabica Coffee","Caturra Coffee","Maragogipe Coffee",
+            "Castillo Coffee","Tabi Coffee",
             "Green Bamboo","Brown Bamboo",
             "Coconut Palm","Date Palm","Fan Palm",
         ];
         let actual:Vec<_>=PlantPreset::TREE_CATALOG.iter()
             .map(|p|p.name()).collect();
         assert_eq!(actual,expected);
-        assert_eq!(PlantPreset::ALL.len(),34); // Shrub is not a tree entry
+        assert_eq!(PlantPreset::ALL.len(),43); // Shrub is not a tree entry
         assert_eq!(PlantPreset::TREE_CATALOG.iter()
-            .filter(|p|p.group()=="Hardwood & broadleaf").count(),11);
+            .filter(|p|p.group()=="Hardwood & broadleaf").count(),15);
         assert_eq!(PlantPreset::TREE_CATALOG.iter()
             .filter(|p|p.group()=="Conifer & evergreen").count(),5);
         assert_eq!(PlantPreset::TREE_CATALOG.iter()
@@ -2263,6 +2267,8 @@ mod tests {
             .filter(|p|p.group()=="Bamboo").count(),2);
         assert_eq!(PlantPreset::TREE_CATALOG.iter()
             .filter(|p|p.group()=="Palms").count(),3);
+        assert_eq!(PlantPreset::TREE_CATALOG.iter()
+            .filter(|p|p.group()=="Coffee plants").count(),5);
         for preset in PlantPreset::ALL {
             let json=serde_json::to_string(&preset).unwrap();
             assert_eq!(serde_json::from_str::<PlantPreset>(&json).unwrap(),preset);
@@ -2271,6 +2277,51 @@ mod tests {
         assert_eq!(PlantPreset::PinkApple.fruit_color(),Some([244,123,151]));
         assert_eq!(PlantPreset::YellowApple.fruit_color(),Some([237,198,45]));
         assert_eq!(PlantPreset::CherryBlossom.fruit_color(),None);
+        assert!(PlantPreset::ArabicaCoffee.is_coffee());
+        assert!(!PlantPreset::KentuckyCoffeetree.is_coffee());
+        assert_eq!(PlantPreset::KentuckyCoffeetree.fruit_color(),None);
+        assert!(PlantPreset::FremontCottonwood.is_cottonwood());
+    }
+
+    #[test]
+    fn coffee_cultivars_and_cottonwood_are_distinct_seeded_trees() {
+        let presets=[
+            PlantPreset::ArabicaCoffee,PlantPreset::CaturraCoffee,
+            PlantPreset::MaragogipeCoffee,PlantPreset::CastilloCoffee,
+            PlantPreset::TabiCoffee,PlantPreset::KentuckyCoffeetree,
+            PlantPreset::EasternCottonwood,PlantPreset::FremontCottonwood,
+            PlantPreset::BlackCottonwood,
+        ];
+        for preset in presets {
+            let project=FoliageProject::from_preset(preset);
+            let mesh=project.generate().unwrap();
+            let structure=mesh.structure.as_ref().unwrap();
+            structure.validate(&mesh.voxels).unwrap();
+            assert!(mesh.voxels.iter().any(|v|v.material.is_wood()));
+            assert!(mesh.voxels.iter().any(|v|v.material.is_foliage()));
+            assert_eq!(mesh.voxels,project.generate().unwrap().voxels);
+            let json=serde_json::to_string(&project).unwrap();
+            let loaded: FoliageProject=serde_json::from_str(&json).unwrap();
+            assert_eq!(loaded.generate().unwrap().voxels,mesh.voxels);
+        }
+        let h=|p|FoliageProject::from_preset(p).height;
+        assert!(h(PlantPreset::CaturraCoffee)<h(PlantPreset::ArabicaCoffee));
+        assert!(h(PlantPreset::CastilloCoffee)<h(PlantPreset::TabiCoffee));
+        assert!(h(PlantPreset::MaragogipeCoffee)>h(PlantPreset::ArabicaCoffee));
+        let cutout=|p|leaf_cutout_for_species(p).chunks_exact(4)
+            .map(|px|px[3]).collect::<Vec<_>>();
+        assert_ne!(cutout(PlantPreset::MaragogipeCoffee),
+            cutout(PlantPreset::CaturraCoffee));
+        assert_ne!(cutout(PlantPreset::KentuckyCoffeetree),
+            cutout(PlantPreset::Walnut));
+        assert_ne!(cutout(PlantPreset::EasternCottonwood),
+            cutout(PlantPreset::BlackCottonwood));
+        assert_ne!(cutout(PlantPreset::EasternCottonwood),
+            cutout(PlantPreset::FremontCottonwood));
+        assert!(FoliageProject::from_preset(PlantPreset::EasternCottonwood)
+            .leaf_render.wind_strength>
+                FoliageProject::from_preset(PlantPreset::Oak)
+                    .leaf_render.wind_strength);
     }
 
     #[test]
