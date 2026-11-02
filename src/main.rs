@@ -13,6 +13,48 @@ const PREVIEW_SIZE: u32 = 256;
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum AssetTool { Select, Add, Erase, Paint }
 
+fn cutout_hit(p:Pos2, screen:[Pos2;3], uv:[[f32;2];3],rgba:&[u8]) -> bool {
+    let [a,b,c]=screen;
+    let d=(b.y-c.y)*(a.x-c.x)+(c.x-b.x)*(a.y-c.y);
+    if d.abs()<1e-5 {return false;}
+    let w0=((b.y-c.y)*(p.x-c.x)+(c.x-b.x)*(p.y-c.y))/d;
+    let w1=((c.y-a.y)*(p.x-c.x)+(a.x-c.x)*(p.y-c.y))/d;
+    let w2=1.0-w0-w1;
+    if w0<0.0 || w1<0.0 || w2<0.0 {return false;}
+    let u=(w0*uv[0][0]+w1*uv[1][0]+w2*uv[2][0]).clamp(0.0,0.9999);
+    let v=(w0*uv[0][1]+w1*uv[1][1]+w2*uv[2][1]).clamp(0.0,0.9999);
+    let x=(u*LEAF_TEXTURE_SIZE as f32) as usize;
+    let y=(v*LEAF_TEXTURE_SIZE as f32) as usize;
+    rgba[(y*LEAF_TEXTURE_SIZE+x)*4+3]>127
+}
+
+fn paint_voxel_triangle(
+    painter:&egui::Painter,tri:&texture_studio::foliage::Triangle,
+    points:[Pos2;3], color:Color32,texture:Option<&TextureHandle>,
+    selected:bool,
+) {
+    if tri.cutout {
+        if let Some(tex)=texture {
+            let mut m=egui::Mesh::with_texture(tex.id());
+            for (index,pos) in points.iter().enumerate() {
+                m.vertices.push(egui::epaint::Vertex {
+                    pos:*pos,uv:Pos2::new(tri.uv[index][0],tri.uv[index][1]),color,
+                });
+            }
+            m.indices.extend_from_slice(&[0,1,2]);
+            painter.add(egui::Shape::mesh(m));
+        }
+    } else {
+        painter.add(egui::Shape::convex_polygon(points.to_vec(),color,Stroke::NONE));
+    }
+    if selected {
+        for edge in 0..3 {
+            painter.line_segment([points[edge],points[(edge+1)%3]],
+                Stroke::new(1.3,Color32::from_rgb(255,204,95)));
+        }
+    }
+}
+
 fn hit_triangle(p: Pos2, a: Pos2, b: Pos2, c: Pos2) -> bool {
     let cross = |u: Pos2, v: Pos2, w: Pos2| -> f32 {
         (v.x - u.x) * (w.y - u.y) - (v.y - u.y) * (w.x - u.x)
@@ -740,17 +782,25 @@ impl Studio {
         let pointer=if response.clicked_by(egui::PointerButton::Primary) {
             response.interact_pointer_pos()
         } else {None};
+        let leaf_alpha=pointer.map(|_|leaf_cutout_rgba());
+        let wind_time=ui.ctx().input(|i|i.time as f32);
+        if mesh.leaf_render.geometry==LeafGeometry::CrossedCutout &&
+            mesh.leaf_render.wind_strength>0.0 && mesh.leaf_render.wind_speed>0.0 {
+            ui.ctx().request_repaint_after(std::time::Duration::from_millis(70));
+        }
         let mut picked=None;
         let stride=(faces.len()/18000).max(1);
         let mut drawn=0usize;
         for (_,index) in faces.into_iter().step_by(stride) {
             drawn+=1;
             let tri=&mesh.triangles[index];
-            let projected=[
-                project(tri.points[0]),project(tri.points[1]),project(tri.points[2])
-            ];
+            let projected=std::array::from_fn(|i|project(sway_leaf_vertex(
+                tri.points[i],tri.cell,tri.wind_weight[i],wind_time,
+                mesh.leaf_render,mesh.voxel_size)));
             if let Some(p)=pointer {
-                if hit_triangle(p,projected[0],projected[1],projected[2]) {
+                if hit_triangle(p,projected[0],projected[1],projected[2]) &&
+                    (!tri.cutout || leaf_alpha.as_ref().is_some_and(|rgba|
+                        cutout_hit(p,projected,tri.uv,rgba))) {
                     picked=Some((tri.cell,tri.outward));
                 }
             }
@@ -767,10 +817,8 @@ impl Studio {
                 (base[1] as f32*shade) as u8,
                 (base[2] as f32*shade) as u8);
             let selected=self.asset_selected==Some(tri.cell);
-            painter.add(egui::Shape::convex_polygon(projected.to_vec(),
-                color,if selected {
-                    Stroke::new(1.2,Color32::from_rgb(255,204,95))
-                } else {Stroke::NONE}));
+            paint_voxel_triangle(&painter,tri,projected,color,
+                self.leaf_texture.as_ref(),selected);
         }
         if let Some((cell,face))=picked {
             match self.asset_tool {
@@ -1052,6 +1100,11 @@ impl Studio {
         faces.sort_by(|a,b|a.0.total_cmp(&b.0));
         let bark=self.foliage.bark_color;
         let leaf=self.foliage.leaf_color;
+        let wind_time=ui.ctx().input(|i|i.time as f32);
+        if mesh.leaf_render.geometry==LeafGeometry::CrossedCutout &&
+            mesh.leaf_render.wind_strength>0.0 && mesh.leaf_render.wind_speed>0.0 {
+            ui.ctx().request_repaint_after(std::time::Duration::from_millis(70));
+        }
         // A bounded rasterized preview avoids flooding egui with tiny faces.
         // Exports always use the complete voxel surface, never this decimation.
         let stride = (faces.len() / 16000).max(1);
@@ -1068,9 +1121,11 @@ impl Studio {
                 (base[0] as f32*shade) as u8,
                 (base[1] as f32*shade) as u8,
                 (base[2] as f32*shade) as u8);
-            painter.add(egui::Shape::convex_polygon(vec![
-                project(tri.points[0]),project(tri.points[1]),project(tri.points[2])],
-                color,Stroke::NONE));
+            let points=std::array::from_fn(|i|project(sway_leaf_vertex(
+                tri.points[i],tri.cell,tri.wind_weight[i],wind_time,
+                mesh.leaf_render,mesh.voxel_size)));
+            paint_voxel_triangle(&painter,tri,points,color,
+                self.leaf_texture.as_ref(),false);
         }
         painter.text(rect.left_top()+Vec2::new(12.0,12.0),Align2::LEFT_TOP,
             format!("{} • {} {} voxels • {} surface triangles",
