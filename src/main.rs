@@ -2049,6 +2049,8 @@ impl Studio {
                     start_radius:0.07,end_radius:0.02,segments:24,tiled:true}),
                 ("SDF Boolean", NodeKind::SdfCombine{
                     operation:SdfBoolean::Union,smoothing:0.0}),
+                ("SDF Contour Warp", NodeKind::SdfContourWarp{
+                    frequency:8,amount:0.05,seed:57}),
                 ("Distance to Mask", NodeKind::SdfToMask{edge_width:0.01}),
             ]),
             ("MIX & ROUTING", vec![
@@ -2438,6 +2440,17 @@ impl Studio {
                     });
                 changed |= ui.add(egui::Slider::new(smoothing,0.0..=0.25)
                     .text("Smooth width")).changed();
+            }
+            NodeKind::SdfContourWarp{frequency,amount,seed} => {
+                ui.small("Periodic noise warps a signed Distance field without clipping it to a mask.");
+                changed |= ui.add(egui::Slider::new(frequency,1..=64)
+                    .text("Frequency")).changed();
+                changed |= ui.add(egui::Slider::new(amount,0.0..=0.25)
+                    .text("UV offset")).changed();
+                changed |= ui.add(egui::DragValue::new(seed)
+                    .speed(1).prefix("Seed: ")).changed();
+                ui.small("0 offset is exact pass-through; positive values distort the original contour.");
+                ui.small("Feed an SDF shape into this node; convert to Mask after warping.");
             }
             NodeKind::SdfToMask{edge_width} => {
                 ui.small("Explicit signed Distance to Mask conversion. Negative distance is inside.");
@@ -3245,7 +3258,8 @@ fn node_accent(kind: NodeKind) -> Color32 {
             | NodeKind::CurveRemap { .. } | NodeKind::Reroute { .. }
             => Color32::from_rgb(115, 64, 127),
         NodeKind::SdfCircle{..}|NodeKind::SdfEllipse{..}|NodeKind::SdfCapsule{..}
-            |NodeKind::SdfBezierStroke{..}|NodeKind::SdfCombine{..}|NodeKind::SdfToMask{..}
+            |NodeKind::SdfBezierStroke{..}|NodeKind::SdfCombine{..}
+            |NodeKind::SdfContourWarp{..}|NodeKind::SdfToMask{..}
             => Color32::from_rgb(119,70,140),
         NodeKind::Output => Color32::from_rgb(43, 105, 77),
     }

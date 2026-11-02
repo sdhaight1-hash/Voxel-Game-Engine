@@ -71,6 +71,13 @@ const SDF_ELLIPSE: &[ParameterDefinition]=&[
     ParameterDefinition{id:"radius_y",label:"Radius Y",control:ParameterControl::Float{
         min:0.001,max:0.5,default:0.14,unit:"tile UV"}},
 ];
+const SDF_CONTOUR_WARP: &[ParameterDefinition]=&[
+    ParameterDefinition{id:"frequency",label:"Noise frequency",control:ParameterControl::Integer{
+        min:1,max:64,step:1,default:8}},
+    ParameterDefinition{id:"amount",label:"UV warp amount",control:ParameterControl::Float{
+        min:0.0,max:0.25,default:0.05,unit:"tile UV"}},
+    ParameterDefinition{id:"seed",label:"Seed",control:ParameterControl::Seed{default:57}},
+];
 const SDF_BEZIER: &[ParameterDefinition]=&[
     ParameterDefinition{id:"point_0_x",label:"Anchor X",control:ParameterControl::Float{
         min:0.0,max:1.0,default:0.2,unit:"tile UV"}},
@@ -208,6 +215,7 @@ pub fn parameters(kind:&NodeKind)-> &'static [ParameterDefinition] {
         NodeKind::SdfEllipse{..}=>SDF_ELLIPSE,
         NodeKind::SdfCapsule{..}=>SDF_CAPSULE,
         NodeKind::SdfBezierStroke{..}=>SDF_BEZIER,
+        NodeKind::SdfContourWarp{..}=>SDF_CONTOUR_WARP,
         NodeKind::SdfCombine{..}=>SDF_BOOLEAN,
         NodeKind::SdfToMask{..}=>SDF_TO_MASK,
         NodeKind::Noise{..}=>NOISE,
@@ -309,6 +317,17 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn contour_warp_metadata_stays_signed_distance() {
+        let node=NodeKind::SdfContourWarp{
+            frequency:8,amount:0.05,seed:57,
+        };
+        assert_eq!(node.input_type(0),Some(SocketType::Distance));
+        assert_eq!(node.output_type(),SocketType::Distance);
+        assert_eq!(parameters(&node).iter().map(|p|p.id).collect::<Vec<_>>(),
+            vec!["frequency","amount","seed"]);
     }
 
     #[test]

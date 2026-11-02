@@ -148,6 +148,8 @@ pub enum NodeKind {
     SdfBezierStroke { points:[[f32;2];4], start_radius:f32, end_radius:f32,
         segments:u8, tiled:bool },
     SdfCombine { operation:SdfBoolean, smoothing:f32 },
+    /// Warp a signed Distance source in periodic UV space, preserving its sign.
+    SdfContourWarp { frequency:u32, amount:f32, seed:u32 },
     /// Explicit signed Distance -> normalized coverage Mask conversion.
     SdfToMask { edge_width:f32 },
     Invert,
@@ -178,6 +180,7 @@ impl NodeKind {
             Self::SdfCapsule{..}=>"SDF Capsule",
             Self::SdfBezierStroke{..}=>"SDF Bézier Stroke",
             Self::SdfCombine{..}=>"SDF Boolean",
+            Self::SdfContourWarp{..}=>"SDF Contour Warp",
             Self::SdfToMask{..}=>"Distance to Mask",
             Self::Invert => "Invert",
             Self::Blend { .. } => "Blend",
@@ -200,7 +203,8 @@ impl NodeKind {
             Self::Invert | Self::Colorize { .. } | Self::Luminance
                 | Self::Levels { .. } | Self::ThresholdMask { .. }
                 | Self::ColorRamp { .. } | Self::CurveRemap { .. }
-                | Self::Reroute { .. } | Self::SdfToMask{..} => 1,
+                | Self::Reroute { .. } | Self::SdfToMask{..}
+                | Self::SdfContourWarp{..} => 1,
             Self::Blend { .. } | Self::SdfCombine{..} => 2,
             Self::Library { operation, .. } => operation.input_count(),
             Self::Output => 4,
@@ -221,7 +225,7 @@ impl NodeKind {
             (Self::Reroute { .. },0) => "Input",
             (Self::SdfCombine{..},0) => "Distance A",
             (Self::SdfCombine{..},1) => "Distance B",
-            (Self::SdfToMask{..},0) => "Distance",
+            (Self::SdfToMask{..} | Self::SdfContourWarp{..},0) => "Distance",
             (Self::Invert | Self::Colorize { .. }, 0) => "Image",
             (Self::Library { operation, .. }, i) => operation.input_name(i),
             _ => "",
@@ -247,6 +251,7 @@ impl NodeKind {
             Self::SdfCapsule{..}=>"sdf_capsule".into(),
             Self::SdfBezierStroke{..}=>"sdf_bezier_stroke".into(),
             Self::SdfCombine{..}=>"sdf_boolean".into(),
+            Self::SdfContourWarp{..}=>"sdf_contour_warp".into(),
             Self::SdfToMask{..}=>"sdf_to_mask".into(),
             Self::Invert=>"invert".into(),
             Self::Blend{..}=>"blend".into(),
@@ -265,7 +270,8 @@ impl NodeKind {
                 |Self::CurveRemap{..}=>SocketType::Scalar,
             Self::ThresholdMask{..}|Self::SdfToMask{..}=>SocketType::Mask,
             Self::SdfCircle{..}|Self::SdfEllipse{..}|Self::SdfCapsule{..}
-                |Self::SdfBezierStroke{..}|Self::SdfCombine{..}=>SocketType::Distance,
+                |Self::SdfBezierStroke{..}|Self::SdfCombine{..}
+                |Self::SdfContourWarp{..}=>SocketType::Distance,
             Self::Reroute{kind}=>*kind,
             _=>SocketType::Color, // Existing RGB evaluation semantics.
         }
@@ -274,7 +280,8 @@ impl NodeKind {
     pub fn input_type(&self, index:usize) -> Option<SocketType> {
         if index>=self.input_count() {return None;}
         Some(if let Self::Reroute{kind}=self { *kind }
-            else if matches!(self,Self::SdfCombine{..}|Self::SdfToMask{..}) {
+            else if matches!(self,Self::SdfCombine{..}|Self::SdfToMask{..}
+                |Self::SdfContourWarp{..}) {
                 SocketType::Distance
             } else if matches!(self,Self::Levels{..}|Self::ThresholdMask{..}
             |Self::ColorRamp{..}|Self::CurveRemap{..}) {
@@ -482,6 +489,10 @@ impl Graph {
                 NodeKind::SdfCombine{smoothing,..}
                     if !smoothing.is_finite()||!(0.0..=0.25).contains(&smoothing) =>
                     return Err("SDF Boolean smoothing must be 0..0.25 UV units".into()),
+                NodeKind::SdfContourWarp{frequency,amount,..}
+                    if !(1..=64).contains(&frequency)
+                    || !amount.is_finite() || !(0.0..=0.25).contains(&amount) =>
+                    return Err("SDF Contour Warp requires frequency 1..64 and amount 0..0.25 UV units".into()),
                 NodeKind::SdfToMask{edge_width}
                     if !edge_width.is_finite()||!(0.0..=0.25).contains(&edge_width) =>
                     return Err("Distance to Mask edge width must be 0..0.25 UV units".into()),
@@ -736,6 +747,11 @@ impl Graph {
                 let a=self.sample_input_memo(id,0,u,v,memo)[0];
                 let b=self.sample_input_memo(id,1,u,v,memo)[0];
                 [sdf::combine(a,b,operation,smoothing);3]
+            }
+            NodeKind::SdfContourWarp{frequency,amount,seed} => {
+                let dx=(periodic_noise(u,v,frequency,seed)-0.5)*amount;
+                let dy=(periodic_noise(u,v,frequency,seed^0x9e37_79b9)-0.5)*amount;
+                self.sample_input_memo(id,0,u+dx,v+dy,memo)
             }
             NodeKind::SdfToMask{edge_width} => {
                 let distance=self.sample_input_memo(id,0,u,v,memo)[0];
@@ -1188,6 +1204,43 @@ mod tests {
             let index=((size/2*size+size/2)*4) as usize;
             assert_eq!(independent[index+3],255);
         }
+    }
+
+    #[test]
+    fn sdf_contour_warp_is_typed_tiling_and_zero_amount_is_exact() {
+        let mut graph=Graph::default();
+        let shape=graph.add_node(NodeKind::SdfCircle{
+            center:[0.45,0.5],radius:0.21,
+        },[40.0,20.0]);
+        let warp=graph.add_node(NodeKind::SdfContourWarp{
+            frequency:8,amount:0.0,seed:57,
+        },[200.0,20.0]);
+        let mask=graph.add_node(NodeKind::SdfToMask{
+            edge_width:0.01,
+        },[360.0,20.0]);
+        assert!(graph.connect(1,warp,0).is_err(),"Color must not feed Distance");
+        graph.connect(shape,warp,0).unwrap();
+        graph.connect(warp,mask,0).unwrap();
+        graph.connect(mask,2,0).unwrap();
+        for value in [0.0,0.17,0.5,0.91] {
+            assert_eq!(graph.sample(shape,value,0.3),
+                graph.sample(warp,value,0.3),"zero warp must be unchanged");
+        }
+        if let NodeKind::SdfContourWarp{amount,..}=
+            &mut graph.node_mut(warp).unwrap().kind {
+            *amount=0.12;
+        }
+        graph.validate().unwrap();
+        for v in [0.1,0.25,0.5,0.83] {
+            assert!((graph.sample(warp,0.0,v)[0]
+                -graph.sample(warp,1.0,v)[0]).abs()<1e-5);
+        }
+        let original=graph.render_rgba(64,64).unwrap();
+        let (memo,_)=graph.render_channels_memoized_rgba(&[0,1,3],64,64).unwrap();
+        assert_eq!(memo[0],original);
+        let restored:Graph=serde_json::from_str(
+            &serde_json::to_string(&graph).unwrap()).unwrap();
+        assert_eq!(restored.render_rgba(64,64).unwrap(),original);
     }
 
     #[test]
