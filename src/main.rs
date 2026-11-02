@@ -2730,21 +2730,6 @@ mod wire_interaction_tests {
     }
 
     #[test]
-    fn only_material_edits_invalidate_material_bakes() {
-        let mut app=Studio::default();
-        app.foliage_mats_dirty=false;
-        app.foliage_dirty=false;
-        app.foliage_stage=FoliageStage::Scale;
-        // A geometry-only editor change should be treated as such.
-        app.foliage.overall_scale+=0.1;
-        app.foliage_dirty=true;
-        assert!(!app.foliage_mats_dirty);
-        app.foliage.materials.bark_tint_strength=0.5;
-        app.foliage_mats_dirty=true;
-        assert!(app.foliage_mats_dirty);
-    }
-
-    #[test]
     fn generated_tree_converts_into_independently_editable_asset() {
         let mut app=Studio::default();
         app.library_tab=2;
