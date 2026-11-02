@@ -17,7 +17,7 @@ use texture_studio::material_functions::{MaterialFunction,MaterialFunctionLibrar
     MaterialFunctionInstance,MaterialFunctionCall,FunctionOverride,FunctionParameter,
     FunctionParameterKind};
 use texture_studio::foliage_materials::{FoliageMaterials, MaterialRole,
-    SeasonalPalettes, MATERIAL_SIZE};
+    SeasonalPalettes, LeafAlphaSampling, MATERIAL_SIZE};
 use texture_studio::leaf_vector::LeafSilhouetteSource;
 use texture_studio::voxel::{render_atlas, render_voxel_preview, export_obj};
 
@@ -969,6 +969,7 @@ impl Studio {
                 if ui.checkbox(&mut vector,format!("Use vector {name} leaf silhouette"))
                     .changed() {
                     mat.leaf_silhouette=if !vector {
+                        mat.leaf_alpha_sampling=LeafAlphaSampling::Binary;
                         LeafSilhouetteSource::LegacySpecies
                     } else {
                         match mat.leaf_species {
@@ -997,6 +998,18 @@ impl Studio {
                 if let Some((label,width))=width {
                     if ui.add(egui::Slider::new(width,0.65..=1.45)
                         .text(label)).changed() {
+                        if for_asset {self.asset_mats_dirty=true;}
+                        else {self.foliage_mats_dirty=true;}
+                    }
+                    let mut covered=mat.leaf_alpha_sampling==
+                        LeafAlphaSampling::Coverage2x2;
+                    if ui.checkbox(&mut covered,"2×2 vector silhouette coverage")
+                        .on_hover_text("Bake four subpixel occupancy samples per 64px leaf texel. Fractional alpha is best viewed with Experimental ordered leaf edge coverage enabled in the 3D preview.").changed() {
+                        mat.leaf_alpha_sampling=if covered {
+                            LeafAlphaSampling::Coverage2x2
+                        } else {
+                            LeafAlphaSampling::Binary
+                        };
                         if for_asset {self.asset_mats_dirty=true;}
                         else {self.foliage_mats_dirty=true;}
                     }

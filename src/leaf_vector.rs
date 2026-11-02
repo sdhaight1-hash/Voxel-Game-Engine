@@ -75,12 +75,13 @@ fn oak_distance(u:f32,v:f32,lobe_width:f32)->(f32,f32) {
 /// A new *base* silhouette, not a subtractive extra-hole mask. Keep the
 /// card's existing binary alpha and shading contract for GPU cutout render.
 pub fn vector_oak_cutout_rgba(lobe_width:f32)->Vec<u8> {
-    rasterize_leaf_card(|u,v|oak_distance(u,v,lobe_width))
+    rasterize_leaf_card(|u,v|oak_distance(u,v,lobe_width),false)
 }
 
-/// All vector sources use the same binary-alpha and shading contract as the
-/// original 64px cards; only their authored base outline changes.
-fn rasterize_leaf_card(mut distance:impl FnMut(f32,f32)->(f32,f32))->Vec<u8> {
+/// Existing callers continue to use single-center binary coverage; the
+/// opt-in path evaluates four subpixel points before RGBA8 quantization.
+fn rasterize_leaf_card(mut distance:impl FnMut(f32,f32)->(f32,f32),
+    coverage_2x2:bool)->Vec<u8> {
     const SIZE:usize=64;
     let mut pixels=Vec::with_capacity(SIZE*SIZE*4);
     for y in 0..SIZE {
@@ -90,12 +91,26 @@ fn rasterize_leaf_card(mut distance:impl FnMut(f32,f32)->(f32,f32))->Vec<u8> {
             let (leaf,twig)=distance(u,v);
             let leaves=leaf<=0.0;
             let twig=twig<=0.0;
-            let shade=if leaves {
+            let mut covered_leaf=false;
+            let alpha=if coverage_2x2 {
+                let mut inside=0u32;
+                for oy in [0.25,0.75] {
+                    for ox in [0.25,0.75] {
+                        let (l,t)=distance((x as f32+ox)/SIZE as f32,
+                            (y as f32+oy)/SIZE as f32);
+                        if l<=0.0 {covered_leaf=true;}
+                        if l<=0.0||t<=0.0 {inside+=1;}
+                    }
+                }
+                ((inside*255+2)/4) as u8
+            } else if leaves||twig {255} else {0};
+            // Fractional leaf pixels should not inherit the darker twig
+            // tint merely because the pixel center is just outside a blade.
+            let shade=if leaves||covered_leaf {
                 0.83+0.14*((x*11+y*7)%17) as f32/16.0
             } else {0.58};
             let value=(shade*255.0) as u8;
-            pixels.extend_from_slice(&[value,value,value,
-                if leaves||twig {255} else {0}]);
+            pixels.extend_from_slice(&[value,value,value,alpha]);
         }
     }
     pixels
@@ -178,12 +193,30 @@ fn cottonwood_distance(u:f32,v:f32,species:PlantPreset,
 }
 
 pub fn vector_willow_cutout_rgba(blade_width:f32)->Vec<u8> {
-    rasterize_leaf_card(|u,v|willow_distance(u,v,blade_width))
+    rasterize_leaf_card(|u,v|willow_distance(u,v,blade_width),false)
 }
 
 pub fn vector_cottonwood_cutout_rgba(species:PlantPreset,
     blade_width:f32)->Vec<u8> {
-    rasterize_leaf_card(|u,v|cottonwood_distance(u,v,species,blade_width))
+    rasterize_leaf_card(|u,v|cottonwood_distance(u,v,species,blade_width),false)
+}
+
+/// Four subpixel occupancy tests per 64px texel. Only supported for
+/// authored vector silhouettes: historical species cards are untouched.
+pub fn vector_subpixel_cutout_rgba(source:LeafSilhouetteSource,
+    species:PlantPreset)->Result<Vec<u8>,String> {
+    source.validate(species)?;
+    match source {
+        LeafSilhouetteSource::VectorOak{lobe_width}=>
+            Ok(rasterize_leaf_card(|u,v|oak_distance(u,v,lobe_width),true)),
+        LeafSilhouetteSource::VectorWillow{blade_width} =>
+            Ok(rasterize_leaf_card(|u,v|willow_distance(u,v,blade_width),true)),
+        LeafSilhouetteSource::VectorCottonwood{blade_width} =>
+            Ok(rasterize_leaf_card(|u,v|
+                cottonwood_distance(u,v,species,blade_width),true)),
+        LeafSilhouetteSource::LegacySpecies =>
+            Err("Subpixel silhouette coverage requires a vector source".into()),
+    }
 }
 
 #[cfg(test)]
@@ -213,6 +246,68 @@ mod tests {
         assert!(narrow.chunks_exact(4).zip(broad.chunks_exact(4))
             .all(|(a,b)|a[3]<=b[3]),
             "wider lobes should only add coverage");
+    }
+
+    #[test]
+    fn subpixel_coverage_is_fractional_opt_in_and_deterministic() {
+        for (species,source) in [
+            (PlantPreset::Oak,LeafSilhouetteSource::VectorOak{lobe_width:1.0}),
+            (PlantPreset::Willow,LeafSilhouetteSource::VectorWillow{blade_width:1.0}),
+            (PlantPreset::EasternCottonwood,
+                LeafSilhouetteSource::VectorCottonwood{blade_width:1.0}),
+            (PlantPreset::FremontCottonwood,
+                LeafSilhouetteSource::VectorCottonwood{blade_width:1.0}),
+            (PlantPreset::BlackCottonwood,
+                LeafSilhouetteSource::VectorCottonwood{blade_width:1.0}),
+        ] {
+            let covered=vector_subpixel_cutout_rgba(source,species).unwrap();
+            let repeated=vector_subpixel_cutout_rgba(source,species).unwrap();
+            assert_eq!(covered,repeated);
+            assert_eq!(covered.len(),64*64*4);
+            assert!(covered.chunks_exact(4)
+                .any(|px|px[3]>0&&px[3]<255),
+                "{species:?} needs intermediate edge coverage");
+            assert!(covered.chunks_exact(4)
+                .all(|p|[0,64,128,191,255].contains(&p[3])),
+                "{species:?} needs four-sample quantization");
+            assert!(covered.chunks_exact(4).any(|p|p[3]==0));
+            assert!(covered.chunks_exact(4).any(|p|p[3]==255));
+        }
+        assert!(vector_subpixel_cutout_rgba(
+            LeafSilhouetteSource::LegacySpecies,PlantPreset::Oak).is_err());
+    }
+
+    #[test]
+    fn fractional_leaf_edge_uses_leaf_shading_not_dark_twig_shading() {
+        let image=vector_subpixel_cutout_rgba(
+            LeafSilhouetteSource::VectorOak{lobe_width:1.0},
+            PlantPreset::Oak).unwrap();
+        let mut found=false;
+        for y in 0..64 {
+            for x in 0..64 {
+                let i=(y*64+x)*4;
+                let u=(x as f32+0.5)/64.0;
+                let v=(y as f32+0.5)/64.0;
+                let (leaf,_)=oak_distance(u,v,1.0);
+                if leaf>0.0 && image[i+3]>0 && image[i+3]<255 {
+                    let mut subleaf=false;
+                    for oy in [0.25,0.75] {
+                        for ox in [0.25,0.75] {
+                            subleaf|=oak_distance(
+                                (x as f32+ox)/64.0,
+                                (y as f32+oy)/64.0,1.0).0<=0.0;
+                        }
+                    }
+                    if subleaf {
+                        assert!(image[i]>=210,"newly covered leaf edge must use leaf shade");
+                        found=true;
+                        break;
+                    }
+                }
+            }
+            if found {break;}
+        }
+        assert!(found,"must exercise a leaf fringe outside the center contour");
     }
 
     #[test]

@@ -90,7 +90,7 @@ impl FoliageBakeCache {
                 materials.leaf.as_ref().map(GraphRecipe::from_graph),
                 materials.leaf_opacity.as_ref().map(GraphRecipe::from_graph),
                 materials.leaf_species, materials.leaf_silhouette,
-                materials.fruit_color,
+                materials.leaf_alpha_sampling,materials.fruit_color,
                 materials.cutout_threshold,
             )),
             Role::Bark => serde_json::to_vec(&(
@@ -174,6 +174,29 @@ mod tests {
         assert_eq!(bark.as_ref(),first.bake_bark(64,[99,76,55]).unwrap().as_slice());
         assert_eq!(cache.stats().hits,2);
         assert_eq!(cache.stats().misses,2);
+    }
+
+    #[test]
+    fn optin_leaf_coverage_changes_only_leaf_bake_key_and_reuses_identical_pixels() {
+        use crate::foliage::PlantPreset;
+        use crate::leaf_vector::LeafSilhouetteSource;
+        use crate::foliage_materials::LeafAlphaSampling;
+        let mut mat=FoliageMaterials::for_species(PlantPreset::Willow);
+        mat.leaf_silhouette=LeafSilhouetteSource::VectorWillow{blade_width:1.0};
+        let mut cache=FoliageBakeCache::new(1024*1024);
+        let binary=cache.bake_leaf(&mat,64,[70,141,65]).unwrap();
+        mat.leaf_alpha_sampling=LeafAlphaSampling::Coverage2x2;
+        let coverage=cache.bake_leaf(&mat,64,[70,141,65]).unwrap();
+        assert_ne!(binary.as_ref(),coverage.as_ref());
+        assert!(coverage.chunks_exact(4).any(|px|px[3]>0&&px[3]<255));
+        let repeated=cache.bake_leaf(&mat,64,[70,141,65]).unwrap();
+        assert!(Arc::ptr_eq(&coverage,&repeated));
+        assert_eq!(cache.stats().hits,1);
+        assert_eq!(cache.stats().misses,2);
+        mat.leaf_alpha_sampling=LeafAlphaSampling::Binary;
+        let old=cache.bake_leaf(&mat,64,[70,141,65]).unwrap();
+        assert!(Arc::ptr_eq(&binary,&old));
+        assert_eq!(cache.stats().hits,2);
     }
 
     #[test]

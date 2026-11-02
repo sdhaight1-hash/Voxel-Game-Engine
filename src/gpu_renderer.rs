@@ -689,6 +689,32 @@ mod tests {
     }
 
     #[test]
+    fn subpixel_leaf_alpha_updates_only_gpu_leaf_texture_not_palette_or_geometry() {
+        use texture_studio::foliage::PlantPreset;
+        use texture_studio::foliage_materials::{FoliageMaterials,LeafAlphaSampling};
+        use texture_studio::leaf_vector::LeafSilhouetteSource;
+        let mesh=FoliageMesh::from_voxels(VoxelShape::Cube,0.5,vec![
+            VoxelCell{x:0,y:0,z:0,material:Material::Bark},
+            VoxelCell{x:0,y:0,z:1,material:Material::Leaf},
+        ]).unwrap();
+        let palette=texture_studio::foliage_materials::SeasonalPalettes::default()
+            .gpu_stops();
+        let mut mat=FoliageMaterials::for_species(PlantPreset::Willow);
+        mat.leaf_silhouette=LeafSilhouetteSource::VectorWillow{blade_width:1.0};
+        let bark=mat.bake_bark(64,[90,73,54]).unwrap();
+        let tint=[75,135,65];
+        let binary=mat.bake_leaf(64,tint).unwrap();
+        let before=Scene::from_mesh(&mesh,&bark,&binary,tint,palette,0.0);
+        mat.leaf_alpha_sampling=LeafAlphaSampling::Coverage2x2;
+        let covered=mat.bake_leaf(64,tint).unwrap();
+        assert!(covered.chunks_exact(4).any(|px|px[3]>0&&px[3]<255));
+        let after=Scene::from_mesh(&mesh,&bark,&covered,tint,palette,0.0);
+        assert_eq!(scene_uploads(Some(&before),&after),SceneUploads{
+            geometry:false,bark:false,leaf:true,palette:false,
+        });
+    }
+
+    #[test]
     fn gpu_vertices_keep_uv_and_leaf_wind_weights() {
         let mesh=FoliageMesh::from_voxels(VoxelShape::Cube,0.5,vec![
             VoxelCell{x:0,y:0,z:0,material:Material::Bark},
