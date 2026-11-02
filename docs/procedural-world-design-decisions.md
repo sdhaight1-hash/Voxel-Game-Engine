@@ -112,10 +112,15 @@ Whether gameplay mountains should preserve true physical height or use Vintage S
 
 **Agreed strategy:** Do **not** pre-create or save the complete three-dimensional voxel world. That would be impractical at the proposed horizontal area.
 
+**Provisional playable geometry preference:** **regular hexagonal-prism voxels ("hexels")**, drawing from the existing [Hexel-Game-Engine](https://github.com/sdhaight1-hash/Hexel-Game-Engine) prototype. This is a preferred direction to evaluate, **not yet a completed engine migration**. The earlier 32³ cube-style chunk proposal is no longer the only assumed candidate.
+
 **Provisional voxel plan:**
 
-- 32 × 32 × 32 voxel chunks, inspired by Vintage Story.
-- Each vertical preset implies 8, 16, 24 or 32 possible chunk levels, respectively.
+- Use axial **Q/R** horizontal hex coordinates and vertical **Y**; six lateral neighbours, plus above/below. Define true hexel radius/diameter, area, height, physical scale, and orientation before generating world assets or calculating water cell capacity.
+- Retain the existing Hexel Engine **16 × 16 × 16 Q/R/Y chunk sections** as the initial prototype baseline; **benchmark** 32 × 32 × 32 hexel sections rather than committing to Vintage Story's cube chunk size.
+- With 16-high sections, the 256/512/768/1,024 presets allow **16/32/48/64 vertical section indices** respectively; with 32-high sections, **8/16/24/32**.
+- Define toroidal wrapping as two periodic **hex-lattice translations**. Simple independent `q % width` / `r % height` is only valid after the period vectors and physical seams are chosen; test neighbours, distances, geometry, players, rivers and edits across both edges.
+- Keep the globally baked Terrain Diffusion elevation as **rectangular geographical raster data**. Sample its continuous/interpolated elevations at hexel centres; no need for a hexagonal diffusion file format.
 - Create local editable 3D geometry deterministically from immutable elevation/geology/climate plus a pinned local generator version.
 - Generate caves, overhangs, strata, ores, soil, vegetation and surface detail through dedicated 3D procedural systems, not by expecting Terrain Diffusion to output 3D voxels.
 - Stream player-adjacent chunks and appropriate distant levels of detail; bound active CPU RAM, mesh buffers and GPU memory.
@@ -127,6 +132,10 @@ Whether gameplay mountains should preserve true physical height or use Vintage S
 The raw fully allocated 1 m³ voxel storage for a kilometre-scale world is **petabyte-scale**, not a reasonable world-file design. Higher selected world height increases theoretical voxel address space, **not** the size of the fixed-resolution 2D global elevation layer.
 
 The exact voxel representation (dense chunks, palettes, implicit solids, hybrid) remains an implementation decision. Chunk size is provisional, not benchmarked.
+
+**Hexagonal implications to validate:** hex-cap and six-wall meshing/culling, shared-boundary chunk invalidation, collision, navigation, practical building/rectangular structures, and hex-face fluid transfer areas. Six horizontal neighbours do **not** guarantee better fluid accuracy or performance. Terrain geology, climates, immutable geographic storage and the global conservation rule remain independent of playable cell shape.
+
+**Repository alignment note:** Hexel-Game-Engine's current README still describes an eventual **true sphere**, while this design selects a **flat torus**. Do not silently mix those topologies; reconcile the Hexel repository's design documentation when adopting this world model. The Voxel-Game-Engine repository still contains the procedural materials/asset editor and the present world-design document; no project merge is assumed.
 
 ## 8. Geology, climate, hydrology and ecology
 
@@ -192,6 +201,62 @@ Not decided: tectonic solver, atmospheric and hydrological transport solvers, wa
 
 No end-to-end performance numbers or compression ratios have yet been demonstrated for this design.
 
+## 9A. Reactive authoritative world state (SpaceTimeDB-inspired)
+
+**Provisional architectural direction:** Build a **reactive, spatially scoped world-state system**, borrowing concepts from [SpaceTimeDB](https://spacetimedb.com/docs/intro/what-is-spacetimedb/) without adopting its database runtime, server or networking stack. Source design notes: *Reactive World Architecture: Pub/Sub, Dependencies, and World Fields* (Hexel Engine exploratory notes, 2026-11-01).
+
+- **Authority:** Terrain edits, material occupancy, water volumes, entities and persistent environment state have a single authoritative owner. Meshes, local entity views, caches and render resources are **derived**, never competing sources of truth.
+- **Controlled mutations:** Expose explicit edit/transfer APIs. Group related mutations where correctness requires atomicity. For finite water, a debit and its matching credit must commit together; no unbalanced intermediate state may become authoritative or persistent.
+- **Structural dependencies (static):** A hex chunk's boundary faces depend on up to six horizontal and two vertical neighbours; hydrology depends on terrain/permeability, plants on moisture/climate, and navigation on occupancy. Use targeted direct invalidation where relationships are geometrically known, not a per-hexel listener allocation.
+- **Dynamic interests:** Entities/players may subscribe to nearby chunks, threats, regional weather or relevant world fields; interest follows movement, provides initial state, delivers subsequent relevant updates and cleans up on exit/destruction.
+- **State subscriptions vs transient events:** State interests require an initial snapshot plus future changes; events such as lightning or a discrete block edit need not replay for a newly interested consumer.
+- **Change notifications:** Prefer **typed field/region identifiers, revision counters and dirty/invalidation flags**. Consumers query the current authoritative state at their scheduled update rather than trusting stale event copies.
+- **Batching:** Deduplicate changes per chunk/field/phase; skip unrelated regions. Immediate per-cell callbacks and recursive event storms are not the default.
+- **Simulation phases:** Climate → precipitation → hydrology → vegetation and similar feedback loops may be cyclic across time. Run systems in explicit phases or iterative solves, rather than treating the entire environmental dependency graph as a synchronous DAG.
+- **High-frequency paths:** Per-frame transforms, individual water-cell exchanges and tight physics loops should use direct data access and efficient scheduling, not a generic pub/sub hop for each operation.
+- **Local first, multiplayer ready:** Same conceptual ownership and spatial interests can inform network replication later. No distributed database or multiplayer requirement is implied by the architecture.
+
+**Illustrative workflow: dam breach:** commit edited hexels → invalidate nearby fluid topology/meshes → schedule conservative lake-to-downstream water transfers → update lake and receiver volumes atomically → issue coalesced water-region revisions → recompute local render, physics, navigation and ecology as needed → persist authoritative water changes. When unloading a region, move water ownership to its coarse representation rather than retaining two counted copies.
+
+**Incremental validation, not a universal framework rewrite:** (1) authoritative edit API, (2) exact neighbour/dirty-chunk invalidation, (3) bounded typed update queue, (4) region-interest changes as an entity moves, (5) one region-scoped derived field depending on terrain, (6) transactional lake transfer and unload/reload conservation. Profile queue depth, rebuild counts, water balance, CPU time and memory before generalizing.
+
+**Open:** update ordering, event durability, subscription identity/lifecycles, thread partitioning, atomic region transfer strategy, persistence consistency and index layouts. Strict conservation is a previously decided invariant; the notification implementation is **not** decided.
+
+## 9B. Rust library baseline and candidate additions
+
+**Confirmed from the current [Hexel-Game-Engine Cargo.toml](https://github.com/sdhaight1-hash/Hexel-Game-Engine/blob/main/Cargo.toml):** these are **already declared dependencies**, not proposals to install them:
+
+| Crate | Declared baseline | Intended use | Position |
+|---|---|---|---|
+| `bytemuck` | `1.21` + `derive` | Plain-old-data GPU buffer conversions | Keep |
+| `image` | `0.25`, PNG only | Load textures | Keep |
+| `glam` | `0.29` | Spatial math, matrices, transforms | Keep |
+| `hexx` | `0.20` | Hex geometry, axial coordinates and neighbour operations | Core; keep |
+| `noise` | `0.9` | Deterministic small-scale procedural details | Keep |
+| `pollster` | `0.4` | Minimal async initialization bridge | Keep initially |
+| `tracing` | `0.1` | Structured diagnostics | Keep |
+| `tracing-subscriber` | `0.3` + `env-filter` | Filter and format traces | Keep |
+| `wgpu` | `24` | GPU rendering, possible compute | Keep initially |
+| `winit` | `0.30` | Windowing, input and event loop | Keep |
+
+The existing project also declares `approx = "0.5"` under dev-dependencies.
+
+**Candidate future crates — add only against a concrete implementation requirement:**
+
+| Candidate | Purpose | Priority/decision |
+|---|---|---|
+| `zstd` | Independently compress stored elevation tiles, region data and chunk snapshots | First choice when tile storage is implemented |
+| `rayon` | Parallelize measured CPU-side generation or meshing workloads | Add after establishing bottleneck |
+| `serde` (and compatible encoding as needed) | Serialize versioned world metadata and persistent state | Evaluate when defining saved schemas |
+| `redb` | Embedded transactional persistence for edit and regional simulation state | Evaluate, not committed |
+| `crossbeam-channel` | Bounded worker/change queues with backpressure | Evaluate against `std::sync::mpsc` or existing queue needs |
+
+**Version policy:** No automatic upgrades. In particular, `hexx` and `glam` may require coordinated upgrades because their vector types and dependency versions must align. Upgrade `wgpu` separately with renderer/compiler validation; major API upgrades are not prerequisite to the reactive-state or terrain prototypes. Confirm exact compatible current releases at upgrade time rather than pinning speculative versions here.
+
+**Module ownership, not crate-driven architecture:** Use `hexx` + `glam` for cell and world geometry; our own **periodic lattice coordinate rules** for the torus; immutable diffusion/tectonic files plus `zstd` for geographical storage; purpose-built authoritative state, transfers and interest tracking for finite water/pub-sub; `wgpu` + `winit` for rendering/input. Neither a library nor SpaceTimeDB replaces the need to define invariants, update phases and durable ownership.
+
+**Scope of this document:** This is a design recommendation, **not a dependency change or implementation** in either GitHub repository.
+
 ## 10. Technical references (inspiration, not implementation claims)
 
 - **Vintage Story:** large configurable voxel worlds, 32³ chunking, geology, climate, vertical world-height presets, proportional sea level.
@@ -200,6 +265,8 @@ No end-to-end performance numbers or compression ratios have yet been demonstrat
 - **Terrain Diffusion / InfiniteDiffusion:** surface-height and climate synthesis, hierarchical regional generation.
 - **Tellus:** retained as research for geographic data handling; no longer the planned synthetic-world base.
 - **Streams Reflowing and latticeGlade's voxel-water showcase:** references for river geometry, lakes, currents, waterfalls, responsive local fluids and shader-driven visuals; not proof of strict water conservation.
+- **Hexel-Game-Engine:** existing Rust hexagonal-prism prototype and source for actual baseline dependency versions; its spherical-world vision needs reconciliation with the toroidal design.
+- **SpaceTimeDB:** authoritative mutations, snapshot-plus-change subscriptions, spatial interests and transactional design patterns; not a required infrastructure dependency.
 
 External references:
 - https://github.com/xandergos/terrain-diffusion
@@ -209,6 +276,8 @@ External references:
 - https://modrinth.com/mod/streams-reflowing
 - https://www.youtube.com/watch?v=ZxSRJJiw5Gk
 - https://github.com/Davismk3/plate-local-river-generation
+- https://github.com/sdhaight1-hash/Hexel-Game-Engine
+- https://spacetimedb.com/docs/intro/what-is-spacetimedb/
 
 ## 11. Outstanding decisions (must not be silently treated as settled)
 
@@ -223,23 +292,30 @@ External references:
 9. **Generation time/storage/performance budgets:** quantify on target hardware.
 10. **Climate and ecological simulation detail:** periodicity and physical plausibility versus cost.
 11. **Conserved-water implementation:** choose quantization/accounting, reservoir/basin and groundwater models, local fluid solver, active/inactive reconciliation, and validation limits; the **finite-water rule itself is decided**.
+12. **Hexel architecture:** exact cell radius/height/scale, wrapping lattice periods, 16³ versus 32³ chunk performance, meshing, collision, water-face geometry and practical building rules.
+13. **Reactive state design:** choose the smallest adequate typed invalidation, region interests, transaction boundaries, ordering and storage mechanism; do not assume SpaceTimeDB is a dependency.
+14. **Rust dependency additions/upgrades:** benchmark and add only when a feature requires them; preserve existing Cargo versions until compatibility tests justify upgrading.
 
 ## 12. Initial validation plan
 
 1. Implement a **small toroidal fixture**: opposite edges match for height, climate, biome and drainage, including cross-boundary neighbour lookups.
 2. Create one test terrain region with frozen elevation data, and render it at **256/512/768/1,024** heights with their proportional sea levels; evaluate slopes, summits and cave room.
 3. Prototype **16-bit tiled Zstd** storage; measure real ratios and random-tile read latency.
-4. Generate local **32³** chunks and persist edits over immutable base data; verify reload and regeneration preserve modifications.
+4. Generate local **16³ hexel** chunks using existing Hexel Engine as the starting baseline (benchmark 32³ hexel sections); persist edits over immutable base data and verify reload and regeneration preserve modifications.
 5. Run an end-to-end **limited-area** tectonics → diffusion → voxel test, then test a wrapped seam. Do not commit to generating an entire 1,024 km world until memory, runtime and seam tests pass.
 6. Add fixed-budget terrain streaming tests and document measured hardware and results.
 7. Build a **small finite lake → player-dug channel → downstream reservoir** fixture. Dig a new outlet, allow water levels to change, then assert the total before and after is identical without rain/evaporation.
 8. Test **lake/river boundary transfers across chunk unloads and both toroidal seams**, including local ↔ regional representation handoff, save/reload, parallel updates, and large player-built dams; never count the same water twice.
 9. Test a closed **evaporation → atmospheric moisture → rain/snow → infiltration/runoff** cycle with explicit budgets and mass-balance diagnostics. Measure solver stability and worst-case active-region cost.
+10. Validate **periodic axial hex-coordinate wrapping** across both lattice periods; confirm unique canonical cells, neighbour reciprocity, seam collision and hex-face fluid transfers.
+11. Add one authoritative edit command, region-scoped typed dirty notification and an entity changing subscribed regions; verify only relevant meshes and fields rebuild.
+12. Test an atomic finite-water transfer across active and inactive region state, including failure/rollback, save/reload and no duplicate water ownership.
+13. Profile the existing Rust dependency baseline before proposing `hexx`/`glam`/`wgpu` upgrades or introducing `rayon`, `redb` or a dedicated message-queue crate.
 
 ---
 
 ### Summary
 
-**Chosen direction:** A **1,024 × 1,024 km**, finite **X/Z toroidal** synthetic world; **512-block default** vertical height with **256/768/1,024** options; **complete pre-generation and permanent compression of base Terrain Diffusion geography**; **no diffusion inference in gameplay**; **streamed, regenerable detailed voxel terrain**; **persistent independent edit data**; tectonics-first geography, **finite conserved water** and coherent global climate/ecology.
+**Chosen direction:** A **1,024 × 1,024 km**, finite **horizontally toroidal** synthetic world; **512-block default** vertical height with **256/768/1,024** options; **complete pre-generation and permanent compression of base Terrain Diffusion geography**; **no diffusion inference in gameplay**; **streamed, regenerable detailed voxel terrain**; **persistent independent edit data**; tectonics-first geography, **finite conserved water** and coherent global climate/ecology. **Preferred playable cell geometry is now hexagonal prisms (Q/R/Y)**, with the existing Hexel Engine as the implementation reference, pending lattice/chunk tests. A SpaceTimeDB-inspired reactive world-state design and selective Rust dependency additions are **proposals**, not implemented subsystems.
 
 **Important open problem:** How to map geographic kilometres and realistic mountain elevation into a fixed-height voxel game **without unacceptable slope distortion**. Do not hard-code a metre-per-voxel equivalence until this is resolved.
