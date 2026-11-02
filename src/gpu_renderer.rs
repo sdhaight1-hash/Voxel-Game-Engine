@@ -9,6 +9,7 @@ use eframe::{egui, egui_wgpu::{self, wgpu, wgpu::util::DeviceExt}};
 use texture_studio::foliage::{FoliageMesh, Material};
 
 const TARGET_SIZE: u32 = 1024;
+#[cfg(test)]
 const TEX_SIZE: u32 = 64;
 
 #[repr(C)]
@@ -114,6 +115,7 @@ impl Scene {
         }
     }
 
+    #[cfg(test)]
     pub fn triangle_count(&self)->usize {self.vertices.len()/3}
 }
 
