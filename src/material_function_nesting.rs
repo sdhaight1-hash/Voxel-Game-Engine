@@ -41,9 +41,9 @@ fn resolve_nested(library:&MaterialFunctionLibrary,
                     param.key==override_value.key &&
                     param.kind==FunctionParameterKind::NestedNoiseScale &&
                     param.node_id==call.placeholder_node_id) {
-                    nested_reference.overrides.retain(|item|item.key!="frequency");
+                    nested_reference.overrides.retain(|item|item.key!=override_value.key);
                     nested_reference.overrides.push(FunctionOverride{
-                        key:"frequency".into(),value:override_value.value,
+                        key:override_value.key.clone(),value:override_value.value,
                     });
                 }
             }
