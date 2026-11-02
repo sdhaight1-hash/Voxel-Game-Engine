@@ -1343,6 +1343,32 @@ fn branch_outward(normal:[f32;3])->[i32;3] {
     best
 }
 
+/// For the thinnest twigs use two crossed, tapered bark-colored ribbons
+/// rather than a full 1m prism. These are geometry inside a real wood cell;
+/// they do not become separate, unharvestable decorative entities.
+fn add_twig_ribbons(out:&mut Vec<Triangle>,cell:[i32;3],
+                    a:[f32;3],b:[f32;3],r0:f32,r1:f32,
+                    u:[f32;3],v:[f32;3]) {
+    for axis in [u,v] {
+        let quad=[
+            add3(a,mul3(axis,-r0)),add3(a,mul3(axis,r0)),
+            add3(b,mul3(axis,r1)),add3(b,mul3(axis,-r1)),
+        ];
+        let dir=sub3(b,a);
+        let normal=normalize3(cross3(dir,axis));
+        let outward=branch_outward(normal);
+        let reverse=branch_outward(mul3(normal,-1.0));
+        let uv=[[0.0,1.0],[1.0,1.0],[1.0,0.0],[0.0,0.0]];
+        for (idx,face_out) in [
+            ([0,1,2],outward),([0,2,3],outward),
+            ([2,1,0],reverse),([3,2,0],reverse)
+        ] {
+            push_triangle(out,quad[idx[0]],quad[idx[1]],quad[idx[2]],
+                Material::Bark,cell,face_out,idx.map(|i|uv[i]));
+        }
+    }
+}
+
 /// Six-sided tapered wood section restricted to exactly one occupied branch
 /// cell. Chopping that cell suppresses its corresponding triangles.
 fn add_tapered_branch_section(out:&mut Vec<Triangle>,cell:[i32;3],
@@ -1354,6 +1380,10 @@ fn add_tapered_branch_section(out:&mut Vec<Triangle>,cell:[i32;3],
     let axis=if tangent[2].abs()<0.9 {[0.0,0.0,1.0]} else {[0.0,1.0,0.0]};
     let u=normalize3(cross3(tangent,axis));
     let v=cross3(tangent,u);
+    if r0.max(r1) <= 0.085 {
+        add_twig_ribbons(out,cell,a,b,r0,r1,u,v);
+        return;
+    }
     const SIDES:usize=6;
     let ring=|center:[f32;3],radius:f32| {
         std::array::from_fn::<_,SIDES,_>(|i| {
