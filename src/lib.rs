@@ -15,6 +15,7 @@ pub mod foliage_materials;
 pub mod presets;
 pub mod node_library;
 pub mod node_definitions;
+pub mod render_cache;
 pub use node_library::LibraryNode;
 use node_definitions::{PortDefinition, SocketType};
 pub use voxel::{VoxelSettings, VoxelShape, SideMapping};
@@ -42,7 +43,7 @@ pub struct Link {
     pub input: usize,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum NodeKind {
     Noise { scale: u32, octaves: u8, seed: u32 },
     Checker { tiles: u32 },
