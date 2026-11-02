@@ -2605,7 +2605,8 @@ impl Studio {
         }
     }
 
-    fn handle_wire_input(&mut self, ui: &egui::Ui, canvas: Rect) {
+    fn handle_wire_input(&mut self, ui: &egui::Ui, canvas: Rect,
+        bezier_overlay:Option<Rect>) {
         let (pointer, pressed, released, held, right_pressed, escape) = ui.input(|i| (
             i.pointer.latest_pos(),
             i.pointer.button_pressed(egui::PointerButton::Primary),
@@ -2623,6 +2624,12 @@ impl Studio {
         }
 
         if let Some(pointer) = pointer {
+            // The Bézier editor is a draggable surface above the graph.
+            // Cables drawn underneath it must not steal point gestures.
+            if self.wire_gesture.is_none() && bezier_overlay
+                .is_some_and(|bounds|bounds.contains(pointer)) {
+                return;
+            }
             if right_pressed {
                 let disconnected = match self.port_at(canvas, pointer) {
                     Some(Port::Input(to, slot)) => Some((to, slot)),
@@ -2813,7 +2820,31 @@ impl Studio {
                     kind.input_name(input), FontId::proportional(11.0 * z), Color32::WHITE);
             }
         }
-        self.handle_wire_input(ui, rect);
+        let mut bezier_overlay=None;
+        if let Some(id)=self.selected {
+            let selection=self.graph.node(id).and_then(|node|
+                if let NodeKind::SdfBezierStroke{points,tiled,..}=node.kind {
+                    Some((node.position,points,tiled))
+                } else {None});
+            if let Some((position,points,tiled))=selection {
+                let origin=screen_point(rect.min,self.pan,self.zoom,
+                    position[0],position[1]);
+                if let Some((panel,edited))=bezier_canvas_editor(
+                    ui,&painter,rect,id,origin,self.zoom,points,tiled) {
+                    bezier_overlay=Some(panel);
+                    if let Some(points)=edited {
+                        if let Some(node)=self.graph.node_mut(id) {
+                            if let NodeKind::SdfBezierStroke{
+                                points:actual,..}=&mut node.kind {
+                                *actual=points;
+                                self.dirty=true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        self.handle_wire_input(ui, rect, bezier_overlay);
         if let Some(pointer) = ui.ctx().pointer_hover_pos() {
             let active = self.wire_gesture.filter(|gesture| gesture.dragging);
             if let Some(gesture) = active {
@@ -3265,6 +3296,100 @@ fn node_accent(kind: NodeKind) -> Color32 {
     }
 }
 
+
+/// Dragging a selected cubic SDF path edits four *authored* UV handles.
+/// The preview uses exactly the same shortest-wrap centerline as baking.
+/// This panel is editor-only; it adds no graph, JSON or GPU resource fields.
+fn bezier_canvas_editor(ui:&mut egui::Ui,painter:&egui::Painter,
+    viewport:Rect,id:u64,node_origin:Pos2,zoom:f32,
+    points:[[f32;2];4],tiled:bool)
+    ->Option<(Rect,Option<[[f32;2];4]>)> {
+    const SIZE:f32=200.0;
+    if viewport.width()<SIZE+20.0||viewport.height()<SIZE+20.0 {
+        return None;
+    }
+    let right=node_origin.x+NODE_W*zoom+16.0;
+    let desired_left=if right+SIZE+6.0<viewport.right() {
+        right
+    } else {node_origin.x-SIZE-16.0};
+    let left=desired_left.clamp(viewport.left()+6.0,
+        viewport.right()-SIZE-6.0);
+    let top=node_origin.y.clamp(viewport.top()+6.0,
+        viewport.bottom()-SIZE-6.0);
+    let panel=Rect::from_min_size(Pos2::new(left,top),
+        Vec2::splat(SIZE));
+    let plot=Rect::from_min_max(
+        panel.min+Vec2::new(18.0,32.0),
+        panel.max-Vec2::new(18.0,18.0));
+    painter.rect_filled(panel,5.0,Color32::from_rgb(30,34,43));
+    painter.rect_stroke(panel,5.0,
+        Stroke::new(1.0,Color32::from_rgb(115,125,145)),
+        StrokeKind::Inside);
+    painter.text(panel.min+Vec2::new(10.0,14.0),Align2::LEFT_CENTER,
+        "BÉZIER UV HANDLES",FontId::proportional(11.0),
+        Color32::from_rgb(210,221,237));
+    painter.rect_stroke(plot,0.0,
+        Stroke::new(1.0,Color32::from_rgb(68,77,93)),
+        StrokeKind::Inside);
+    let map=|point:[f32;2]|Pos2::new(
+        plot.left()+point[0]*plot.width(),
+        plot.top()+point[1]*plot.height());
+    let mut previous:Option<Pos2>=None;
+    for i in 0..=64 {
+        let t=i as f32/64.0;
+        let mut p=texture_studio::sdf_bezier::centerline(points,t,tiled);
+        if tiled {
+            p[0]=p[0].rem_euclid(1.0);
+            p[1]=p[1].rem_euclid(1.0);
+        }
+        let screen=map(p);
+        if let Some(before)=previous {
+            // Never draw an artificial line across the square when a
+            // periodic centerline crosses a UV tile boundary.
+            if (screen.x-before.x).abs()<plot.width()*0.5 &&
+                (screen.y-before.y).abs()<plot.height()*0.5 {
+                painter.line_segment([before,screen],
+                    Stroke::new(2.0,Color32::from_rgb(120,216,192)));
+            }
+        }
+        previous=Some(screen);
+    }
+    let mut result=points;
+    let mut changed=false;
+    for (i,point) in points.iter().copied().enumerate() {
+        let center=map(point);
+        let color=if i==0||i==3 {
+            Color32::from_rgb(247,184,103)
+        } else {Color32::from_rgb(123,181,247)};
+        painter.circle_filled(center,6.0,color);
+        painter.circle_stroke(center,7.0,Stroke::new(1.0,Color32::BLACK));
+        let response=ui.interact(
+            Rect::from_center_size(center,Vec2::splat(18.0)),
+            ui.make_persistent_id(("sdf_bezier_handle",id,i)),
+            Sense::drag());
+        if response.dragged() {
+            let delta=ui.input(|i|i.pointer.delta());
+            let next=bezier_uv_drag(point,delta,plot.size());
+            if next!=point {
+                result[i]=next;
+                changed=true;
+            }
+        }
+        if response.hovered()||response.dragged() {
+            painter.circle_stroke(center,10.0,
+                Stroke::new(2.0,Color32::WHITE));
+        }
+    }
+    Some((panel,if changed {Some(result)} else {None}))
+}
+
+fn bezier_uv_drag(point:[f32;2],delta:Vec2,plot_size:Vec2)->[f32;2] {
+    [
+        (point[0]+delta.x/plot_size.x).clamp(0.0,1.0),
+        (point[1]+delta.y/plot_size.y).clamp(0.0,1.0),
+    ]
+}
+
 /// Cubic cable path shared by painter and wire hit-testing.
 fn wire_bezier(a: Pos2, b: Pos2, t: f32) -> Pos2 {
     let bend = ((b.x - a.x).abs() * 0.45).max(30.0);
@@ -3381,6 +3506,18 @@ mod wire_interaction_tests {
         }];
         function.validate().unwrap();
         assert_eq!(authored_function_noise_scale(&function),Some(17));
+    }
+
+    #[test]
+    fn dragging_cubic_uv_control_in_preview_is_normalized_and_clamped() {
+        assert_eq!(bezier_uv_drag([0.5,0.5],
+            Vec2::new(50.0,-25.0),Vec2::new(200.0,100.0)),
+            [0.75,0.25]);
+        assert_eq!(bezier_uv_drag([0.99,0.01],
+            Vec2::new(100.0,-100.0),Vec2::splat(100.0)),
+            [1.0,0.0]);
+        assert_eq!(bezier_uv_drag([0.25,0.75],
+            Vec2::ZERO,Vec2::splat(100.0)),[0.25,0.75]);
     }
 
     #[test]

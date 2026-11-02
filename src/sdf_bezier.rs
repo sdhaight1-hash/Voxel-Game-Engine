@@ -24,6 +24,13 @@ fn unwrap(points:[[f32;2];4])->[[f32;2];4] {
     out
 }
 
+/// Curve centerline used by the editor's visual handles. Shares the exact
+/// cubic and shortest-wrap convention with the signed-distance evaluator.
+pub fn centerline(points:[[f32;2];4],t:f32,tiled:bool)->[f32;2] {
+    let points=if tiled {unwrap(points)} else {points};
+    cubic(points,t.clamp(0.0,1.0))
+}
+
 fn segment_distance(px:f32,py:f32,a:[f32;2],b:[f32;2],
     radius_start:f32,radius_end:f32)->f32 {
     let dx=b[0]-a[0];
@@ -133,6 +140,17 @@ mod tests {
             let capsule=crate::sdf::capsule(x,0.56,short[0],short[3],0.07);
             assert!((actual-capsule).abs()<0.002);
         }
+    }
+
+    #[test]
+    fn editor_centerline_uses_same_seam_unwrap_as_evaluator() {
+        let points=[[0.9,0.5],[0.97,0.5],[0.03,0.5],[0.1,0.5]];
+        let midpoint=centerline(points,0.5,true);
+        assert!((midpoint[0]-1.0).abs()<1e-6);
+        assert!((midpoint[1]-0.5).abs()<1e-6);
+        let unwrapped=centerline(points,0.5,false);
+        assert!((unwrapped[0]-0.5).abs()<1e-6);
+        assert_eq!(centerline(points,-1.0,true),points[0]);
     }
 
     #[test]
