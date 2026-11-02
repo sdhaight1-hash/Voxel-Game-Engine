@@ -270,11 +270,14 @@ mod tests {
         assert_eq!(asset.shape, VoxelShape::HexPrism);
         assert_eq!(asset.voxel_size, 1.0);
         assert_eq!(asset.voxels.len(), tree.voxels.len());
+        assert!(asset.tree_structure.is_some());
         assert!(asset.material_graph.is_some());
         let first = asset.voxels[0];
         asset.erase([first.x, first.y, first.z]);
         assert_eq!(asset.voxels.len() + 1, tree.voxels.len());
         let decoded = VoxelAsset::from_json(&asset.to_json().unwrap()).unwrap();
+        assert!(decoded.tree_structure.is_some());
+        decoded.tree_structure.as_ref().unwrap().validate(&decoded.voxels).unwrap();
         assert_eq!(decoded.materials.leaf_species, PlantPreset::Willow);
         assert_eq!(decoded.materials.bake_leaf(64,decoded.leaf_color).unwrap(),
             willow_mask);
@@ -328,6 +331,32 @@ mod tests {
         let cell = asset.voxels[0];
         assert_eq!(asset.harvest_cell([cell.x, cell.y, cell.z]), Some(cell.material));
         assert!(VoxelAsset::from_json(&asset.to_json().unwrap()).is_ok());
+    }
+
+    #[test]
+    fn manually_edited_tree_keeps_valid_structure_and_origin() {
+        let project=FoliageProject::from_preset(PlantPreset::Oak);
+        let mesh=project.generate().unwrap();
+        let mut asset=VoxelAsset::from_tree(&project,&mesh,&Graph::default());
+        let original=asset.tree_structure.as_ref().unwrap().clone();
+        assert!(original.fits_site(|_|true,|_|true));
+        assert!(!original.root_footprint.is_empty());
+        let foliage=asset.voxels.iter().find(|v|v.material.is_foliage()).unwrap();
+        let pos=[foliage.x,foliage.y,foliage.z];
+        assert!(asset.erase(pos));
+        assert!(!asset.tree_structure.as_ref().unwrap().cells.iter()
+            .any(|c|c.cell==pos));
+        let wood=asset.voxels.iter().find(|v|v.z>2 && v.material.is_wood()).unwrap();
+        let wood_pos=[wood.x,wood.y,wood.z];
+        assert!(asset.paint(wood_pos,Material::Leaf));
+        let marked=asset.tree_structure.as_ref().unwrap().cells.iter()
+            .find(|c|c.cell==wood_pos).unwrap();
+        assert_eq!(marked.part,TreePart::Foliage);
+        assert!(marked.branch_id.is_none());
+        let restored=VoxelAsset::from_json(&asset.to_json().unwrap()).unwrap();
+        assert_eq!(restored.tree_structure,asset.tree_structure);
+        let blank=VoxelAsset::default();
+        assert!(blank.tree_structure.is_none());
     }
 
     #[test]
