@@ -372,6 +372,33 @@ fn leaf_pixel(species:PlantPreset,u:f32,v:f32)->(bool,bool) {
                     })
                 })
         }
+        PlantPreset::CoconutPalm|PlantPreset::DatePalm => {
+            // Feather-like pinnate blades, paired along a central rachis.
+            // Date palm leaflets are denser and stiffer than coconut leaves.
+            let count=if species==PlantPreset::DatePalm {17} else {13};
+            (0..count).any(|i| {
+                let t=i as f32/(count-1) as f32;
+                let y=0.18+0.68*t;
+                let span=0.22*(1.0-(2.0*t-1.0).abs()*0.55);
+                leaf_blade(u,v,0.50-span*0.42,y-0.025,
+                    [-0.87,-0.50],span*0.58,0.019,false)
+                    ||leaf_blade(u,v,0.50+span*0.42,y-0.025,
+                        [0.87,-0.50],span*0.58,0.019,false)
+                    ||leaf_segment(u,v,[0.5,y],[0.5-span,y-0.040],0.007)
+                    ||leaf_segment(u,v,[0.5,y],[0.5+span,y-0.040],0.007)
+            })
+        }
+        PlantPreset::FanPalm => {
+            // Fan blades radiate from a single petiole tip, not a rachis.
+            (0..13).any(|i| {
+                let a=std::f32::consts::PI*(1.0+i as f32/12.0);
+                let dir=[a.cos(),a.sin()];
+                leaf_blade(u,v,0.50+dir[0]*0.21,0.61+dir[1]*0.21,
+                    dir,0.20,0.033,false)
+                    ||leaf_segment(u,v,[0.50,0.61],
+                        [0.50+dir[0]*0.34,0.61+dir[1]*0.34],0.008)
+            })
+        }
         PlantPreset::Shrub => {
             // Clusters of small rounded leaves on short, branching twigs.
             [[0.31,0.33],[0.42,0.28],[0.57,0.34],[0.70,0.29],
@@ -383,7 +410,8 @@ fn leaf_pixel(species:PlantPreset,u:f32,v:f32)->(bool,bool) {
     let side_twigs=match species {
         PlantPreset::Pine|PlantPreset::BaldCypress|
         PlantPreset::MediterraneanCypress|PlantPreset::Larch|
-        PlantPreset::Redwood => false,
+        PlantPreset::Redwood|PlantPreset::CoconutPalm|
+        PlantPreset::DatePalm|PlantPreset::FanPalm => false,
         PlantPreset::Shrub|PlantPreset::GreenBamboo|PlantPreset::BrownBamboo => {
             leaf_segment(u,v,[0.50,0.78],[0.29,0.45],0.008)
                 ||leaf_segment(u,v,[0.50,0.69],[0.70,0.38],0.008)
@@ -880,6 +908,136 @@ impl FoliageProject {
         }
     }
 
+    /// Palm-specific architecture: a solitary, nearly cylindrical stem with
+    /// curved leaf petioles at its crown. Petioles use the existing branch
+    /// metadata only for editable hexel ownership; they are not woody forks.
+    fn generate_palm(&self) -> Result<FoliageMesh, String> {
+        let shape=VoxelShape::HexPrism;
+        let size=WORLD_HEXEL_SIZE_METRES;
+        let rules=self.effective_growth_rules();
+        let trunk_rules=self.effective_trunk_rules();
+        let h=(self.height*self.overall_scale*
+            (1.0+(hash01(self.seed,0,172)*2.0-1.0)*
+                trunk_rules.height_seed_variation)).min(96.0*size);
+        let radius=(self.trunk_radius*self.overall_scale*
+            (1.0+(hash01(self.seed,0,173)*2.0-1.0)*
+                trunk_rules.radius_seed_variation)).min(8.0*size);
+        let lean_x=(self.slope*0.24+
+            (hash01(self.seed,0,170)*2.0-1.0)*rules.lean_fraction)*h;
+        let lean_y=(hash01(self.seed,0,171)*2.0-1.0)*
+            rules.lean_fraction*h;
+        let trunk=|t:f32| [
+            t*t*lean_x,t*t*lean_y,t*h
+        ];
+        let mut cells=BTreeMap::<[i32;3],Material>::new();
+        let mut ownership=BTreeMap::<[i32;3],(TreePart,Option<u32>)>::new();
+        let mut branches=Vec::new();
+        let mut spans=Vec::new();
+        for step in 0..=((h/(size*0.35)).ceil() as u32) {
+            let t=(step as f32*size*0.35/h).min(1.0);
+            let flare=(1.0-t/0.18).max(0.0).powi(2);
+            let r=(radius*(1.0-t*trunk_rules.taper)*
+                (1.0+trunk_rules.base_flare*flare))
+                .clamp(size*0.20,8.0*size);
+            paint_sphere(&mut cells,shape,size,trunk(t),r,Material::Bark);
+        }
+        for &cell in cells.keys() {
+            ownership.insert(cell,(TreePart::Trunk,Some(0)));
+        }
+        branches.push(TreeBranch {
+            id:0,parent:None,root:[0,0,0],
+            tip:grid_key(shape,size,trunk(1.0)),part:TreePart::Trunk
+        });
+
+        for i in 0..self.branch_count {
+            let rand=|channel|hash01(self.seed,i,channel);
+            if rand(0)<self.prune {continue;}
+            let angle=TAU*(i as f32/self.branch_count as f32+
+                0.11*(rand(1)-0.5));
+            // A series of densely packed leaf bases near the apical bud,
+            // rather than branches evenly distributed down the trunk.
+            let base_t=(0.92+0.065*rand(2)-0.02*self.carve_top).min(0.995);
+            let base=trunk(base_t);
+            let reach=self.branch_length*h*rules.reach_factor*
+                (0.80+0.30*rand(3));
+            let pitch=(rules.primary_pitch[0]+
+                (rules.primary_pitch[1]-rules.primary_pitch[0])*rand(4)
+                -0.15*self.gravity+0.10*self.phototropism)
+                .clamp(rules.primary_pitch[0],rules.primary_pitch[1]);
+            let tip=[
+                base[0]+reach*angle.cos(),base[1]+reach*angle.sin(),
+                (base[2]+reach*pitch).clamp(size*0.5,96.0*size),
+            ];
+            let mut mid=lerp3(base,tip,0.53);
+            // Arching rachis: lift above the straight base-to-tip segment.
+            mid[2]=(mid[2]+reach*(0.20+0.14*rand(5)))
+                .min(96.0*size);
+            let id=i+1;
+            let petiole_radius=(radius*0.29).clamp(0.08,0.23);
+            let tip_radius=(petiole_radius*0.40).max(0.035);
+            branches.push(TreeBranch {
+                id,parent:Some(0),root:grid_key(shape,size,base),
+                tip:grid_key(shape,size,tip),part:TreePart::MajorBranch,
+            });
+            spans.push(BranchSpan::new(id,base,mid,petiole_radius,
+                petiole_radius*0.72));
+            spans.push(BranchSpan::new(id,mid,tip,petiole_radius*0.72,
+                tip_radius));
+            let mut petiole_cells=BTreeMap::new();
+            paint_line(&mut petiole_cells,shape,size,base,mid,
+                petiole_radius,Material::Bark);
+            paint_line(&mut petiole_cells,shape,size,mid,tip,
+                tip_radius,Material::Bark);
+            for (cell,material) in petiole_cells {
+                let old=cells.insert(cell,material);
+                if old.is_none() || old.is_some_and(Material::is_foliage) {
+                    ownership.insert(cell,(TreePart::MajorBranch,Some(id)));
+                }
+            }
+            if self.leaf_density==0.0 {continue;}
+            let fan=self.preset==PlantPreset::FanPalm;
+            let positions:&[f32]=if fan {&[0.79,0.98]} else {
+                &[0.46,0.62,0.78,0.94]
+            };
+            for (j,&t) in positions.iter().enumerate() {
+                let location=lerp3(mid,tip,t);
+                let r=(self.leaf_scale*self.overall_scale*
+                    rules.foliage_factor*
+                    if fan {2.25} else {1.60}).max(size*0.82);
+                let mut leaf_cells=BTreeMap::new();
+                paint_leaf_cluster(&mut leaf_cells,shape,size,location,
+                    r,if fan {r*1.05} else {r*0.65},self.leaf_density,
+                    self.leaf_variation,self.leaf_angle,self.seed,i*8+j as u32);
+                for (cell,material) in leaf_cells {
+                    if let std::collections::btree_map::Entry::Vacant(v)=cells.entry(cell) {
+                        v.insert(material);
+                        ownership.insert(cell,(TreePart::Foliage,Some(id)));
+                    }
+                }
+            }
+            if cells.len()>40_000 {
+                return Err("Palm exceeds 40,000 hexels: reduce fronds or foliage density".into());
+            }
+        }
+        retain_supported_foliage(&mut cells);
+        ownership.retain(|cell,_|cells.contains_key(cell));
+        let root_footprint=cells.iter()
+            .filter(|(p,m)|p[2]==0&&m.is_wood())
+            .map(|(p,_)|[p[0],p[1]]).collect();
+        let structure=TreeStructure {
+            origin:[0,0,0],root_footprint,branches,
+            cells:ownership.into_iter().map(|(cell,(part,branch_id))|
+                TreeCell{cell,part,branch_id}).collect(),spans
+        };
+        let voxels=cells.iter().map(|(p,m)|
+            VoxelCell{x:p[0],y:p[1],z:p[2],material:*m}).collect::<Vec<_>>();
+        structure.validate(&voxels)?;
+        let triangles=tree_surface_triangles(&cells,shape,size,
+            self.leaf_render,Some(&structure));
+        Ok(FoliageMesh{voxels,triangles,shape,voxel_size:size,
+            height:h,leaf_render:self.leaf_render,structure:Some(structure)})
+    }
+
     /// All foliage is directly authored on the game's 1m Q/R/Z hexel grid.
     /// Each wood or leaf entry is a real removable world-cell definition.
     pub fn generate(&self) -> Result<FoliageMesh, String> {
@@ -941,7 +1099,8 @@ impl FoliageProject {
             let rand = |c| hash01(self.seed, i, c);
             if rand(0) < self.prune { continue; }
             let (height_fraction,angle) = match rules.phyllotaxy {
-                Phyllotaxy::Whorled | Phyllotaxy::CulmNodes => {
+                Phyllotaxy::Whorled | Phyllotaxy::CulmNodes |
+                Phyllotaxy::CrownFronds => {
                     // One node layer per tier; bamboo branches at internodes,
                     // conifers branch in whorls around a leading trunk.
                     let n=if rules.phyllotaxy==Phyllotaxy::CulmNodes {3} else {6};
@@ -1126,7 +1285,8 @@ impl FoliageProject {
                         leaf_sites.push((lerp3(mid,fork,0.72),fork_id));
                     }
                 }
-                LeafPlacement::OuterCrown => {}
+                LeafPlacement::OuterCrown | LeafPlacement::PinnateFronds |
+                LeafPlacement::FanFronds => {}
             }
             if let Some((end,id))=extra_fork {
                 leaf_sites.push((end,id));
@@ -1988,6 +2148,36 @@ mod tests {
     }
 
     #[test]
+    fn palms_have_unbranched_trunks_and_distinct_frond_crowns() {
+        for species in [PlantPreset::CoconutPalm,PlantPreset::DatePalm,
+                        PlantPreset::FanPalm] {
+            let project=FoliageProject::from_preset(species);
+            let mesh=project.generate().unwrap();
+            let tree=mesh.structure.as_ref().unwrap();
+            assert_eq!(tree.branches.len(),project.branch_count as usize+1);
+            assert!(tree.branches.iter().skip(1).all(|b|
+                b.parent==Some(0)&&b.part==TreePart::MajorBranch));
+            assert!(!tree.branches.iter().any(|b|b.part==TreePart::SmallBranch));
+            assert!(tree.cells.iter().any(|c|c.part==TreePart::Foliage));
+            assert!(tree.spans.len()>=project.branch_count as usize);
+            let high=tree.branches.iter().skip(1)
+                .filter(|b|b.root[2] as f32>mesh.height*0.85).count();
+            assert_eq!(high,project.branch_count as usize,
+                "{species:?}: palm petioles must grow at crown");
+            assert_eq!(mesh.voxels,project.generate().unwrap().voxels);
+            let mut alternate=project.clone();
+            alternate.seed+=1;
+            assert_ne!(tree.spans,
+                alternate.generate().unwrap().structure.unwrap().spans);
+            tree.validate(&mesh.voxels).unwrap();
+        }
+        let alpha=|p|leaf_cutout_for_species(p)
+            .chunks_exact(4).map(|px|px[3]).collect::<Vec<_>>();
+        assert_ne!(alpha(PlantPreset::CoconutPalm),alpha(PlantPreset::FanPalm));
+        assert_ne!(alpha(PlantPreset::DatePalm),alpha(PlantPreset::FanPalm));
+    }
+
+    #[test]
     fn all_species_have_stable_seeded_branch_and_leaf_placement() {
         for species in PlantPreset::TREE_CATALOG {
             let original=FoliageProject::from_preset(species);
@@ -2470,7 +2660,9 @@ mod tests {
             let tree=mesh.structure.as_ref().expect("procedural tree has structure");
             tree.validate(&mesh.voxels).unwrap();
             assert!(tree.branches.iter().any(|b|b.part==TreePart::MajorBranch));
-            assert!(tree.branches.iter().any(|b|b.part==TreePart::SmallBranch));
+            if !preset.is_palm() {
+                assert!(tree.branches.iter().any(|b|b.part==TreePart::SmallBranch));
+            }
             assert!(tree.cells.iter().any(|c|c.part==TreePart::Trunk));
             assert!(tree.cells.iter().any(|c|c.part==TreePart::Foliage));
             let wood:BTreeSet<_>=mesh.voxels.iter().filter(|v|v.material.is_wood())
