@@ -31,7 +31,7 @@ The authored trunk radius and taper stay unchanged; palms and bamboo skip this m
 
 ## Boundaries and next improvements
 
-- Fork branches still overlap/intersect their parent tubes. This is a deliberate first implementation: an MTree-style welded ring junction is a separate meshing algorithm, and must maintain hexel ownership. We do not claim every fork is mathematically manifold.
+- Branch bases have a small (up to 7%) render-only collar that fades within 0.75 m. Fork branches still overlap/intersect their parent tubes. This is a deliberate first implementation: an MTree-style welded ring junction is a separate meshing algorithm, and must maintain hexel ownership. We do not claim every fork is mathematically manifold.
 - Removing a cell removes all fragments assigned to it; the renderer does **not yet add realistic end-grain cut scars/caps** at the newly exposed cell boundary. No runtime detached-limb physics, resource drops, regrowth or persistent world-chunk effects are implied.
 - A branch passing between two cells is face-connected in the logical wood grid; its visual tube is clipped at physical boundaries. The existing bridge-cell fallback remains clipped so a diagonal does not create phantom wood.
 - The editor still uses bounded 40,000-cell / 96-layer foliage limits. For long-distance worlds, build/cache the derived surface per tree/dirty region, never run the clipping pass per frame or per camera movement. Dynamic LOD is not implemented.
