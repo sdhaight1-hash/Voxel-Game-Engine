@@ -8,11 +8,38 @@ use texture_studio::presets::{builtin_presets, Preset};
 use texture_studio::foliage::{FoliageProject, FoliageMesh, FoliageStage, PlantPreset, Material,
     BranchGrowth, LeafGeometry, sway_leaf_vertex};
 use texture_studio::asset::VoxelAsset;
-use texture_studio::foliage_materials::{FoliageMaterials, MaterialRole, MATERIAL_SIZE};
+use texture_studio::foliage_materials::{FoliageMaterials, MaterialRole,
+    SeasonalPalettes, MATERIAL_SIZE};
 use texture_studio::voxel::{render_atlas, render_voxel_preview, export_obj};
 
 const NODE_W: f32 = 170.0;
 const PREVIEW_SIZE: u32 = 256;
+
+/// Editing a palette changes only the GPU's color table, never the generated
+/// hexel occupancy or baked leaf texture. Each material owns four seasons.
+fn seasonal_palette_editor(ui:&mut egui::Ui,materials:&mut FoliageMaterials,
+                           base:[u8;3])->bool {
+    let mut palette=materials.effective_palettes(base);
+    let mut changed=false;
+    ui.collapsing("Seasonal leaf gradients",|ui|{
+        ui.small("Four stops: shadow, base, midtone, highlight.");
+        for (season,name) in SeasonalPalettes::NAMES.iter().enumerate() {
+            ui.horizontal(|ui|{
+                ui.label(*name);
+                for (stop,label) in SeasonalPalettes::STOPS.iter().enumerate() {
+                    let c=&mut palette.seasons[season][stop];
+                    changed |= ui.color_edit_button_srgb(c).on_hover_text(*label).changed();
+                }
+            });
+        }
+        if ui.button("Reset all seasons to species defaults").clicked() {
+            palette=SeasonalPalettes::for_species(materials.leaf_species,base);
+            changed=true;
+        }
+    });
+    if changed {materials.seasonal_palettes=Some(palette);}
+    changed
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum AssetTool { Select, Add, Erase, Paint }
@@ -114,6 +141,8 @@ struct Studio {
     foliage_dirty: bool,
     foliage_stage: FoliageStage,
     foliage_yaw: f32,
+    /// 0 Spring, 1 Summer, 2 Autumn, 3 Winter; 4 loops to Spring.
+    season_preview: f32,
     leaf_texture: Option<TextureHandle>,
     bark_texture: Option<TextureHandle>,
     asset_leaf_texture: Option<TextureHandle>,
@@ -175,6 +204,7 @@ impl Default for Studio {
             foliage_dirty: true,
             foliage_stage: FoliageStage::PresetLoader,
             foliage_yaw: 0.8,
+            season_preview: 1.0,
             leaf_texture: None,
             bark_texture: None,
             asset_leaf_texture: None,
@@ -806,6 +836,9 @@ impl Studio {
                 self.asset_mats_dirty=true;
             }
         });
+        if seasonal_palette_editor(ui,&mut self.asset.materials,self.asset.leaf_color) {
+            self.asset_gpu_scene=None;
+        }
         ui.separator();
         ui.heading("SELECTED CELL");
         if let Some(old) = self.asset_selected {
@@ -913,6 +946,8 @@ impl Studio {
             ui.label("Zoom");
             ui.add(egui::Slider::new(&mut self.asset_zoom,0.5..=3.0).show_value(false));
         });
+        ui.add(egui::Slider::new(&mut self.season_preview,0.0..=4.0)
+            .text("Season preview").fixed_decimals(2));
         let available=ui.available_size();
         let desired=Vec2::new(available.x.max(50.0),available.y.max(240.0));
         let (rect,response)=ui.allocate_exact_size(desired,Sense::click_and_drag());
@@ -920,7 +955,7 @@ impl Studio {
         painter.rect_filled(rect,4.0,Color32::from_rgb(23,27,35));
         if let (Some(gpu),Some(scene))=(&self.gpu,&self.asset_gpu_scene) {
             gpu.paint(ui,rect,Arc::clone(scene),self.asset_yaw,self.asset_zoom,
-                ui.ctx().input(|i|i.time as f32));
+                ui.ctx().input(|i|i.time as f32),self.season_preview);
         }
         if response.dragged_by(egui::PointerButton::Secondary) {
             self.asset_yaw=(self.asset_yaw+
@@ -1243,6 +1278,10 @@ impl Studio {
                 changed |= ui.color_edit_button_srgb(&mut tree.bark_color).changed();
                 ui.label("Leaf color");
                 changed |= ui.color_edit_button_srgb(&mut tree.leaf_color).changed();
+                if seasonal_palette_editor(ui,&mut tree.materials,tree.leaf_color) {
+                    self.foliage_gpu_scene=None;
+                }
+                ui.small("Seasonal gradients affect color, not occupancy or falling leaves.");
                 ui.small("Material slots: bark + dark, medium and light leaves.");
             }
             FoliageStage::FoliageDistributor => {
@@ -1302,6 +1341,8 @@ impl Studio {
         });
         ui.add(egui::Slider::new(&mut self.foliage_yaw,
             0.0..=std::f32::consts::TAU).text("Orbit"));
+        ui.add(egui::Slider::new(&mut self.season_preview,0.0..=4.0)
+            .text("Season preview").fixed_decimals(2));
         let available=ui.available_size();
         let desired=Vec2::new(available.x.max(50.0),available.y.max(250.0));
         let (rect,_) = ui.allocate_exact_size(desired,Sense::hover());
@@ -1309,7 +1350,7 @@ impl Studio {
         painter.rect_filled(rect,4.0,Color32::from_rgb(22,27,35));
         if let (Some(gpu),Some(scene))=(&self.gpu,&self.foliage_gpu_scene) {
             gpu.paint(ui,rect,Arc::clone(scene),self.foliage_yaw,1.0,
-                ui.ctx().input(|i|i.time as f32));
+                ui.ctx().input(|i|i.time as f32),self.season_preview);
         }
         let Some(mesh)=&self.foliage_mesh else {
             painter.text(rect.center(),Align2::CENTER_CENTER,
@@ -2038,7 +2079,9 @@ impl eframe::App for Studio {
                         let bark=self.asset.materials.bake_bark(64,self.asset.bark_color);
                         if let Ok(bark)=bark {
                             self.asset_gpu_scene=Some(Arc::new(GpuScene::from_mesh(
-                                mesh,&bark,&self.asset_leaf_pixels,self.asset.leaf_color)));
+                                mesh,&bark,&self.asset_leaf_pixels,self.asset.leaf_color,
+                                self.asset.materials.effective_palettes(self.asset.leaf_color)
+                                    .gpu_stops())));
                         }
                     }
                 }
@@ -2058,7 +2101,9 @@ impl eframe::App for Studio {
                         let bark=self.foliage.materials.bake_bark(64,self.foliage.bark_color);
                         if let Ok(bark)=bark {
                             self.foliage_gpu_scene=Some(Arc::new(GpuScene::from_mesh(
-                                mesh,&bark,&self.foliage_leaf_pixels,self.foliage.leaf_color)));
+                                mesh,&bark,&self.foliage_leaf_pixels,self.foliage.leaf_color,
+                                self.foliage.materials.effective_palettes(self.foliage.leaf_color)
+                                    .gpu_stops())));
                         }
                     }
                 }
