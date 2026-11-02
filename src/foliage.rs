@@ -2365,6 +2365,78 @@ mod tests {
     use super::*;
 
     #[test]
+    fn organic_wood_triangles_never_leave_authoritative_hexels() {
+        for preset in [PlantPreset::Oak,PlantPreset::Pine,
+                       PlantPreset::FremontCottonwood,PlantPreset::CaturraCoffee,
+                       PlantPreset::CoconutPalm,PlantPreset::GreenBamboo] {
+            let mesh=FoliageProject::from_preset(preset).generate().unwrap();
+            let structure=mesh.structure.as_ref().unwrap();
+            assert!(structure.spans.iter().any(|s|s.branch_id==0),
+                "{preset:?}: missing smooth trunk source");
+            let wood:BTreeSet<_>=mesh.voxels.iter().filter(|v|v.material.is_wood())
+                .map(|v|[v.x,v.y,v.z]).collect();
+            let mut count=0;
+            for tri in mesh.triangles.iter().filter(|t|t.material.is_wood()) {
+                assert!(wood.contains(&tri.cell),"{preset:?} visual ghost");
+                for position in tri.points {
+                    assert!(crate::hexel_clip::contains(position,tri.cell,mesh.voxel_size),
+                        "{preset:?}: triangle escapes {:?} at {position:?}",tri.cell);
+                }
+                count+=1;
+            }
+            assert!(count>50,"{preset:?}: no organic wood");
+        }
+    }
+
+    #[test]
+    fn authored_hexel_deletion_and_painting_never_resurrect_branch_surfaces() {
+        use crate::asset::VoxelAsset;
+        let project=FoliageProject::from_preset(PlantPreset::Oak);
+        let mesh=project.generate().unwrap();
+        let mut asset=VoxelAsset::from_tree(&project,&mesh,&crate::Graph::default());
+        let remove=mesh.triangles.iter().find(|t|
+            t.material.is_wood() && mesh.structure.as_ref().unwrap().cells
+            .iter().any(|c|c.cell==t.cell&&c.part==TreePart::MajorBranch))
+            .expect("test Oak has visible branch");
+        let position=remove.cell;
+        assert_eq!(asset.harvest_cell(position),Some(Material::Bark));
+        let trimmed=asset.mesh().unwrap();
+        assert!(!trimmed.triangles.iter()
+            .any(|t|t.cell==position&&t.material.is_wood()));
+        // Painting a different owned branch cell as leaf must not retain the
+        // old branch geometry, even when its historical span still exists.
+        let another=mesh.triangles.iter().find(|t|
+            t.material.is_wood() && t.cell!=position &&
+            mesh.structure.as_ref().unwrap().cells.iter()
+                .any(|c|c.cell==t.cell&&c.part==TreePart::MajorBranch))
+            .unwrap().cell;
+        assert!(asset.paint(another,Material::Leaf));
+        assert!(!asset.mesh().unwrap().triangles.iter()
+            .any(|t|t.cell==another&&t.material.is_wood()));
+        let loaded=VoxelAsset::from_json(&asset.to_json().unwrap()).unwrap();
+        assert_eq!(loaded.mesh().unwrap().obj(),asset.mesh().unwrap().obj());
+        assert!(!loaded.contains(position));
+    }
+
+    #[test]
+    fn older_tree_structure_without_trunk_spine_retains_original_trunk_blocks() {
+        let project=FoliageProject::from_preset(PlantPreset::Birch);
+        let mesh=project.generate().unwrap();
+        let mut legacy=mesh.structure.clone().unwrap();
+        legacy.spans.retain(|span|span.branch_id!=0);
+        legacy.validate(&mesh.voxels).unwrap();
+        let rebuild=FoliageMesh::from_voxels_with_render(
+            mesh.shape,mesh.voxel_size,mesh.voxels.clone(),mesh.leaf_render)
+            .unwrap().with_tree_structure(Some(legacy));
+        let trunk=mesh.structure.as_ref().unwrap().cells.iter()
+            .find(|p|p.part==TreePart::Trunk).unwrap().cell;
+        assert!(rebuild.triangles.iter().any(|t|
+            t.cell==trunk&&t.material.is_wood()));
+        assert_eq!(rebuild.voxels,mesh.voxels);
+    }
+
+
+    #[test]
     fn tree_growth_presets_are_saved_loaded_and_change_the_generated_tree() {
         for preset in PlantPreset::TREE_CATALOG {
             let mut tree=FoliageProject::from_preset(preset);
