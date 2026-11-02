@@ -731,10 +731,11 @@ impl TreeStructure {
             return Err("Too many branch or trunk segments for the tree".into());
         }
         for span in &self.spans {
+            let max_radius=if span.branch_id==0 {8_000} else {500};
             if !by_id.contains_key(&span.branch_id) ||
                 span.start_radius_mm==0 || span.end_radius_mm==0 ||
-                span.start_radius_mm>if span.branch_id==0 {8_000} else {500} ||
-                span.end_radius_mm>if span.branch_id==0 {8_000} else {500} ||
+                span.start_radius_mm>max_radius ||
+                span.end_radius_mm>max_radius ||
                 span.from_mm==span.to_mm ||
                 span.from_mm.iter().chain(span.to_mm.iter())
                     .any(|&v|!(-129_000..=129_000).contains(&v)) {
