@@ -55,6 +55,10 @@ fn leaf_coverage_uniform(mode:LeafAaMode)->f32 {
     }
 }
 
+fn leaf_mipmap_uniform(enabled:bool)->f32 {
+    if enabled {1.0} else {0.0}
+}
+
 /// The palette is uploaded only when the authored scene changes. Per-frame
 /// season progress stays in the small camera uniform instead.
 #[repr(C)]
@@ -408,7 +412,7 @@ impl GpuViewport {
 
     pub fn paint(&self,ui:&egui::Ui, rect:egui::Rect,scene:Arc<Scene>,
                  yaw:f32, zoom:f32, time:f32,season_progress:f32,
-                 leaf_aa_mode:LeafAaMode) {
+                 leaf_aa_mode:LeafAaMode,leaf_mipmaps:bool) {
         // Egui presents the GPU render target, populated during callback.prepare.
         ui.painter().image(self.texture_id,rect,
             egui::Rect::from_min_max(egui::Pos2::ZERO,egui::Pos2::new(1.0,1.0)),
@@ -417,7 +421,7 @@ impl GpuViewport {
             rect,RenderScene{scene,yaw,zoom,time,season_progress,
                 leaf_aa_mode:if leaf_aa_mode==LeafAaMode::Msaa4 && !self.msaa4_supported {
                     LeafAaMode::Legacy
-                } else {leaf_aa_mode},
+                } else {leaf_aa_mode},leaf_mipmaps,
                 width:rect.width(),height:rect.height()}));
     }
 }
@@ -429,6 +433,7 @@ struct RenderScene {
     time:f32,
     season_progress:f32,
     leaf_aa_mode:LeafAaMode,
+    leaf_mipmaps:bool,
     width:f32,
     height:f32,
 }
@@ -466,7 +471,7 @@ impl egui_wgpu::CallbackTrait for RenderScene {
                     .create_view(&Default::default()));
             }
             if uploads.leaf {
-                resources.leaf_view=Some(upload_rgba(device,queue,&scene.leaf_rgba)
+                resources.leaf_view=Some(upload_leaf_rgba_mips(device,queue,&scene.leaf_rgba)
                     .create_view(&Default::default()));
             }
             if uploads.bark || uploads.leaf || resources.bind_group.is_none() {
@@ -475,6 +480,7 @@ impl egui_wgpu::CallbackTrait for RenderScene {
                         label:Some("voxel-pixel-sampler"),
                         mag_filter:wgpu::FilterMode::Linear,
                         min_filter:wgpu::FilterMode::Linear,
+                        mipmap_filter:wgpu::MipmapFilterMode::Linear,
                         address_mode_u:wgpu::AddressMode::Repeat,
                         address_mode_v:wgpu::AddressMode::Repeat,
                         ..Default::default()
@@ -522,7 +528,8 @@ impl egui_wgpu::CallbackTrait for RenderScene {
             wind:[self.time,self.scene.wind_strength,self.scene.wind_speed,self.scene.voxel_size],
             season:[self.season_progress.rem_euclid(4.0),
                 self.scene.flower_kind,
-                leaf_coverage_uniform(self.leaf_aa_mode),0.0],
+                leaf_coverage_uniform(self.leaf_aa_mode),
+                leaf_mipmap_uniform(self.leaf_mipmaps)],
             leaf_base:self.scene.leaf_base,
         };
         queue.write_buffer(&resources.uniform,0,bytemuck::bytes_of(&globals));
@@ -604,11 +611,157 @@ fn upload_rgba(device:&wgpu::Device,queue:&wgpu::Queue,rgba:&[u8])->wgpu::Textur
     tex
 }
 
+/// CPU mip chain for the 64/128px foliage card. Level 0 is copied
+/// verbatim; downsampling uses alpha-weighted RGB to avoid dark edges and
+/// average alpha to retain coverage of thin vector blades.
+fn leaf_mip_chain(rgba:&[u8])->Vec<(u32,Vec<u8>)> {
+    let side=((rgba.len()/4) as f64).sqrt() as u32;
+    assert!(side>0 && side as usize*side as usize*4==rgba.len(),
+        "foliage RGBA must be a nonempty square card");
+    let mut levels=vec![(side,rgba.to_vec())];
+    while levels.last().expect("initial level").0>1 {
+        let (size,parent)=levels.last().expect("initial level");
+        let next_size=(size/2).max(1);
+        let mut pixels=Vec::with_capacity(next_size as usize*next_size as usize*4);
+        for y in 0..next_size {
+            for x in 0..next_size {
+                let mut alpha_sum=0.0f32;
+                let mut sum_rgb=[0.0f32;3];
+                let mut fallback_rgb=[0.0f32;3];
+                for oy in 0..2 {
+                    for ox in 0..2 {
+                        let sx=(2*x+ox).min(size-1);
+                        let sy=(2*y+oy).min(size-1);
+                        let i=((sy*size+sx)*4) as usize;
+                        let alpha=parent[i+3] as f32/255.0;
+                        alpha_sum+=alpha;
+                        for c in 0..3 {
+                            sum_rgb[c]+=parent[i+c] as f32*alpha;
+                            fallback_rgb[c]+=parent[i+c] as f32;
+                        }
+                    }
+                }
+                for c in 0..3 {
+                    pixels.push(if alpha_sum>0.0 {
+                        (sum_rgb[c]/alpha_sum).round() as u8
+                    } else {
+                        (fallback_rgb[c]/4.0).round() as u8
+                    });
+                }
+                pixels.push((alpha_sum/4.0*255.0).round() as u8);
+            }
+        }
+        levels.push((next_size,pixels));
+    }
+    levels
+}
+
+/// Build the mip chain once when leaf content actually changes. Switching the
+/// preview sampling mode only changes a per-frame uniform.
+fn upload_leaf_rgba_mips(device:&wgpu::Device,queue:&wgpu::Queue,
+    rgba:&[u8])->wgpu::Texture {
+    let levels=leaf_mip_chain(rgba);
+    let tex=device.create_texture(&wgpu::TextureDescriptor {
+        label:Some("voxel-foliage-mip-chain"),
+        size:wgpu::Extent3d {
+            width:levels[0].0,height:levels[0].0,depth_or_array_layers:1,
+        },
+        mip_level_count:levels.len() as u32,sample_count:1,
+        dimension:wgpu::TextureDimension::D2,
+        format:wgpu::TextureFormat::Rgba8Unorm,
+        usage:wgpu::TextureUsages::COPY_DST|wgpu::TextureUsages::TEXTURE_BINDING,
+        view_formats:&[],
+    });
+    for (level,(size,pixels)) in levels.iter().enumerate() {
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture:&tex,mip_level:level as u32,
+                origin:wgpu::Origin3d::ZERO,aspect:wgpu::TextureAspect::All,
+            },
+            pixels,
+            wgpu::TexelCopyBufferLayout {
+                offset:0,bytes_per_row:Some(size*4),rows_per_image:Some(*size),
+            },
+            wgpu::Extent3d{
+                width:*size,height:*size,depth_or_array_layers:1,
+            },
+        );
+    }
+    tex
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use texture_studio::foliage::{FoliageMesh,VoxelCell,Material};
     use texture_studio::VoxelShape;
+    #[test]
+    fn mipmap_preview_flag_changes_uniform_without_resource_uploads() {
+        assert_eq!(leaf_mipmap_uniform(false),0.0);
+        assert_eq!(leaf_mipmap_uniform(true),1.0);
+        let mesh=FoliageMesh::from_voxels(VoxelShape::Cube,0.5,vec![
+            VoxelCell{x:0,y:0,z:0,material:Material::Bark},
+            VoxelCell{x:0,y:0,z:1,material:Material::Leaf},
+        ]).unwrap();
+        let data=vec![120u8;TEX_SIZE as usize*TEX_SIZE as usize*4];
+        let palette=texture_studio::foliage_materials::SeasonalPalettes::default()
+            .gpu_stops();
+        let scene=Scene::from_mesh(&mesh,&data,&data,[50,135,75],palette,0.0);
+        assert_eq!(scene_uploads(Some(&scene),&scene),SceneUploads{
+            geometry:false,bark:false,leaf:false,palette:false,
+        });
+    }
+
+    #[test]
+    fn leaf_mip_chain_has_expected_levels_and_unchanged_base_pixels() {
+        let input=(0..64*64).flat_map(|i| {
+            let alpha=if i%5==0 {128} else if i%7==0 {0} else {255};
+            [52u8,140u8,81u8,alpha]
+        }).collect::<Vec<_>>();
+        let levels=leaf_mip_chain(&input);
+        assert_eq!(levels.iter().map(|(s,_)|*s).collect::<Vec<_>>(),
+            vec![64,32,16,8,4,2,1]);
+        assert_eq!(levels[0].1,input);
+        for (size,bytes) in &levels {
+            assert_eq!(bytes.len(),(*size as usize)*(*size as usize)*4);
+        }
+        assert_eq!(levels.last().unwrap().1.len(),4);
+    }
+
+    #[test]
+    fn alpha_weighted_mips_preserve_edge_color_and_coverage() {
+        let mut input=vec![0u8;4*4*4];
+        for i in 0..16 {
+            let at=i*4;
+            input[at..at+4].copy_from_slice(if i%2==0 {
+                &[200,120,40,255]
+            } else {
+                &[0,0,0,0]
+            });
+        }
+        let mips=leaf_mip_chain(&input);
+        for pixel in mips[1].1.chunks_exact(4) {
+            assert_eq!(&pixel[0..3],&[200,120,40],
+                "transparent black cannot darken foliage edges");
+            assert_eq!(pixel[3],128);
+        }
+        let last=mips.last().unwrap();
+        assert_eq!(&last.1[0..3],&[200,120,40]);
+        assert_eq!(last.1[3],128);
+        let constant=vec![83u8,144,61,255].repeat(64);
+        let chain=leaf_mip_chain(&constant);
+        assert!(chain.iter().all(|(_,data)|
+            data.chunks_exact(4).all(|px|px==[83,144,61,255])));
+    }
+
+    #[test]
+    fn mipmap_shader_uses_gradients_only_when_selected() {
+        let source=include_str!("voxel_gpu.wgsl");
+        assert!(source.contains("globals.season.w > 0.5"));
+        assert!(source.contains("textureSampleGrad(foliage_tex"));
+        assert!(source.contains("textureSampleLevel(foliage_tex"));
+    }
+
     #[test]
     fn wgsl_shader_parses_and_passes_naga_validation() {
         let source=include_str!("voxel_gpu.wgsl");
