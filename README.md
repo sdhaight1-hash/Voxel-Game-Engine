@@ -73,7 +73,7 @@ For now, the render target is 1024 × 1024 pixels and uses a simple orthographic
 
 The **Foliage** and **Assets** workspaces now use real material roles instead of treating every block or leaf card as a flat RGB color. Each project retains independent editable **Bark**, **Leaf Albedo** and optional **Leaf Cutout** node graphs. Current asset/project JSON supports editable material assignments; missing material assignments use palette colors and the generated leaf cutout.
 
-Every new procedural Oak, Pine, Birch, Willow, Maple or Shrub tree automatically assigns the appropriate **existing natural-material presets** for its bark and leaf appearance. Use **Procedural Material Slots** in either inspector to search and assign additional entries from the 1,039-preset library. Select a slot, click **Edit slot in Nodes**, edit its graph, then click **Apply ... to Tree/Asset** in the top toolbar. The optional cutout graph removes extra pixels from the existing silhouette; it cannot fill air gaps. **Cutout threshold** controls this additional mask.
+Every Foliage tree and bamboo preset selects its associated **existing natural-material recipes** for bark/wood and leaves, where the catalog provides them. Use **Procedural Material Slots** in either inspector to search and assign additional entries from the 1,039-preset library. Select a slot, click **Edit slot in Nodes**, edit its graph, then click **Apply ... to Tree/Asset** in the top toolbar. The optional cutout graph removes extra pixels from the existing silhouette; it cannot fill air gaps. **Cutout threshold** controls this additional mask.
 
 The same baked images drive the **3D editor preview** and the **static OBJ/MTL export**:
 
@@ -112,20 +112,19 @@ Voxel Game Engine is organized around **four linked workspaces**. **Assets** is 
 
 Use **Library → Foliage** to generate **grid-based trees with distinct geometry for bark and leaves**—a saved set of occupied bark and leaf cells; bark is a block mesh, while a leaf cell can render custom crossed polygon cards. This implements the block-world interpretation of the workflow shown in the supplied Unreal Engine 5.7 tutorial, while remaining native Rust.
 
-**Game-scale tree presets:** Oak, Pine, Birch, Willow, Maple, Shrub. All six are now tuned for real 1 m hexels rather than sub-metre cells. Selecting a preset resets the growth parameters to its species-specific defaults:
+**Complete natural-world tree catalog:** The Foliage designer includes **29 requested entries: 27 trees/fruit-tree varieties and 2 bamboo varieties**. `Shrub` is kept separately as a non-tree foliage preset (30 total selectable options). The dropdown groups species by family.
 
-| Preset | Nominal height | Designed silhouette | Default branching |
-|---|---:|---|---|
-| Oak | 13 m | Heavy trunk, broad canopy and raised crown | Canopy guided |
-| Pine | 18 m | Tall trunk, narrowing conifer crown | Classic |
-| Birch | 15 m | Slimmer trunk, lighter narrow upper crown | Canopy guided |
-| Willow | 12 m | Spreading branches with pronounced downward droop | Classic |
-| Maple | 13 m | Broad, densely foliated crown | Canopy guided |
-| Shrub | 3.5 m | Low, compact branching and foliage | Classic |
+| Group | Presets |
+|---|---|
+| Hardwood & broadleaf (10) | Acacia, Birch, Ebony, Kapok, Maple, Crimson King Maple, Oak, Purpleheart, Walnut, Willow |
+| Conifer & evergreen (5) | Bald Cypress, Mediterranean Cypress, Larch, Pine, Redwood |
+| Fruit trees (12) | Red Apple, Pink Apple, Yellow Apple, Pear, Olive, Peach, Cherry, Mango, Orange, Lychee, Breadfruit, Pomegranate |
+| Bamboo (2) | Green Bamboo, Brown Bamboo |
+| Other foliage | Shrub (not one of the 29) |
 
-The six presets now differ in **actual hexel branch architecture**, not just height, color or leaf texture: Pine uses staggered six-limb whorls and a strongly tapering crown; Willow's limbs arch outward and its forks/leaf volumes hang down; Birch branches rise into a narrower crown; Oak and Maple use different broad radial canopy envelopes; Shrub remains low and spreading. The user can switch branching style afterward. **Canopy guided** steers branch ends toward seeded crown targets without erasing the species profile; it is not a full iterative space-colonization solver. These are authored, deterministic style defaults, not a botanical growth simulation.
+**Game-scale structural presets:** Each entry has its own initial tree height, trunk radius, branch count, branch reach, canopy density, colors, and growth parameters. Key shape families include broad round crowns, Acacia's high spreading umbrella, Kapok's tall trunk/upper crown, Pine/Larch/Redwood tiered conifers, a narrow Mediterranean Cypress, drooping Willow, small orchard fruit trees and upright bamboo culms. These are procedural **1 m hexel** shapes; they are not imported models or a botanical growth simulator. Species and seeds remain editable.
 
-**Species-specific leaf-card textures:** All six presets now generate distinct procedural alpha-cutout shapes while using the same harvestable foliage hexels and crossed cards: **Oak** has rounded lobed broadleaves, **Pine** has fine needle sprays, **Birch** has small pointed/serrated leaves, **Willow** has narrow drooping blades, **Maple** has five-lobed palmate clusters, and **Shrub** has dense small rounded leaves. The silhouette is a part of the authored foliage material, survives **Edit Tree as Asset** and JSON saving, and is used consistently in GPU/CPU previews, PNG opacity exports, and OBJ/MTL textures. Material node graphs still control leaf coloration and can optionally remove pixels, not restore transparent regions.
+**Species and fruit-card materials:** Species use existing natural-material bark/leaf recipes where available and original, family-appropriate procedural leaf-card alpha silhouettes (lobed, oval, needle sprays, feathered, compound or narrow bamboo leaves). Red, Pink and Yellow Apple deliberately share an apple leaf shape but have separate ripe-fruit colors; other fruit tree presets also store fruit colors, represented by small **texture-only** accents. Physical fruit blocks, ripening, picking and item drops are **not** implemented. `FoliageMaterials` persists the chosen leaf species and fruit color through Asset conversion and texture baking.
 
 **Game-standard hexels only:** All Foliage generation, preview and exports use **axial Q/R with integer vertical Z**, a 1 m across-flats footprint and a 1 m vertical layer. Bark is solid physical hexel geometry; leaf hexels are logical removable cells represented visually by crossed, alpha-cutout texture cards. Wood has priority over leaf occupancy. Diagonal branches are bridged with face-adjacent hexels. A full standard hexel is approximately 0.866 m³.
 
