@@ -53,6 +53,15 @@ fn frozen_legacy_albedo_hashes_at_export_resolutions() {
         assert_eq!(fnv1a(&graph.render_rgba(size,size).unwrap()),expected,
             "legacy albedo changed at {size}px");
     }
+    for (size,expected) in [
+        (256,0x1ce3545ecc0e2325_u64),
+        (512,0xb137934da3d22325),
+        (1024,0x6a57fe8902e22325),
+        (2048,0x00a0a3767f222325),
+    ] {
+        assert_eq!(fnv1a(&graph.render_output_channel_rgba(1,size,size).unwrap()),
+            expected,"legacy checker roughness changed at {size}px");
+    }
 }
 
 #[test]
