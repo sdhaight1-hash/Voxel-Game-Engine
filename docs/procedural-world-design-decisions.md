@@ -1,10 +1,21 @@
-# Procedural World — Design Decisions (v0.1)
+# Procedural World — Design Decisions (v0.2)
 
 **Status:** Working design; documents agreed direction, provisional defaults, and open engineering decisions. **Not an implementation claim.**  
 **Recorded:** 2026-11-01  
-**Project:** Voxel Game Engine (Rust + wgpu)
+**Documentation synchronized:** 2026-11-01  
+**Repository:** [sdhaight1-hash/Voxel-Game-Engine](https://github.com/sdhaight1-hash/Voxel-Game-Engine) — **this repository only**. The working executable is the Rust procedural material/voxel asset editor; the planetary game-world specification below is a future architecture, **not implemented**.
 
 > This document records the current direction established in design discussion. It **supersedes the proposed unbounded, gameplay-time Terrain Diffusion workflow as the default synthetic-world direction** in [world-generation-foundation.md](world-generation-foundation.md). The older [Tellus/Earth-world research](real-earth-world-generation.md) remains reference material, but Tellus is **not** the chosen foundation for this synthetic toroidal world. Do not treat experimental techniques, sizes, compression ratios, or algorithms below as implemented or benchmarked.
+
+## Documentation map and boundaries
+
+This is the **authoritative current design record**. Companion documents in this same repository:
+
+- [Synthetic world-generation foundation](world-generation-foundation.md) — current proposed tectonics → Terrain Diffusion → compressed geography → streamed hexel pipeline, including older InfiniteDiffusion research.
+- [Tellus / real-Earth research](real-earth-world-generation.md) — **archived/superseded** dual-world-mode candidate, kept for geodata lessons; **not an active second terrain provider**.
+- [Repository README](../README.md) — what the **existing** procedural asset/material editor currently does, plus a short pointer to this future-world specification.
+
+**Project boundaries:** The material/asset editor already supports **cube and hexagonal-prism assets**; that does not mean this repository already has a planetary hexel runtime. Another hexel prototype may be cited as a research/reference implementation, but **no other repository is being changed or implicitly merged**. The 1,024 km torus, synthetic tectonics/diffusion, conserved hydrology and reactive pub/sub architecture are **design work** until tested and implemented.
 
 ## Decision status conventions
 
@@ -39,7 +50,7 @@ The user-selected vertical world height is fixed for each world at creation.
 | 768 | Tall option | Y=331 | 436 |
 | 1,024 | Extreme option | Y=441 | 582 |
 
-`Y` is vertical; `X` and `Z` are horizontal. `H` is the number of valid vertical block positions, `0 ... H-1`.
+`Y` is vertical; `X/Z` are informal Cartesian geographic directions. **Playable hexels use axial Q/R horizontally and Y vertically** if that geometry is adopted. `H` is the number of valid vertical block positions, `0 ... H-1`.
 
 `Y_sea = floor(H × 0.431372549)`
 
@@ -222,40 +233,40 @@ No end-to-end performance numbers or compression ratios have yet been demonstrat
 
 **Open:** update ordering, event durability, subscription identity/lifecycles, thread partitioning, atomic region transfer strategy, persistence consistency and index layouts. Strict conservation is a previously decided invariant; the notification implementation is **not** decided.
 
-## 9B. Rust library baseline and candidate additions
+## 9B. Rust dependency inventory for **this repository**
 
-**Confirmed from the current [Hexel-Game-Engine Cargo.toml](https://github.com/sdhaight1-hash/Hexel-Game-Engine/blob/main/Cargo.toml):** these are **already declared dependencies**, not proposals to install them:
+**Verified in this repository's [Cargo.toml](../Cargo.toml) (2026-11-01):** This is the **actual installed/declaration baseline** for the existing `texture-studio` asset editor, **not** the dependency list from another engine.
 
-| Crate | Declared baseline | Intended use | Position |
-|---|---|---|---|
-| `bytemuck` | `1.21` + `derive` | Plain-old-data GPU buffer conversions | Keep |
-| `image` | `0.25`, PNG only | Load textures | Keep |
-| `glam` | `0.29` | Spatial math, matrices, transforms | Keep |
-| `hexx` | `0.20` | Hex geometry, axial coordinates and neighbour operations | Core; keep |
-| `noise` | `0.9` | Deterministic small-scale procedural details | Keep |
-| `pollster` | `0.4` | Minimal async initialization bridge | Keep initially |
-| `tracing` | `0.1` | Structured diagnostics | Keep |
-| `tracing-subscriber` | `0.3` + `env-filter` | Filter and format traces | Keep |
-| `wgpu` | `24` | GPU rendering, possible compute | Keep initially |
-| `winit` | `0.30` | Windowing, input and event loop | Keep |
-
-The existing project also declares `approx = "0.5"` under dev-dependencies.
-
-**Candidate future crates — add only against a concrete implementation requirement:**
-
-| Candidate | Purpose | Priority/decision |
+| Dependency declared here | Version / features | Current role |
 |---|---|---|
-| `zstd` | Independently compress stored elevation tiles, region data and chunk snapshots | First choice when tile storage is implemented |
-| `rayon` | Parallelize measured CPU-side generation or meshing workloads | Add after establishing bottleneck |
-| `serde` (and compatible encoding as needed) | Serialize versioned world metadata and persistent state | Evaluate when defining saved schemas |
-| `redb` | Embedded transactional persistence for edit and regional simulation state | Evaluate, not committed |
-| `crossbeam-channel` | Bounded worker/change queues with backpressure | Evaluate against `std::sync::mpsc` or existing queue needs |
+| `eframe` | `0.37`, `wgpu` feature | Native egui app and its GPU backend |
+| `bytemuck` | `1.25`, `derive` | GPU-compatible data casting |
+| `serde` | `1`, `derive` | Serialization structures |
+| `serde_json` | `1` | Project and asset JSON |
+| `png` | `0.18` | PNG assets/export |
+| `rfd` | `0.17` | Native file dialogs |
+| `naga` (dev) | `30`, `wgsl-in` | WGSL validation in tests |
 
-**Version policy:** No automatic upgrades. In particular, `hexx` and `glam` may require coordinated upgrades because their vector types and dependency versions must align. Upgrade `wgpu` separately with renderer/compiler validation; major API upgrades are not prerequisite to the reactive-state or terrain prototypes. Confirm exact compatible current releases at upgrade time rather than pinning speculative versions here.
+**Important correction to earlier discussions:** The list `bytemuck 1.21`, `image 0.25`, `glam 0.29`, `hexx 0.20`, `noise 0.9`, `pollster 0.4`, `tracing 0.1`, `tracing-subscriber 0.3`, `wgpu 24`, `winit 0.30` is from the **separate Hexel Engine prototype**, not from this repository's Cargo manifest. It is a source of **possible implementation choices**, not existing dependencies here. No external repo is part of this doc maintenance.
 
-**Module ownership, not crate-driven architecture:** Use `hexx` + `glam` for cell and world geometry; our own **periodic lattice coordinate rules** for the torus; immutable diffusion/tectonic files plus `zstd` for geographical storage; purpose-built authoritative state, transfers and interest tracking for finite water/pub-sub; `wgpu` + `winit` for rendering/input. Neither a library nor SpaceTimeDB replaces the need to define invariants, update phases and durable ownership.
+**Candidates for future world development — introduce only for measured needs:**
 
-**Scope of this document:** This is a design recommendation, **not a dependency change or implementation** in either GitHub repository.
+| Candidate | Why consider it | Current status |
+|---|---|---|
+| `hexx` | Axial hex coordinates, neighbours, layouts; periodic torus wrapper still custom | Preferred for hexel prototype, not declared here |
+| `glam` | Camera, vectors and transforms if not met by existing framework | Evaluate against eframe's existing math/types |
+| `noise` | Deterministic fine terrain/biome noise | Optional, not declared |
+| `zstd` | Compressed immutable elevation tiles and chunk snapshots | Strong candidate when persistent tiles exist |
+| `rayon` | CPU parallelism for measured heavy generation/meshing | Add after benchmarking |
+| `redb` | Transactional embedded state for regions, player edits and finite resources | Evaluate; not committed |
+| `crossbeam-channel` | Bounded worker/change queues | Evaluate against standard library and existing queues |
+| `tracing`, `tracing-subscriber` | Structured tracing as simulation grows | Optional, not declared here |
+| `image`, `pollster`, direct `wgpu` / `winit` | Possible low-level graphics/load/init needs | **Do not add reflexively**; the app already uses `eframe` with `wgpu` support |
+| `serde` | Versioned persistent world schemas | **Already present**; extend its use rather than add it again |
+
+**Upgrade discipline:** Do not replace the existing eframe/wgpu integration, introduce a second independently versioned wgpu dependency, or change the asset renderer simply because the hexel prototype used different versions. Test `hexx`/`glam` type compatibility if adopting them, and change Cargo only when actually implementing world features. A real database is **not** required merely to emulate SpaceTimeDB-style subscriptions.
+
+**Scope:** No dependencies or source code are changed by this design document.
 
 ## 10. Technical references (inspiration, not implementation claims)
 
@@ -294,7 +305,7 @@ External references:
 11. **Conserved-water implementation:** choose quantization/accounting, reservoir/basin and groundwater models, local fluid solver, active/inactive reconciliation, and validation limits; the **finite-water rule itself is decided**.
 12. **Hexel architecture:** exact cell radius/height/scale, wrapping lattice periods, 16³ versus 32³ chunk performance, meshing, collision, water-face geometry and practical building rules.
 13. **Reactive state design:** choose the smallest adequate typed invalidation, region interests, transaction boundaries, ordering and storage mechanism; do not assume SpaceTimeDB is a dependency.
-14. **Rust dependency additions/upgrades:** benchmark and add only when a feature requires them; preserve existing Cargo versions until compatibility tests justify upgrading.
+14. **Rust dependency additions/upgrades:** benchmark and add only when a feature requires them; preserve **this repo's** eframe/serde/bytemuck baseline until compatibility tests justify upgrading. Hexel-prototype crate versions are not installed here.
 
 ## 12. Initial validation plan
 
@@ -310,12 +321,12 @@ External references:
 10. Validate **periodic axial hex-coordinate wrapping** across both lattice periods; confirm unique canonical cells, neighbour reciprocity, seam collision and hex-face fluid transfers.
 11. Add one authoritative edit command, region-scoped typed dirty notification and an entity changing subscribed regions; verify only relevant meshes and fields rebuild.
 12. Test an atomic finite-water transfer across active and inactive region state, including failure/rollback, save/reload and no duplicate water ownership.
-13. Profile the existing Rust dependency baseline before proposing `hexx`/`glam`/`wgpu` upgrades or introducing `rayon`, `redb` or a dedicated message-queue crate.
+13. Profile **this repository's actual eframe/wgpu + serde dependency stack** before introducing `hexx`, `glam`, `rayon`, `redb`, or dedicated message-queue crates; test any direct wgpu API change separately.
 
 ---
 
 ### Summary
 
-**Chosen direction:** A **1,024 × 1,024 km**, finite **horizontally toroidal** synthetic world; **512-block default** vertical height with **256/768/1,024** options; **complete pre-generation and permanent compression of base Terrain Diffusion geography**; **no diffusion inference in gameplay**; **streamed, regenerable detailed voxel terrain**; **persistent independent edit data**; tectonics-first geography, **finite conserved water** and coherent global climate/ecology. **Preferred playable cell geometry is now hexagonal prisms (Q/R/Y)**, with the existing Hexel Engine as the implementation reference, pending lattice/chunk tests. A SpaceTimeDB-inspired reactive world-state design and selective Rust dependency additions are **proposals**, not implemented subsystems.
+**Chosen future-world direction (not implemented):** A **1,024 × 1,024 km**, finite **horizontally toroidal** synthetic world; **512-block default** vertical height with **256/768/1,024** options; **complete pre-generation and permanent compression of base Terrain Diffusion geography**; **no diffusion inference in gameplay**; **streamed, regenerable detailed voxel terrain**; **persistent independent edit data**; tectonics-first geography, **finite conserved water** and coherent global climate/ecology. **Preferred playable cell geometry is now hexagonal prisms (Q/R/Y)**, with the existing Hexel Engine as the implementation reference, pending lattice/chunk tests. A SpaceTimeDB-inspired reactive world-state design and selective Rust dependency additions are **proposals**, not implemented subsystems. **This repository's existing code remains the texture/material/asset editor**, with cubes and hexagonal-prism models both available there.
 
 **Important open problem:** How to map geographic kilometres and realistic mountain elevation into a fixed-height voxel game **without unacceptable slope distortion**. Do not hard-code a metre-per-voxel equivalence until this is resolved.
