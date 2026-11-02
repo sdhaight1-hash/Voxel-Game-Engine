@@ -1390,6 +1390,59 @@ mod tests {
     }
 
     #[test]
+    fn all_species_have_valid_branch_hierarchy_and_supported_leaves() {
+        const NEIGHBORS:[[i32;3];8]=[
+            [0,1,0],[-1,1,0],[-1,0,0],[0,-1,0],[1,-1,0],[1,0,0],
+            [0,0,1],[0,0,-1],
+        ];
+        for preset in PlantPreset::ALL {
+            let mesh=FoliageProject::from_preset(preset).generate().unwrap();
+            let tree=mesh.structure.as_ref().expect("procedural tree has structure");
+            tree.validate(&mesh.voxels).unwrap();
+            assert!(tree.branches.iter().any(|b|b.part==TreePart::MajorBranch));
+            assert!(tree.branches.iter().any(|b|b.part==TreePart::SmallBranch));
+            assert!(tree.cells.iter().any(|c|c.part==TreePart::Trunk));
+            assert!(tree.cells.iter().any(|c|c.part==TreePart::Foliage));
+            let wood:BTreeSet<_>=mesh.voxels.iter().filter(|v|v.material.is_wood())
+                .map(|v|[v.x,v.y,v.z]).collect();
+            // Branch endpoints/attachments are actual connected wood cells.
+            for b in &tree.branches {
+                assert!(wood.contains(&b.root),"{preset:?}: missing branch root");
+                assert!(wood.contains(&b.tip),"{preset:?}: missing branch tip");
+            }
+            let mut reachable=wood.clone();
+            let mut queue:VecDeque<_>=wood.into_iter().collect();
+            while let Some(pos)=queue.pop_front() {
+                for d in NEIGHBORS {
+                    let n=[pos[0]+d[0],pos[1]+d[1],pos[2]+d[2]];
+                    if tree.cells.iter().any(|c|c.cell==n) && reachable.insert(n) {
+                        queue.push_back(n);
+                    }
+                }
+            }
+            assert_eq!(reachable.len(),mesh.voxel_count(),
+                "{preset:?}: unsupported foliage island");
+        }
+    }
+
+    #[test]
+    fn structure_site_checks_ground_footprint_and_volume_clearance() {
+        let mesh=FoliageProject::from_preset(PlantPreset::Oak).generate().unwrap();
+        let structure=mesh.structure.as_ref().unwrap();
+        assert!(structure.fits_site(|_|true,|_|true));
+        let missing=structure.root_footprint[0];
+        assert!(!structure.fits_site(|pos|pos!=missing,|_|true));
+        let blocked=structure.cells.last().unwrap().cell;
+        assert!(!structure.fits_site(|_|true,|pos|pos!=blocked));
+        let mut bad=structure.clone();
+        bad.cells[0].branch_id=Some(999_999);
+        assert!(bad.validate(&mesh.voxels).is_err());
+        let mut bad=structure.clone();
+        bad.root_footprint.clear();
+        assert!(bad.validate(&mesh.voxels).is_err());
+    }
+
+    #[test]
     fn game_foliage_rejects_solid_leaf_meshes() {
         let mut project = FoliageProject::default();
         project.leaf_render.geometry = LeafGeometry::SolidVoxel;
