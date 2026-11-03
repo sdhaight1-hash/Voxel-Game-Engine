@@ -712,6 +712,34 @@ impl Studio {
         self.status = "Loaded editable bricks material example".into();
     }
 
+    fn import_png_for_node(&mut self,node_id:u64) {
+        let Some(path)=rfd::FileDialog::new()
+            .add_filter("PNG image",&["png"]).pick_file() else {return;};
+        let result=(||->Result<String,String>{
+            let file_size=std::fs::metadata(&path)
+                .map_err(|error|error.to_string())?.len();
+            if file_size>texture_studio::bitmap_assets::MAX_PNG_BYTES as u64 {
+                return Err("PNG source exceeds 4 MiB".into());
+            }
+            let bytes=std::fs::read(&path).map_err(|error|error.to_string())?;
+            let filename=path.file_name().and_then(|name|name.to_str())
+                .unwrap_or("bitmap.png");
+            let image_id=self.graph.import_png_bytes(filename,&bytes)?;
+            let node=self.graph.node_mut(node_id)
+                .ok_or("Selected bitmap node no longer exists")?;
+            match &mut node.kind {
+                NodeKind::BitmapColor{asset_id,..} |
+                NodeKind::BitmapAlpha{asset_id,..} => *asset_id=image_id,
+                _=>return Err("Selected node is not a bitmap source".into()),
+            }
+            Ok(format!("Imported PNG as embedded bitmap #{image_id}; project is portable"))
+        })();
+        match result {
+            Ok(status)=>{self.dirty=true;self.status=status;},
+            Err(error)=>self.status=format!("PNG import failed: {error}"),
+        }
+    }
+
     fn spawn(&mut self, kind: NodeKind) {
         let offset = self.graph.nodes.len() as f32 * 24.0;
         let id = self.graph.add_node(kind, [80.0 + offset, 235.0 + offset]);
@@ -2179,6 +2207,10 @@ impl Studio {
                     cells:10,scale:0.8,jitter:0.2,rotation:1.0,
                     brightness:0.3,seed:55}),
             ]),
+            ("BITMAP INPUTS", vec![
+                ("Bitmap Color",NodeKind::BitmapColor{asset_id:0,bilinear:true}),
+                ("Bitmap Alpha",NodeKind::BitmapAlpha{asset_id:0,bilinear:true}),
+            ]),
             ("REGION VARIATION", vec![
                 ("Region Value", NodeKind::RegionValue{cells:7,seed:17}),
                 ("Region Border Mask", NodeKind::RegionBorderMask{cells:7,seed:17,width:0.2}),
@@ -2329,6 +2361,10 @@ impl Studio {
             ui.label("Select a node on the canvas.");
             return;
         };
+        let bitmap_choices:Vec<(u64,String)>=self.graph.images.iter()
+            .map(|image|(image.id,format!("{} ({}x{})",image.name,
+                image.width,image.height))).collect();
+        let mut import_bitmap=false;
         let Some(node) = self.graph.node_mut(id) else {
             self.selected = None;
             return;
@@ -2618,6 +2654,22 @@ impl Studio {
                 ui.label("Convert RGB to a scalar using luminance weights.");
                 ui.small("Use between legacy RGB generators and typed Scalar inputs.");
             }
+            NodeKind::BitmapColor{asset_id,bilinear} |
+            NodeKind::BitmapAlpha{asset_id,bilinear} => {
+                ui.small("Embedded PNG; the image path is never used after import.");
+                let selected=bitmap_choices.iter().find(|(id,_)|id==asset_id)
+                    .map(|(_,label)|label.as_str()).unwrap_or("Unassigned bitmap");
+                egui::ComboBox::from_id_salt(("bitmap_asset",id))
+                    .selected_text(selected).show_ui(ui,|ui|{
+                        changed |= ui.selectable_value(asset_id,0,"Unassigned").changed();
+                        for (choice,label) in &bitmap_choices {
+                            changed |= ui.selectable_value(asset_id,*choice,label).changed();
+                        }
+                    });
+                changed |= ui.checkbox(bilinear,"Bilinear (otherwise nearest)").changed();
+                import_bitmap=ui.button("Import PNG into project").clicked();
+                ui.small("Max 512x512 RGBA8; 16 images and 8 MiB pixels per graph.");
+            }
             NodeKind::RegionValue{cells,seed} => {
                 ui.small("One stable random Scalar per periodic Voronoi region. Threshold to Mask for material variation.");
                 changed |= ui.add(egui::Slider::new(cells,2..=32)
@@ -2696,6 +2748,7 @@ impl Studio {
                 self.status = "Node deleted".into();
             }
         }
+        if import_bitmap {self.import_png_for_node(id);}
     }
 
 
@@ -3460,7 +3513,8 @@ fn node_accent(kind: NodeKind) -> Color32 {
     match kind {
         NodeKind::Noise { .. } | NodeKind::Checker { .. } | NodeKind::Color { .. }
             | NodeKind::Scalar { .. } | NodeKind::Bricks { .. } | NodeKind::Voronoi { .. } | NodeKind::Strata { .. }
-            | NodeKind::RegionValue{..} | NodeKind::RegionBorderMask{..} => Color32::from_rgb(43, 95, 131),
+            | NodeKind::RegionValue{..} | NodeKind::RegionBorderMask{..}
+            | NodeKind::BitmapColor{..} | NodeKind::BitmapAlpha{..} => Color32::from_rgb(43, 95, 131),
         NodeKind::Library { operation, .. } => match operation.category() {
             "Shapes & Gradients" | "Noise" | "Patterns" => Color32::from_rgb(43, 95, 131),
             "Transforms" => Color32::from_rgb(107, 80, 148),
