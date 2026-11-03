@@ -1161,7 +1161,7 @@ mod tests {
             .gpu_stops();
         let baseline=Scene::from_mesh(&mesh,&bark,&leaf,[50,150,80],palette,0.0);
         assert_eq!(scene_uploads(None,&baseline),SceneUploads {
-            geometry:true,bark:true,leaf:true,palette:true, bark_roughness:true,bark_normal:true,bark_metallic:true,leaf_roughness:false,leaf_normal:false,
+            geometry:true,bark:true,leaf:true,palette:true, bark_roughness:true,bark_normal:true,bark_metallic:true,leaf_roughness:true,leaf_normal:true,
         });
         let identical=Scene::from_mesh(&mesh,&bark,&leaf,[50,150,80],palette,0.0);
         assert_eq!(scene_uploads(Some(&baseline),&identical),SceneUploads {
@@ -1207,6 +1207,7 @@ mod tests {
         assert_eq!(metrics,UploadMetrics {
             vertex_buffers:2,bark_textures:2,leaf_textures:1,palette_writes:2,
             roughness_textures:1,normal_textures:1,metallic_textures:1,
+            leaf_roughness_textures:1,leaf_normal_textures:1,
         });
     }
 
@@ -1459,5 +1460,80 @@ mod tests {
         assert!(shader.contains("ambient=studio_indirect"));
         assert!(shader.contains("var ambient=base*(1.0-metal)*0.16"));
         assert!(shader.contains("level*26.0+1.0+uv.y*24.0"));
+    }
+
+    #[test]
+    fn foliage_pbr_uploads_only_leaf_data_maps_and_keeps_legacy_opt_in() {
+        let mesh=FoliageMesh::from_voxels(VoxelShape::Cube,0.5,vec![
+            VoxelCell{x:0,y:0,z:0,material:Material::Bark},
+            VoxelCell{x:0,y:0,z:1,material:Material::Leaf},
+        ]).unwrap();
+        let pixels=vec![100;64*64*4];
+        let stops=texture_studio::foliage_materials::SeasonalPalettes::default()
+            .gpu_stops();
+        let legacy=Scene::from_mesh(&mesh,&pixels,&pixels,[63,141,72],
+            stops,0.0);
+        assert!(!legacy.leaf_pbr_enabled);
+        assert!(!legacy.bark_pbr_enabled);
+        let rough=vec![178;64*64*4];
+        let normal=vec![128,128,255,255].repeat(64*64);
+        let physical=Scene::from_mesh(&mesh,&pixels,&pixels,[63,141,72],
+            stops,0.0).with_leaf_pbr_maps(rough.clone(),normal.clone());
+        assert!(physical.leaf_pbr_enabled);
+        assert!(!physical.bark_pbr_enabled,
+            "leaf PBR must be independently selectable");
+        assert_eq!(scene_uploads(Some(&legacy),&physical),SceneUploads{
+            geometry:false,bark:false,leaf:false,palette:false,
+            bark_roughness:false,bark_normal:false,bark_metallic:false,
+            leaf_roughness:true,leaf_normal:true,
+        });
+        let new_rough=Scene::from_mesh(&mesh,&pixels,&pixels,[63,141,72],
+            stops,0.0).with_leaf_pbr_maps(vec![90;64*64*4],normal.clone());
+        assert_eq!(scene_uploads(Some(&physical),&new_rough),SceneUploads{
+            geometry:false,bark:false,leaf:false,palette:false,
+            bark_roughness:false,bark_normal:false,bark_metallic:false,
+            leaf_roughness:true,leaf_normal:false,
+        });
+        let new_normal=Scene::from_mesh(&mesh,&pixels,&pixels,[63,141,72],
+            stops,0.0).with_leaf_pbr_maps(
+                rough.clone(),vec![127,140,245,255].repeat(64*64));
+        assert_eq!(scene_uploads(Some(&physical),&new_normal),SceneUploads{
+            geometry:false,bark:false,leaf:false,palette:false,
+            bark_roughness:false,bark_normal:false,bark_metallic:false,
+            leaf_roughness:false,leaf_normal:true,
+        });
+        let ibl=Scene::from_mesh(&mesh,&pixels,&pixels,[63,141,72],
+            stops,0.0).with_leaf_pbr_maps(rough,normal)
+            .with_studio_ibl(true);
+        assert_eq!(scene_uploads(Some(&physical),&ibl),SceneUploads{
+            geometry:false,bark:false,leaf:false,palette:false,
+            bark_roughness:false,bark_normal:false,bark_metallic:false,
+            leaf_roughness:false,leaf_normal:false,
+        },"leaf-only studio IBL must remain uniform-only");
+        assert!(ibl.bark_studio_ibl);
+        let shader=include_str!("voxel_gpu.wgsl");
+        assert!(shader.contains("globals.bark_mapping.w > 0.5"));
+        assert!(shader.contains("leaf_roughness_tex"));
+        assert!(shader.contains("leaf_normal_tex"));
+        assert!(shader.contains("textureSampleGrad(leaf_roughness_tex"));
+        assert!(shader.contains("textureSampleGrad(leaf_normal_tex"));
+        assert!(shader.contains("roughness,0.0"));
+        assert!(shader.contains("rgba.rgb * input.tint.rgb"));
+        assert!(shader.contains("return vec4<f32>(color,rgba.a)"));
+        assert!(shader.contains("if (rgba.a < 0.5 && blossom < 0.55) { discard; }"));
+    }
+
+    #[test]
+    fn opaque_leaf_pbr_data_mips_keep_neutral_normals_and_roughness() {
+        let normal=vec![128u8,128,255,255].repeat(64*64);
+        let rough=vec![204u8,204,204,255].repeat(64*64);
+        for data in [&normal,&rough] {
+            let chain=leaf_mip_chain(data);
+            assert_eq!(chain.len(),7);
+            for (_,pixels) in chain {
+                assert_eq!(pixels.len()%4,0);
+                assert!(pixels.chunks_exact(4).all(|pixel|pixel==&data[..4]));
+            }
+        }
     }
 }
