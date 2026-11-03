@@ -7,6 +7,7 @@ use bytemuck::{Pod, Zeroable};
 use eframe::{egui, egui_wgpu::{self, wgpu, wgpu::util::DeviceExt}};
 
 use texture_studio::foliage::{FoliageMesh, Material};
+use crate::studio_environment;
 
 const TARGET_SIZE: u32 = 1024;
 #[cfg(test)]
@@ -44,7 +45,7 @@ struct Uniforms {
     season: [f32; 4],
     leaf_base: [f32; 4],
     /// x = bark meters per repeat, zero disables physical UV mapping.
-    /// y = opt-in roughness/normal dielectric BRDF.
+    /// y = opt-in metallic/roughness/normal BRDF, z = studio IBL enabled.
     bark_mapping: [f32;4],
 }
 
@@ -90,6 +91,8 @@ pub struct Scene {
     /// Graph Metallic output, R8 linear factor carried in RGBA8 data.
     bark_metallic_rgba: Vec<u8>,
     bark_pbr_enabled: bool,
+    /// Preview-only environment switch; does not affect graph or mesh bytes.
+    bark_studio_ibl: bool,
     leaf_rgba: Vec<u8>,
     palette: GpuPalette,
     leaf_base: [f32;4],
@@ -169,6 +172,7 @@ impl Scene {
             bark_normal_rgba:vec![128,128,255,255],
             bark_metallic_rgba:vec![0,0,0,255],
             bark_pbr_enabled:false,
+            bark_studio_ibl:false,
             leaf_rgba:leaf.to_vec(),
             palette:GpuPalette{stops:palette},
             leaf_base:[leaf_tint[0] as f32/255.0,leaf_tint[1] as f32/255.0,
@@ -200,6 +204,13 @@ impl Scene {
         self.bark_normal_rgba=normal;
         self.bark_metallic_rgba=metallic;
         self.bark_pbr_enabled=true;
+        self
+    }
+
+    /// The IBL textures belong to the viewport, so this changes only the
+    /// uniform and never generates branches or rebakes graph materials.
+    pub fn with_studio_ibl(mut self,enabled:bool)->Self {
+        self.bark_studio_ibl=enabled;
         self
     }
 
@@ -328,6 +339,9 @@ struct Resources {
     bark_roughness_view: Option<wgpu::TextureView>,
     bark_normal_view: Option<wgpu::TextureView>,
     bark_metallic_view: Option<wgpu::TextureView>,
+    studio_specular_view: Option<wgpu::TextureView>,
+    studio_diffuse_view: Option<wgpu::TextureView>,
+    studio_environment_loaded: bool,
     sampler: Option<wgpu::Sampler>,
     vertex: Option<wgpu::Buffer>,
     vertex_count: u32,
@@ -415,6 +429,23 @@ impl GpuViewport {
                 },
                 wgpu::BindGroupLayoutEntry {
                     binding:7,visibility:wgpu::ShaderStages::FRAGMENT,
+                    ty:wgpu::BindingType::Texture {
+                        multisampled:false,
+                        view_dimension:wgpu::TextureViewDimension::D2,
+                        sample_type:wgpu::TextureSampleType::Float{filterable:true},
+                    },count:None,
+                },
+                // Studio IBL images are data-textures (linear RGB).
+                wgpu::BindGroupLayoutEntry {
+                    binding:8,visibility:wgpu::ShaderStages::FRAGMENT,
+                    ty:wgpu::BindingType::Texture {
+                        multisampled:false,
+                        view_dimension:wgpu::TextureViewDimension::D2,
+                        sample_type:wgpu::TextureSampleType::Float{filterable:true},
+                    },count:None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding:9,visibility:wgpu::ShaderStages::FRAGMENT,
                     ty:wgpu::BindingType::Texture {
                         multisampled:false,
                         view_dimension:wgpu::TextureViewDimension::D2,
@@ -538,7 +569,9 @@ impl GpuViewport {
             group_layout,uniform,palette_buffer,bind_group:None,
             bark_view:None,leaf_view:None,
             bark_roughness_view:None,bark_normal_view:None,
-            bark_metallic_view:None,sampler:None,
+            bark_metallic_view:None,
+            studio_specular_view:None,studio_diffuse_view:None,
+            studio_environment_loaded:false,sampler:None,
             vertex:None,vertex_count:0,last_scene:None,
             upload_metrics:UploadMetrics::default(),
             _target:target,target_view,
@@ -627,9 +660,35 @@ impl egui_wgpu::CallbackTrait for RenderScene {
                     upload_rgba(device,queue,&scene.bark_metallic_rgba)
                         .create_view(&Default::default()));
             }
+            // Bind 1x1 neutral placeholders initially. Build the actual
+            // environment once on first request; subsequent PBR/material,
+            // camera, season or scale changes cannot trigger its upload.
+            let mut environment_changed=false;
+            if resources.studio_specular_view.is_none() {
+                let black=[0,0,0,255];
+                resources.studio_specular_view=Some(
+                    upload_rgba(device,queue,&black).create_view(&Default::default()));
+                resources.studio_diffuse_view=Some(
+                    upload_rgba(device,queue,&black).create_view(&Default::default()));
+                environment_changed=true;
+            }
+            if scene.bark_pbr_enabled && scene.bark_studio_ibl
+                && !resources.studio_environment_loaded {
+                let table=studio_environment::generate();
+                resources.studio_specular_view=Some(upload_rgba_rect(
+                    device,queue,&table.specular,
+                    studio_environment::WIDTH,studio_environment::ATLAS_HEIGHT,
+                    "studio-ggx-specular-atlas").create_view(&Default::default()));
+                resources.studio_diffuse_view=Some(upload_rgba_rect(
+                    device,queue,&table.irradiance,
+                    studio_environment::WIDTH,studio_environment::HEIGHT,
+                    "studio-cosine-irradiance").create_view(&Default::default()));
+                resources.studio_environment_loaded=true;
+                environment_changed=true;
+            }
             if uploads.bark || uploads.leaf || uploads.bark_roughness
                 || uploads.bark_normal || uploads.bark_metallic
-                || resources.bind_group.is_none() {
+                || environment_changed || resources.bind_group.is_none() {
                 let sampler=resources.sampler.get_or_insert_with(||
                     device.create_sampler(&wgpu::SamplerDescriptor {
                         label:Some("voxel-pixel-sampler"),
@@ -664,6 +723,14 @@ impl egui_wgpu::CallbackTrait for RenderScene {
                             resource:wgpu::BindingResource::TextureView(
                                 resources.bark_metallic_view.as_ref()
                                     .expect("bark metallic uploaded"))},
+                        wgpu::BindGroupEntry{binding:8,
+                            resource:wgpu::BindingResource::TextureView(
+                                resources.studio_specular_view.as_ref()
+                                    .expect("studio reflection placeholder exists"))},
+                        wgpu::BindGroupEntry{binding:9,
+                            resource:wgpu::BindingResource::TextureView(
+                                resources.studio_diffuse_view.as_ref()
+                                    .expect("studio irradiance placeholder exists"))},
                     ],
                 }));
             }
@@ -699,7 +766,9 @@ impl egui_wgpu::CallbackTrait for RenderScene {
                 leaf_mipmap_uniform(self.leaf_mipmaps)],
             leaf_base:self.scene.leaf_base,
             bark_mapping:[self.scene.bark_repeat_m,
-                if self.scene.bark_pbr_enabled {1.0} else {0.0},0.0,0.0],
+                if self.scene.bark_pbr_enabled {1.0} else {0.0},
+                if self.scene.bark_pbr_enabled && self.scene.bark_studio_ibl
+                    {1.0} else {0.0},0.0],
         };
         queue.write_buffer(&resources.uniform,0,bytemuck::bytes_of(&globals));
 
@@ -752,6 +821,31 @@ impl egui_wgpu::CallbackTrait for RenderScene {
              _resources:&egui_wgpu::CallbackResources) {
         // The actual depth-tested pass ran in prepare, before egui samples it.
     }
+}
+
+/// Rectangular linear RGBA8 data texture; no implicit color conversion.
+fn upload_rgba_rect(device:&wgpu::Device,queue:&wgpu::Queue,rgba:&[u8],
+                    width:u32,height:u32,label:&str)->wgpu::Texture {
+    assert!(width>0 && height>0);
+    assert_eq!(rgba.len(),(width*height*4) as usize);
+    let texture=device.create_texture(&wgpu::TextureDescriptor{
+        label:Some(label),
+        size:wgpu::Extent3d{width,height,depth_or_array_layers:1},
+        mip_level_count:1,sample_count:1,
+        dimension:wgpu::TextureDimension::D2,
+        format:wgpu::TextureFormat::Rgba8Unorm,
+        usage:wgpu::TextureUsages::COPY_DST|wgpu::TextureUsages::TEXTURE_BINDING,
+        view_formats:&[],
+    });
+    queue.write_texture(
+        wgpu::TexelCopyTextureInfo{
+            texture:&texture,mip_level:0,origin:wgpu::Origin3d::ZERO,
+            aspect:wgpu::TextureAspect::All,
+        },rgba,
+        wgpu::TexelCopyBufferLayout{
+            offset:0,bytes_per_row:Some(width*4),rows_per_image:Some(height),
+        },wgpu::Extent3d{width,height,depth_or_array_layers:1});
+    texture
 }
 
 fn upload_rgba(device:&wgpu::Device,queue:&wgpu::Queue,rgba:&[u8])->wgpu::Texture {
@@ -1249,5 +1343,51 @@ mod tests {
         assert!(shader.contains("bark_roughness_tex"));
         assert!(shader.contains("bark_normal_tex"));
         assert!(shader.contains("Legacy bark and ALL foliage modes"));
+    }
+
+    #[test]
+    fn studio_ibl_only_changes_the_preview_uniform_not_resources() {
+        let mesh=FoliageMesh::from_voxels(VoxelShape::Cube,0.5,vec![
+            VoxelCell{x:0,y:0,z:0,material:Material::Bark}
+        ]).unwrap();
+        let pixels=vec![130;64*64*4];
+        let stops=texture_studio::foliage_materials::SeasonalPalettes::default()
+            .gpu_stops();
+        let rough=vec![190;64*64*4];
+        let normal=vec![128;64*64*4];
+        let metallic=vec![60;64*64*4];
+        let direct=Scene::from_mesh(&mesh,&pixels,&pixels,[60,140,70],
+            stops,0.0)
+            .with_bark_pbr_maps(rough.clone(),normal.clone(),metallic.clone());
+        assert!(!direct.bark_studio_ibl);
+        let indirect=Scene::from_mesh(&mesh,&pixels,&pixels,[60,140,70],
+            stops,0.0)
+            .with_bark_pbr_maps(rough.clone(),normal.clone(),metallic.clone())
+            .with_studio_ibl(true);
+        assert!(indirect.bark_studio_ibl);
+        assert_eq!(scene_uploads(Some(&direct),&indirect),SceneUploads{
+            geometry:false,bark:false,leaf:false,palette:false,
+            bark_roughness:false,bark_normal:false,bark_metallic:false,
+        });
+        // Toggling IBL off and back on does not remove the cached viewport
+        // images or dirty graph material resources.
+        let reverted=indirect.with_studio_ibl(false);
+        assert_eq!(scene_uploads(Some(&direct),&reverted),SceneUploads{
+            geometry:false,bark:false,leaf:false,palette:false,
+            bark_roughness:false,bark_normal:false,bark_metallic:false,
+        });
+        // Studio reflections do not opt the material into PBR implicitly.
+        let legacy=Scene::from_mesh(&mesh,&pixels,&pixels,[60,140,70],
+            stops,0.0).with_studio_ibl(true);
+        assert!(!legacy.bark_pbr_enabled);
+        assert!(legacy.bark_studio_ibl);
+        let shader=include_str!("voxel_gpu.wgsl");
+        assert!(shader.contains("globals.bark_mapping.z > 0.5"));
+        assert!(shader.contains("studio_specular_tex"));
+        assert!(shader.contains("studio_irradiance_tex"));
+        assert!(shader.contains("studio_brdf_approx"));
+        assert!(shader.contains("ambient=studio_indirect"));
+        assert!(shader.contains("var ambient=base*(1.0-metal)*0.16"));
+        assert!(shader.contains("level*26.0+1.0+uv.y*24.0"));
     }
 }
