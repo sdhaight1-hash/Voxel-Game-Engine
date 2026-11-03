@@ -24,6 +24,7 @@ struct SeasonalPalette {
 // must not undergo the albedo color-space transformation.
 @group(0) @binding(5) var bark_roughness_tex: texture_2d<f32>;
 @group(0) @binding(6) var bark_normal_tex: texture_2d<f32>;
+@group(0) @binding(7) var bark_metallic_tex: texture_2d<f32>;
 
 // Sample one season's shadow-to-highlight gradient (UV base -> tip).
 fn season_gradient(season:u32, amount:f32)->vec3<f32> {
@@ -176,12 +177,13 @@ fn linear_to_srgb(c:vec3<f32>)->vec3<f32> {
                   x>vec3<f32>(0.0031308));
 }
 
-// Direct-light GGX/Smith/Schlick dielectric. This first PBR slice uses one
-// fixed local directional light and a diffuse ambient approximation; it is
-// intentionally not IBL, metallic BRDF, or a world-lighting implementation.
-fn shade_bark_dielectric(albedo_srgb:vec3<f32>,roughness:f32,
-                          tangent_normal:vec3<f32>,normal:vec3<f32>,
-                          tangent:vec4<f32>)->vec3<f32> {
+// Metallic-roughness microfacet BRDF with GGX/Smith/Schlick. Conductor
+// reflectance uses *linear* base color; dielectric F0 is 0.04. This is
+// one fixed local preview light plus diffuse ambient, not environment IBL.
+fn shade_bark_metallic_roughness(albedo_srgb:vec3<f32>,roughness:f32,
+                                 metallic:f32,tangent_normal:vec3<f32>,
+                                 normal:vec3<f32>,tangent:vec4<f32>)
+    ->vec3<f32> {
     let V=normalize(globals.view.xyz);
     var N=normalize(normal);
     // The existing foliage pipeline is two-sided: light whichever side
@@ -204,12 +206,15 @@ fn shade_bark_dielectric(albedo_srgb:vec3<f32>,roughness:f32,
     let k=(r+1.0)*(r+1.0)/8.0;
     let vis=(NoV/(NoV*(1.0-k)+k)) *
             (NoL/(NoL*(1.0-k)+k));
-    let F0=vec3<f32>(0.04); // fixed dielectric: bark is not metallic
+    let base=srgb_to_linear(albedo_srgb);
+    let metal=clamp(metallic,0.0,1.0);
+    // A conductor has colored specular reflectance but no diffuse term.
+    // 0 metallic is mathematically identical to the Phase 9a dielectric.
+    let F0=mix(vec3<f32>(0.04),base,metal);
     let F=F0+(vec3<f32>(1.0)-F0)*pow(1.0-VoH,5.0);
     let specular=(D*vis/max(4.0*NoV*NoL,0.0001))*F;
-    let base=srgb_to_linear(albedo_srgb);
-    let diffuse=(vec3<f32>(1.0)-F)*base/3.14159265;
-    let lit=base*0.16+(diffuse+specular)*NoL*2.35;
+    let diffuse=(vec3<f32>(1.0)-F)*base*(1.0-metal)/3.14159265;
+    let lit=base*(1.0-metal)*0.16+(diffuse+specular)*NoL*2.35;
     return clamp(linear_to_srgb(lit),vec3<f32>(0.0),vec3<f32>(1.0));
 }
 
@@ -304,8 +309,14 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
                                   bark_uv_main,0.0).rgb;
         let n1=textureSampleLevel(bark_normal_tex,linear_sampler,
                                   bark_uv_seam,0.0).rgb;
+        let m0=textureSampleLevel(bark_metallic_tex,linear_sampler,
+                                  bark_uv_main,0.0).r;
+        let m1=textureSampleLevel(bark_metallic_tex,linear_sampler,
+                                  bark_uv_seam,0.0).r;
         let mapped=normalize(mix(n0,n1,bark_seam_mix)*2.0-vec3<f32>(1.0));
-        let lit=shade_bark_dielectric(rgba.rgb,mix(r0,r1,bark_seam_mix),
+        let lit=shade_bark_metallic_roughness(rgba.rgb,
+                                     mix(r0,r1,bark_seam_mix),
+                                     mix(m0,m1,bark_seam_mix),
                                      mapped,input.normal,input.tangent);
         return vec4<f32>(lit,rgba.a);
     }
