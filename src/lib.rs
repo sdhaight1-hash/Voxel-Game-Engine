@@ -21,6 +21,7 @@ pub mod sdf_bezier;
 pub mod shape_scatter;
 pub mod height_blend;
 pub mod region_variation;
+pub mod bitmap_assets;
 pub use sdf::SdfBoolean;
 pub mod color_ramp;
 pub mod curve_remap;
@@ -41,6 +42,9 @@ pub struct Graph {
     /// Additive setting: old JSON projects without voxel information still load.
     #[serde(default)]
     pub voxel: VoxelSettings,
+    /// Owned, portable image bytes; omitted from serialized legacy graphs.
+    #[serde(default,skip_serializing_if="Vec::is_empty")]
+    pub images: Vec<bitmap_assets::BitmapAsset>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -171,6 +175,10 @@ pub enum NodeKind {
     RegionValue { cells:u32, seed:u32 },
     /// Smooth coverage at periodic Voronoi region boundaries.
     RegionBorderMask { cells:u32, seed:u32, width:f32 },
+    /// Repeat-UV embedded RGBA asset sampled as RGB Color.
+    BitmapColor { asset_id:u64, bilinear:bool },
+    /// Repeat-UV embedded RGBA asset sampled as typed Alpha Mask.
+    BitmapAlpha { asset_id:u64, bilinear:bool },
     Strata { bands: u32, warp: f32, seed: u32 },
     Library { operation: LibraryNode, amount: f32, seed: u32 },
     Colorize { dark: [u8; 3], light: [u8; 3] },
@@ -206,6 +214,8 @@ impl NodeKind {
             Self::Voronoi { .. } => "Voronoi",
             Self::RegionValue{..}=>"Region Value",
             Self::RegionBorderMask{..}=>"Region Border Mask",
+            Self::BitmapColor{..}=>"Bitmap Color",
+            Self::BitmapAlpha{..}=>"Bitmap Alpha",
             Self::Strata { .. } => "Strata",
             Self::Library { operation, .. } => operation.name(),
             Self::Colorize { .. } => "Colorize",
@@ -218,6 +228,7 @@ impl NodeKind {
             Self::Noise { .. } | Self::Checker { .. } | Self::Color { .. }
                 | Self::Scalar { .. } | Self::Bricks { .. } | Self::Voronoi { .. }
                 | Self::RegionValue{..} | Self::RegionBorderMask{..}
+                | Self::BitmapColor{..} | Self::BitmapAlpha{..}
                 | Self::Strata { .. } | Self::SdfCircle{..}
                 | Self::SdfEllipse{..} | Self::SdfCapsule{..}
                 | Self::SdfBezierStroke{..} => 0,
@@ -292,6 +303,8 @@ impl NodeKind {
             Self::Voronoi{..}=>"voronoi".into(),
             Self::RegionValue{..}=>"region_value".into(),
             Self::RegionBorderMask{..}=>"region_border_mask".into(),
+            Self::BitmapColor{..}=>"bitmap_color".into(),
+            Self::BitmapAlpha{..}=>"bitmap_alpha".into(),
             Self::Strata{..}=>"strata".into(),
             Self::Colorize{..}=>"colorize".into(),
             Self::Library{operation,..}=>format!("library.{operation:?}"),
@@ -305,7 +318,7 @@ impl NodeKind {
                 |Self::CurveRemap{..}|Self::RegionValue{..}=>SocketType::Scalar,
             Self::ThresholdMask{..}|Self::SdfToMask{..}
                 |Self::ShapeScatter{..}|Self::HeightBlendMask{..}
-                |Self::RegionBorderMask{..}=>SocketType::Mask,
+                |Self::RegionBorderMask{..}|Self::BitmapAlpha{..}=>SocketType::Mask,
             Self::SdfCircle{..}|Self::SdfEllipse{..}|Self::SdfCapsule{..}
                 |Self::SdfBezierStroke{..}|Self::SdfCombine{..}
                 |Self::SdfContourWarp{..}=>SocketType::Distance,
@@ -345,6 +358,13 @@ impl NodeKind {
         Some(PortDefinition{id:"output",label:"Output",data_type:self.output_type()})
     }
 
+    pub fn bitmap_asset_id(&self)->Option<u64> {
+        match *self {
+            Self::BitmapColor{asset_id,..}|Self::BitmapAlpha{asset_id,..}=>Some(asset_id),
+            _=>None,
+        }
+    }
+
     pub fn parameters(&self)->&'static [node_definitions::ParameterDefinition] {
         node_definitions::parameters(self)
     }
@@ -359,6 +379,7 @@ impl Default for Graph {
             ],
             links: vec![Link { from: 1, to: 2, input: 0 }],
             voxel: VoxelSettings::default(),
+            images: Vec::new(),
         }
     }
 }
@@ -380,7 +401,49 @@ impl Graph {
                 Link { from: 1, to: 4, input: 3 },
             ],
             voxel: VoxelSettings::default(),
+            images: Vec::new(),
         }
+    }
+
+    /// Import decoded RGBA8 into the owning Graph. Identical images are reused.
+    /// IDs are graph-local and remapped by nested material-function expansion.
+    pub fn add_bitmap_rgba(&mut self,name:&str,width:u32,height:u32,pixels:Vec<u8>)
+        ->Result<u64,String> {
+        let mut label=name.rsplit(['/', '\\']).next().unwrap_or("bitmap.png").to_owned();
+        if label.is_empty() {label="bitmap.png".into();}
+        while label.len()>80 {label.pop();}
+        let candidate=bitmap_assets::BitmapAsset::new(1,label,width,height,pixels)?;
+        if let Some(existing)=self.images.iter().find(|image|
+            image.width==candidate.width&&image.height==candidate.height
+            &&image.rgba==candidate.rgba) {
+            return Ok(existing.id);
+        }
+        if self.images.len()>=bitmap_assets::MAX_IMAGES {
+            return Err("Graph exceeds 16 embedded images".into());
+        }
+        let used:usize=self.images.iter().map(|image|image.rgba.len()).sum();
+        if used+candidate.rgba.len()>bitmap_assets::MAX_PIXELS_BYTES {
+            return Err("Graph exceeds 8 MiB of embedded images".into());
+        }
+        let id=self.images.iter().map(|image|image.id).max().unwrap_or(0)
+            .checked_add(1).ok_or("Bitmap ID overflow")?;
+        self.images.push(bitmap_assets::BitmapAsset{id,..candidate});
+        Ok(id)
+    }
+
+    pub fn import_png_bytes(&mut self,name:&str,source:&[u8])->Result<u64,String> {
+        let (width,height,rgba)=bitmap_assets::decode_png(source)?;
+        self.add_bitmap_rgba(name,width,height,rgba)
+    }
+
+    /// Explicit image edit API: refresh the fingerprint, invalidating caches.
+    pub fn replace_bitmap_rgba(&mut self,id:u64,pixels:Vec<u8>)->Result<(),String> {
+        let image=self.images.iter_mut().find(|image|image.id==id)
+            .ok_or("Bitmap ID not found")?;
+        let updated=bitmap_assets::BitmapAsset::new(
+            id,image.name.clone(),image.width as u32,image.height as u32,pixels)?;
+        *image=updated;
+        Ok(())
     }
 
     pub fn add_node(&mut self, kind: NodeKind, position: [f32; 2]) -> u64 {
@@ -472,8 +535,14 @@ impl Graph {
         if self.nodes.iter().filter(|n| matches!(n.kind, NodeKind::Output)).count() != 1 {
             return Err("A project needs exactly one Output node".into());
         }
+        bitmap_assets::validate_assets(&self.images)?;
         let mut ports = HashSet::new();
         for node in &self.nodes {
+            if let Some(asset_id)=node.kind.bitmap_asset_id() {
+                if asset_id!=0&&!self.images.iter().any(|image|image.id==asset_id) {
+                    return Err("Bitmap node references missing embedded image".into());
+                }
+            }
             if !node.position.iter().all(|p| p.is_finite()) {
                 return Err("Invalid node position".into());
             }
@@ -896,6 +965,18 @@ impl Graph {
                     .min(vertical.min(1.0 - vertical));
                 let brick = ((edge - mortar * 0.5) / 0.025).clamp(0.0, 1.0);
                 [brick; 3]
+            }
+            NodeKind::BitmapColor{asset_id,bilinear} => {
+                self.images.iter().find(|image|image.id==asset_id)
+                    .map(|image|{
+                        let rgba=image.sample(u,v,bilinear);
+                        [rgba[0],rgba[1],rgba[2]]
+                    }).unwrap_or([0.0;3])
+            }
+            NodeKind::BitmapAlpha{asset_id,bilinear} => {
+                let alpha=self.images.iter().find(|image|image.id==asset_id)
+                    .map(|image|image.sample(u,v,bilinear)[3]).unwrap_or(0.0);
+                [alpha;3]
             }
             NodeKind::RegionValue{cells,seed} => {
                 [region_variation::sample(u,v,cells,seed).0;3]
