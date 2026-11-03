@@ -45,7 +45,7 @@ struct Uniforms {
     season: [f32; 4],
     leaf_base: [f32; 4],
     /// x = bark meters per repeat, zero disables physical UV mapping.
-    /// y = opt-in metallic/roughness/normal BRDF, z = studio IBL enabled.
+    /// y = bark PBR, z = studio IBL, w = cutout leaf PBR.
     bark_mapping: [f32;4],
 }
 
@@ -94,6 +94,10 @@ pub struct Scene {
     /// Preview-only environment switch; does not affect graph or mesh bytes.
     bark_studio_ibl: bool,
     leaf_rgba: Vec<u8>,
+    /// Linear UNORM leaf graph outputs; neutral placeholders when unused.
+    leaf_roughness_rgba: Vec<u8>,
+    leaf_normal_rgba: Vec<u8>,
+    leaf_pbr_enabled: bool,
     palette: GpuPalette,
     leaf_base: [f32;4],
     wind_strength: f32,
@@ -174,6 +178,9 @@ impl Scene {
             bark_pbr_enabled:false,
             bark_studio_ibl:false,
             leaf_rgba:leaf.to_vec(),
+            leaf_roughness_rgba:vec![204,204,204,255],
+            leaf_normal_rgba:vec![128,128,255,255],
+            leaf_pbr_enabled:false,
             palette:GpuPalette{stops:palette},
             leaf_base:[leaf_tint[0] as f32/255.0,leaf_tint[1] as f32/255.0,
                 leaf_tint[2] as f32/255.0,1.0],
@@ -204,6 +211,17 @@ impl Scene {
         self.bark_normal_rgba=normal;
         self.bark_metallic_rgba=metallic;
         self.bark_pbr_enabled=true;
+        self
+    }
+
+    /// Leaf-card roughness in the red channel and XYZ tangent normals
+    /// in RGB. Graph bakes are reusable and do not modify card alpha.
+    pub fn with_leaf_pbr_maps(mut self,roughness:Vec<u8>,normal:Vec<u8>)->Self {
+        assert!(!roughness.is_empty() && roughness.len()%4==0);
+        assert_eq!(roughness.len(),normal.len());
+        self.leaf_roughness_rgba=roughness;
+        self.leaf_normal_rgba=normal;
+        self.leaf_pbr_enabled=true;
         self
     }
 
@@ -273,6 +291,8 @@ struct SceneUploads {
     bark_roughness: bool,
     bark_normal: bool,
     bark_metallic: bool,
+    leaf_roughness: bool,
+    leaf_normal: bool,
 }
 
 fn scene_uploads(previous: Option<&Scene>, next: &Scene) -> SceneUploads {
@@ -289,6 +309,10 @@ fn scene_uploads(previous: Option<&Scene>, next: &Scene) -> SceneUploads {
             old.bark_normal_rgba!=next.bark_normal_rgba),
         bark_metallic: previous.is_none_or(|old|
             old.bark_metallic_rgba!=next.bark_metallic_rgba),
+        leaf_roughness: previous.is_none_or(|old|
+            old.leaf_roughness_rgba!=next.leaf_roughness_rgba),
+        leaf_normal: previous.is_none_or(|old|
+            old.leaf_normal_rgba!=next.leaf_normal_rgba),
     }
 }
 
@@ -302,6 +326,8 @@ struct UploadMetrics {
     roughness_textures: u64,
     normal_textures: u64,
     metallic_textures: u64,
+    leaf_roughness_textures: u64,
+    leaf_normal_textures: u64,
 }
 
 impl UploadMetrics {
@@ -313,6 +339,8 @@ impl UploadMetrics {
         self.roughness_textures+=u64::from(uploads.bark_roughness);
         self.normal_textures+=u64::from(uploads.bark_normal);
         self.metallic_textures+=u64::from(uploads.bark_metallic);
+        self.leaf_roughness_textures+=u64::from(uploads.leaf_roughness);
+        self.leaf_normal_textures+=u64::from(uploads.leaf_normal);
     }
 }
 
@@ -339,6 +367,8 @@ struct Resources {
     bark_roughness_view: Option<wgpu::TextureView>,
     bark_normal_view: Option<wgpu::TextureView>,
     bark_metallic_view: Option<wgpu::TextureView>,
+    leaf_roughness_view: Option<wgpu::TextureView>,
+    leaf_normal_view: Option<wgpu::TextureView>,
     studio_specular_view: Option<wgpu::TextureView>,
     studio_diffuse_view: Option<wgpu::TextureView>,
     studio_environment_loaded: bool,
@@ -446,6 +476,22 @@ impl GpuViewport {
                 },
                 wgpu::BindGroupLayoutEntry {
                     binding:9,visibility:wgpu::ShaderStages::FRAGMENT,
+                    ty:wgpu::BindingType::Texture {
+                        multisampled:false,
+                        view_dimension:wgpu::TextureViewDimension::D2,
+                        sample_type:wgpu::TextureSampleType::Float{filterable:true},
+                    },count:None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding:10,visibility:wgpu::ShaderStages::FRAGMENT,
+                    ty:wgpu::BindingType::Texture {
+                        multisampled:false,
+                        view_dimension:wgpu::TextureViewDimension::D2,
+                        sample_type:wgpu::TextureSampleType::Float{filterable:true},
+                    },count:None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding:11,visibility:wgpu::ShaderStages::FRAGMENT,
                     ty:wgpu::BindingType::Texture {
                         multisampled:false,
                         view_dimension:wgpu::TextureViewDimension::D2,
@@ -570,6 +616,7 @@ impl GpuViewport {
             bark_view:None,leaf_view:None,
             bark_roughness_view:None,bark_normal_view:None,
             bark_metallic_view:None,
+            leaf_roughness_view:None,leaf_normal_view:None,
             studio_specular_view:None,studio_diffuse_view:None,
             studio_environment_loaded:false,sampler:None,
             vertex:None,vertex_count:0,last_scene:None,
@@ -660,6 +707,19 @@ impl egui_wgpu::CallbackTrait for RenderScene {
                     upload_rgba(device,queue,&scene.bark_metallic_rgba)
                         .create_view(&Default::default()));
             }
+            // Opaque data maps use the same bounded mip-chain helper as leaf
+            // albedo. They remain RGBA8Unorm (never sRGB decoded) and are
+            // sampled with identical UV derivatives in mipmapped preview.
+            if uploads.leaf_roughness {
+                resources.leaf_roughness_view=Some(
+                    upload_leaf_rgba_mips(device,queue,&scene.leaf_roughness_rgba)
+                        .create_view(&Default::default()));
+            }
+            if uploads.leaf_normal {
+                resources.leaf_normal_view=Some(
+                    upload_leaf_rgba_mips(device,queue,&scene.leaf_normal_rgba)
+                        .create_view(&Default::default()));
+            }
             // Bind 1x1 neutral placeholders initially. Build the actual
             // environment once on first request; subsequent PBR/material,
             // camera, season or scale changes cannot trigger its upload.
@@ -672,8 +732,8 @@ impl egui_wgpu::CallbackTrait for RenderScene {
                     upload_rgba(device,queue,&black).create_view(&Default::default()));
                 environment_changed=true;
             }
-            if scene.bark_pbr_enabled && scene.bark_studio_ibl
-                && !resources.studio_environment_loaded {
+            if (scene.bark_pbr_enabled || scene.leaf_pbr_enabled)
+                && scene.bark_studio_ibl && !resources.studio_environment_loaded {
                 let table=studio_environment::generate();
                 resources.studio_specular_view=Some(upload_rgba_rect(
                     device,queue,&table.specular,
@@ -688,6 +748,7 @@ impl egui_wgpu::CallbackTrait for RenderScene {
             }
             if uploads.bark || uploads.leaf || uploads.bark_roughness
                 || uploads.bark_normal || uploads.bark_metallic
+                || uploads.leaf_roughness || uploads.leaf_normal
                 || environment_changed || resources.bind_group.is_none() {
                 let sampler=resources.sampler.get_or_insert_with(||
                     device.create_sampler(&wgpu::SamplerDescriptor {
@@ -731,6 +792,14 @@ impl egui_wgpu::CallbackTrait for RenderScene {
                             resource:wgpu::BindingResource::TextureView(
                                 resources.studio_diffuse_view.as_ref()
                                     .expect("studio irradiance placeholder exists"))},
+                        wgpu::BindGroupEntry{binding:10,
+                            resource:wgpu::BindingResource::TextureView(
+                                resources.leaf_roughness_view.as_ref()
+                                    .expect("leaf roughness placeholder exists"))},
+                        wgpu::BindGroupEntry{binding:11,
+                            resource:wgpu::BindingResource::TextureView(
+                                resources.leaf_normal_view.as_ref()
+                                    .expect("leaf normal placeholder exists"))},
                     ],
                 }));
             }
@@ -767,8 +836,9 @@ impl egui_wgpu::CallbackTrait for RenderScene {
             leaf_base:self.scene.leaf_base,
             bark_mapping:[self.scene.bark_repeat_m,
                 if self.scene.bark_pbr_enabled {1.0} else {0.0},
-                if self.scene.bark_pbr_enabled && self.scene.bark_studio_ibl
-                    {1.0} else {0.0},0.0],
+                if (self.scene.bark_pbr_enabled || self.scene.leaf_pbr_enabled)
+                    && self.scene.bark_studio_ibl {1.0} else {0.0},
+                if self.scene.leaf_pbr_enabled {1.0} else {0.0}],
         };
         queue.write_buffer(&resources.uniform,0,bytemuck::bytes_of(&globals));
 
@@ -971,7 +1041,7 @@ mod tests {
             .gpu_stops();
         let scene=Scene::from_mesh(&mesh,&data,&data,[50,135,75],palette,0.0);
         assert_eq!(scene_uploads(Some(&scene),&scene),SceneUploads {
-            geometry:false,bark:false,leaf:false,palette:false, bark_roughness:false,bark_normal:false,bark_metallic:false,
+            geometry:false,bark:false,leaf:false,palette:false, bark_roughness:false,bark_normal:false,bark_metallic:false,leaf_roughness:false,leaf_normal:false,
         });
     }
 
@@ -1091,22 +1161,22 @@ mod tests {
             .gpu_stops();
         let baseline=Scene::from_mesh(&mesh,&bark,&leaf,[50,150,80],palette,0.0);
         assert_eq!(scene_uploads(None,&baseline),SceneUploads {
-            geometry:true,bark:true,leaf:true,palette:true, bark_roughness:true,bark_normal:true,bark_metallic:true,
+            geometry:true,bark:true,leaf:true,palette:true, bark_roughness:true,bark_normal:true,bark_metallic:true,leaf_roughness:true,leaf_normal:true,
         });
         let identical=Scene::from_mesh(&mesh,&bark,&leaf,[50,150,80],palette,0.0);
         assert_eq!(scene_uploads(Some(&baseline),&identical),SceneUploads {
-            geometry:false,bark:false,leaf:false,palette:false, bark_roughness:false,bark_normal:false,bark_metallic:false,
+            geometry:false,bark:false,leaf:false,palette:false, bark_roughness:false,bark_normal:false,bark_metallic:false,leaf_roughness:false,leaf_normal:false,
         });
         palette[0][0]=0.7;
         let season=Scene::from_mesh(&mesh,&bark,&leaf,[50,150,80],palette,0.0);
         assert_eq!(scene_uploads(Some(&baseline),&season),SceneUploads {
-            geometry:false,bark:false,leaf:false,palette:true, bark_roughness:false,bark_normal:false,bark_metallic:false,
+            geometry:false,bark:false,leaf:false,palette:true, bark_roughness:false,bark_normal:false,bark_metallic:false,leaf_roughness:false,leaf_normal:false,
         });
         let mut tinted=bark.clone();
         tinted[0]=90;
         let material=Scene::from_mesh(&mesh,&tinted,&leaf,[50,150,80],palette,0.0);
         assert_eq!(scene_uploads(Some(&season),&material),SceneUploads {
-            geometry:false,bark:true,leaf:false,palette:false, bark_roughness:false,bark_normal:false,bark_metallic:false,
+            geometry:false,bark:true,leaf:false,palette:false, bark_roughness:false,bark_normal:false,bark_metallic:false,leaf_roughness:false,leaf_normal:false,
         });
         let grown=FoliageMesh::from_voxels(VoxelShape::Cube,0.5,vec![
             VoxelCell{x:0,y:0,z:0,material:Material::Bark},
@@ -1114,14 +1184,14 @@ mod tests {
         ]).unwrap();
         let different_mesh=Scene::from_mesh(&grown,&tinted,&leaf,[50,150,80],palette,0.0);
         assert_eq!(scene_uploads(Some(&material),&different_mesh),SceneUploads {
-            geometry:true,bark:false,leaf:false,palette:false, bark_roughness:false,bark_normal:false,bark_metallic:false,
+            geometry:true,bark:false,leaf:false,palette:false, bark_roughness:false,bark_normal:false,bark_metallic:false,leaf_roughness:false,leaf_normal:false,
         });
         // A wind-strength edit changes only a uniform; scene resources stay put.
         let mut wind=Scene::from_mesh(&mesh,&bark,&leaf,[50,150,80],
             texture_studio::foliage_materials::SeasonalPalettes::default().gpu_stops(),0.0);
         wind.wind_strength+=0.1;
         assert_eq!(scene_uploads(Some(&baseline),&wind),SceneUploads {
-            geometry:false,bark:false,leaf:false,palette:false, bark_roughness:false,bark_normal:false,bark_metallic:false,
+            geometry:false,bark:false,leaf:false,palette:false, bark_roughness:false,bark_normal:false,bark_metallic:false,leaf_roughness:false,leaf_normal:false,
         });
         let mut metrics=UploadMetrics::default();
         for changes in [
@@ -1137,6 +1207,7 @@ mod tests {
         assert_eq!(metrics,UploadMetrics {
             vertex_buffers:2,bark_textures:2,leaf_textures:1,palette_writes:2,
             roughness_textures:1,normal_textures:1,metallic_textures:1,
+            leaf_roughness_textures:1,leaf_normal_textures:1,
         });
     }
 
@@ -1157,7 +1228,7 @@ mod tests {
         assert_eq!(leaf_coverage_uniform(LeafAaMode::Ordered),1.0);
         assert_eq!(leaf_coverage_uniform(LeafAaMode::Msaa4),2.0);
         assert_eq!(scene_uploads(Some(&scene),&scene),SceneUploads {
-            geometry:false,bark:false,leaf:false,palette:false, bark_roughness:false,bark_normal:false,bark_metallic:false,
+            geometry:false,bark:false,leaf:false,palette:false, bark_roughness:false,bark_normal:false,bark_metallic:false,leaf_roughness:false,leaf_normal:false,
         });
     }
 
@@ -1192,7 +1263,7 @@ mod tests {
             assert_ne!(changed,original,"{species:?} needs a different leaf texture");
             let after=Scene::from_mesh(&mesh,&bark,&changed,tint,palette,0.0);
             assert_eq!(scene_uploads(Some(&before),&after),SceneUploads {
-                geometry:false,bark:false,leaf:true,palette:false, bark_roughness:false,bark_normal:false,bark_metallic:false,
+                geometry:false,bark:false,leaf:true,palette:false, bark_roughness:false,bark_normal:false,bark_metallic:false,leaf_roughness:false,leaf_normal:false,
             },"{species:?} should only update leaf pixels");
         }
     }
@@ -1219,7 +1290,7 @@ mod tests {
         assert!(covered.chunks_exact(4).any(|px|px[3]>0&&px[3]<255));
         let after=Scene::from_mesh(&mesh,&bark,&covered,tint,palette,0.0);
         assert_eq!(scene_uploads(Some(&before),&after),SceneUploads {
-            geometry:false,bark:false,leaf:true,palette:false, bark_roughness:false,bark_normal:false,bark_metallic:false,
+            geometry:false,bark:false,leaf:true,palette:false, bark_roughness:false,bark_normal:false,bark_metallic:false,leaf_roughness:false,leaf_normal:false,
         });
     }
 
@@ -1255,12 +1326,12 @@ mod tests {
         assert_eq!(legacy.bark_repeat_m,0.0);
         assert_eq!(metric.bark_repeat_m,0.42);
         assert_eq!(scene_uploads(Some(&legacy),&metric),SceneUploads {
-            geometry:false,bark:false,leaf:false,palette:false, bark_roughness:false,bark_normal:false,bark_metallic:false,
+            geometry:false,bark:false,leaf:false,palette:false, bark_roughness:false,bark_normal:false,bark_metallic:false,leaf_roughness:false,leaf_normal:false,
         },"changing only the physical repeat must be a GPU uniform update");
         let altered=Scene::from_mesh(&mesh,&bark,&leaf,[70,132,58],palette,0.0)
             .with_bark_meters_per_repeat(Some(2.0));
         assert_eq!(scene_uploads(Some(&metric),&altered),SceneUploads {
-            geometry:false,bark:false,leaf:false,palette:false, bark_roughness:false,bark_normal:false,bark_metallic:false,
+            geometry:false,bark:false,leaf:false,palette:false, bark_roughness:false,bark_normal:false,bark_metallic:false,leaf_roughness:false,leaf_normal:false,
         });
         assert_eq!(Scene::from_mesh(&mesh,&bark,&leaf,[70,132,58],palette,0.0)
             .with_bark_meters_per_repeat(Some(f32::NAN)).bark_repeat_m,0.0);
@@ -1309,28 +1380,28 @@ mod tests {
         assert!(pbr.bark_pbr_enabled);
         assert_eq!(scene_uploads(Some(&legacy),&pbr),SceneUploads {
             geometry:false,bark:false,leaf:false,palette:false,
-            bark_roughness:true,bark_normal:true,bark_metallic:true,
+            bark_roughness:true,bark_normal:true,bark_metallic:true,leaf_roughness:false,leaf_normal:false,
         });
         let next=Scene::from_mesh(&mesh,&pixels,&pixels,[60,140,70],
             palette,0.0).with_bark_pbr_maps(
                 vec![110;64*64*4],normal.clone(),metal.clone());
         assert_eq!(scene_uploads(Some(&pbr),&next),SceneUploads {
             geometry:false,bark:false,leaf:false,palette:false,
-            bark_roughness:true,bark_normal:false,bark_metallic:false,
+            bark_roughness:true,bark_normal:false,bark_metallic:false,leaf_roughness:false,leaf_normal:false,
         });
         let next_metal=Scene::from_mesh(&mesh,&pixels,&pixels,[60,140,70],
             palette,0.0).with_bark_pbr_maps(rough.clone(),normal.clone(),
                 vec![255,255,255,255].repeat(64*64));
         assert_eq!(scene_uploads(Some(&pbr),&next_metal),SceneUploads {
             geometry:false,bark:false,leaf:false,palette:false,
-            bark_roughness:false,bark_normal:false,bark_metallic:true,
+            bark_roughness:false,bark_normal:false,bark_metallic:true,leaf_roughness:false,leaf_normal:false,
         },"metallic-only graph edits must upload one data texture");
         let retiling=Scene::from_mesh(&mesh,&pixels,&pixels,[60,140,70],
             palette,0.0).with_bark_pbr_maps(rough,normal,metal)
             .with_bark_meters_per_repeat(Some(0.35));
         assert_eq!(scene_uploads(Some(&pbr),&retiling),SceneUploads {
             geometry:false,bark:false,leaf:false,palette:false,
-            bark_roughness:false,bark_normal:false,bark_metallic:false,
+            bark_roughness:false,bark_normal:false,bark_metallic:false,leaf_roughness:false,leaf_normal:false,
         });
         let shader=include_str!("voxel_gpu.wgsl");
         assert!(shader.contains("globals.bark_mapping.y > 0.5"));
@@ -1367,14 +1438,14 @@ mod tests {
         assert!(indirect.bark_studio_ibl);
         assert_eq!(scene_uploads(Some(&direct),&indirect),SceneUploads{
             geometry:false,bark:false,leaf:false,palette:false,
-            bark_roughness:false,bark_normal:false,bark_metallic:false,
+            bark_roughness:false,bark_normal:false,bark_metallic:false,leaf_roughness:false,leaf_normal:false,
         });
         // Toggling IBL off and back on does not remove the cached viewport
         // images or dirty graph material resources.
         let reverted=indirect.with_studio_ibl(false);
         assert_eq!(scene_uploads(Some(&direct),&reverted),SceneUploads{
             geometry:false,bark:false,leaf:false,palette:false,
-            bark_roughness:false,bark_normal:false,bark_metallic:false,
+            bark_roughness:false,bark_normal:false,bark_metallic:false,leaf_roughness:false,leaf_normal:false,
         });
         // Studio reflections do not opt the material into PBR implicitly.
         let legacy=Scene::from_mesh(&mesh,&pixels,&pixels,[60,140,70],
@@ -1389,5 +1460,80 @@ mod tests {
         assert!(shader.contains("ambient=studio_indirect"));
         assert!(shader.contains("var ambient=base*(1.0-metal)*0.16"));
         assert!(shader.contains("level*26.0+1.0+uv.y*24.0"));
+    }
+
+    #[test]
+    fn foliage_pbr_uploads_only_leaf_data_maps_and_keeps_legacy_opt_in() {
+        let mesh=FoliageMesh::from_voxels(VoxelShape::Cube,0.5,vec![
+            VoxelCell{x:0,y:0,z:0,material:Material::Bark},
+            VoxelCell{x:0,y:0,z:1,material:Material::Leaf},
+        ]).unwrap();
+        let pixels=vec![100;64*64*4];
+        let stops=texture_studio::foliage_materials::SeasonalPalettes::default()
+            .gpu_stops();
+        let legacy=Scene::from_mesh(&mesh,&pixels,&pixels,[63,141,72],
+            stops,0.0);
+        assert!(!legacy.leaf_pbr_enabled);
+        assert!(!legacy.bark_pbr_enabled);
+        let rough=vec![178;64*64*4];
+        let normal=vec![128,128,255,255].repeat(64*64);
+        let physical=Scene::from_mesh(&mesh,&pixels,&pixels,[63,141,72],
+            stops,0.0).with_leaf_pbr_maps(rough.clone(),normal.clone());
+        assert!(physical.leaf_pbr_enabled);
+        assert!(!physical.bark_pbr_enabled,
+            "leaf PBR must be independently selectable");
+        assert_eq!(scene_uploads(Some(&legacy),&physical),SceneUploads{
+            geometry:false,bark:false,leaf:false,palette:false,
+            bark_roughness:false,bark_normal:false,bark_metallic:false,
+            leaf_roughness:true,leaf_normal:true,
+        });
+        let new_rough=Scene::from_mesh(&mesh,&pixels,&pixels,[63,141,72],
+            stops,0.0).with_leaf_pbr_maps(vec![90;64*64*4],normal.clone());
+        assert_eq!(scene_uploads(Some(&physical),&new_rough),SceneUploads{
+            geometry:false,bark:false,leaf:false,palette:false,
+            bark_roughness:false,bark_normal:false,bark_metallic:false,
+            leaf_roughness:true,leaf_normal:false,
+        });
+        let new_normal=Scene::from_mesh(&mesh,&pixels,&pixels,[63,141,72],
+            stops,0.0).with_leaf_pbr_maps(
+                rough.clone(),vec![127,140,245,255].repeat(64*64));
+        assert_eq!(scene_uploads(Some(&physical),&new_normal),SceneUploads{
+            geometry:false,bark:false,leaf:false,palette:false,
+            bark_roughness:false,bark_normal:false,bark_metallic:false,
+            leaf_roughness:false,leaf_normal:true,
+        });
+        let ibl=Scene::from_mesh(&mesh,&pixels,&pixels,[63,141,72],
+            stops,0.0).with_leaf_pbr_maps(rough,normal)
+            .with_studio_ibl(true);
+        assert_eq!(scene_uploads(Some(&physical),&ibl),SceneUploads{
+            geometry:false,bark:false,leaf:false,palette:false,
+            bark_roughness:false,bark_normal:false,bark_metallic:false,
+            leaf_roughness:false,leaf_normal:false,
+        },"leaf-only studio IBL must remain uniform-only");
+        assert!(ibl.bark_studio_ibl);
+        let shader=include_str!("voxel_gpu.wgsl");
+        assert!(shader.contains("globals.bark_mapping.w > 0.5"));
+        assert!(shader.contains("leaf_roughness_tex"));
+        assert!(shader.contains("leaf_normal_tex"));
+        assert!(shader.contains("textureSampleGrad(leaf_roughness_tex"));
+        assert!(shader.contains("textureSampleGrad(leaf_normal_tex"));
+        assert!(shader.contains("roughness,0.0"));
+        assert!(shader.contains("rgba.rgb * input.tint.rgb"));
+        assert!(shader.contains("return vec4<f32>(color,rgba.a)"));
+        assert!(shader.contains("if (rgba.a < 0.5 && blossom < 0.55) { discard; }"));
+    }
+
+    #[test]
+    fn opaque_leaf_pbr_data_mips_keep_neutral_normals_and_roughness() {
+        let normal=vec![128u8,128,255,255].repeat(64*64);
+        let rough=vec![204u8,204,204,255].repeat(64*64);
+        for data in [&normal,&rough] {
+            let chain=leaf_mip_chain(data);
+            assert_eq!(chain.len(),7);
+            for (_,pixels) in chain {
+                assert_eq!(pixels.len()%4,0);
+                assert!(pixels.chunks_exact(4).all(|pixel|pixel==&data[..4]));
+            }
+        }
     }
 }
