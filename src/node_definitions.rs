@@ -53,6 +53,14 @@ pub struct ParameterDefinition {
     pub control: ParameterControl,
 }
 
+const FACE_FACING_MASK: &[ParameterDefinition]=&[
+    ParameterDefinition{id:"axis",label:"Object-local direction",
+        control:ParameterControl::Choice{
+            options:&["+X","-X","+Y","-Y","+Z","-Z"],default:"+Z"}},
+    ParameterDefinition{id:"sharpness",label:"Facing sharpness",
+        control:ParameterControl::Float{
+            min:0.25,max:8.0,default:1.0,unit:"exponent"}},
+];
 const FACE_SURFACE_MASK: &[ParameterDefinition]=&[
     ParameterDefinition{id:"surface",label:"Voxel surface",
         control:ParameterControl::Choice{
@@ -266,6 +274,7 @@ pub fn parameters(kind:&NodeKind)-> &'static [ParameterDefinition] {
         NodeKind::RegionBorderMask{..}=>REGION_BORDER_MASK,
         NodeKind::BitmapColor{..}|NodeKind::BitmapAlpha{..}=>BITMAP_SAMPLING,
         NodeKind::FaceSurfaceMask{..}=>FACE_SURFACE_MASK,
+        NodeKind::FaceFacingMask{..}=>FACE_FACING_MASK,
         NodeKind::Strata{..}=>STRATA,
         NodeKind::Colorize{..}=>COLORIZE,
         NodeKind::Blend{..}=>BLEND,

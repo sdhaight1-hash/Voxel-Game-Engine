@@ -75,6 +75,56 @@ impl FaceSurface {
     }
 }
 
+/// Cardinal *object-local* direction. +Z is geometric up. These are not
+/// geographic/world bearings if an asset is rotated in a future game engine.
+#[derive(Clone,Copy,Debug,PartialEq,Eq,Serialize,Deserialize)]
+pub enum FaceAxis { PosX, NegX, PosY, NegY, PosZ, NegZ }
+
+impl FaceAxis {
+    pub fn vector(self)->[f32;3] {
+        match self {
+            Self::PosX=>[1.0,0.0,0.0], Self::NegX=>[-1.0,0.0,0.0],
+            Self::PosY=>[0.0,1.0,0.0], Self::NegY=>[0.0,-1.0,0.0],
+            Self::PosZ=>[0.0,0.0,1.0], Self::NegZ=>[0.0,0.0,-1.0],
+        }
+    }
+
+    /// Hemisphere-projected facing coverage. Sharper exponents narrow the
+    /// effect but do not change exact front/back or cap endpoints.
+    pub fn coverage(self,normal:[f32;3],sharpness:f32)->f32 {
+        let dir=self.vector();
+        let facing=(normal[0]*dir[0]+normal[1]*dir[1]+normal[2]*dir[2])
+            .clamp(0.0,1.0);
+        facing.powf(sharpness)
+    }
+}
+
+/// Deterministic outward face normal shared by the atlas and software
+/// preview. Cube side ordering follows footprint winding, and hex sides
+/// correspond to the midpoint normals of consecutive footprint vertices.
+/// No per-pixel Vec allocation is needed for this analytic face context.
+pub fn face_normal(shape:VoxelShape,face:usize)->Option<[f32;3]> {
+    let sides=shape.sides();
+    if face==sides {return Some([0.0,0.0,1.0]);}
+    if face==sides+1 {return Some([0.0,0.0,-1.0]);}
+    if face>=sides {return None;}
+    Some(match shape {
+        VoxelShape::Cube => match face {
+            0=>[0.0,1.0,0.0],1=>[-1.0,0.0,0.0],
+            2=>[0.0,-1.0,0.0],_=>[1.0,0.0,0.0],
+        },
+        VoxelShape::HexPrism => {
+            // Six static radial normals; no sin/cos in the per-pixel sampler.
+            const H:f32=0.866_025_4;
+            const NORMALS:[[f32;3];6]=[
+                [0.5,H,0.0],[-0.5,H,0.0],[-1.0,0.0,0.0],
+                [-0.5,-H,0.0],[0.5,-H,0.0],[1.0,0.0,0.0],
+            ];
+            NORMALS[face]
+        }
+    })
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct VoxelSettings {

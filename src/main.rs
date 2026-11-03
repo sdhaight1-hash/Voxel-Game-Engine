@@ -3,7 +3,7 @@ use std::sync::Arc;
 use gpu_renderer::{GpuViewport, Scene as GpuScene,LeafAaMode};
 use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, TextureHandle, Vec2};
 use std::{collections::HashMap, path::{Path, PathBuf}, time::Instant};
-use texture_studio::{Graph, NodeKind, LibraryNode, VoxelShape, SideMapping, FaceSurface};
+use texture_studio::{Graph, NodeKind, LibraryNode, VoxelShape, SideMapping, FaceSurface, FaceAxis};
 use texture_studio::node_definitions::{SocketType, ParameterControl};
 use texture_studio::{ColorRamp,MAX_COLOR_STOPS,CurveRemap,MAX_CURVE_POINTS,SdfBoolean};
 use texture_studio::render_cache::GraphRenderCache;
@@ -2209,6 +2209,7 @@ impl Studio {
             ]),
             ("GEOMETRY CONTEXT",vec![
                 ("Face Surface Mask",NodeKind::FaceSurfaceMask{surface:FaceSurface::Top}),
+                ("Face Facing Mask",NodeKind::FaceFacingMask{axis:FaceAxis::PosZ,sharpness:1.0}),
             ]),
             ("BITMAP INPUTS", vec![
                 ("Bitmap Color",NodeKind::BitmapColor{asset_id:0,bilinear:true}),
@@ -2657,6 +2658,29 @@ impl Studio {
             NodeKind::Luminance => {
                 ui.label("Convert RGB to a scalar using luminance weights.");
                 ui.small("Use between legacy RGB generators and typed Scalar inputs.");
+            }
+            NodeKind::FaceFacingMask{axis,sharpness} => {
+                ui.small("Object-local surface direction (not world compass or terrain slope).");
+                egui::ComboBox::from_id_salt(("face_facing",id))
+                    .selected_text(match axis {
+                        FaceAxis::PosX=>"+X",FaceAxis::NegX=>"-X",
+                        FaceAxis::PosY=>"+Y",FaceAxis::NegY=>"-Y",
+                        FaceAxis::PosZ=>"+Z (up)",FaceAxis::NegZ=>"-Z (down)",
+                    })
+                    .show_ui(ui,|ui|{
+                        for (direction,label) in [
+                            (FaceAxis::PosX,"+X"),(FaceAxis::NegX,"-X"),
+                            (FaceAxis::PosY,"+Y"),(FaceAxis::NegY,"-Y"),
+                            (FaceAxis::PosZ,"+Z (up)"),(FaceAxis::NegZ,"-Z (down)")
+                        ] {
+                            changed|=ui.selectable_value(axis,direction,label).changed();
+                        }
+                    });
+                changed|=ui.add(egui::Slider::new(sharpness,0.25..=8.0)
+                    .text("Facing sharpness")).changed();
+                ui.small("Mask = max(0, dot(face_normal, direction)) ^ sharpness.");
+                ui.small("2D, selected-node and Flora bakes output 0 without face context.");
+                ui.small("Use Mask Mix or Height Blend Mask for directional overlays.");
             }
             NodeKind::FaceSurfaceMask{surface} => {
                 ui.small("Voxel-only surface context: sides, top cap or bottom cap.");
@@ -3545,7 +3569,8 @@ fn node_accent(kind: NodeKind) -> Color32 {
             | NodeKind::Scalar { .. } | NodeKind::Bricks { .. } | NodeKind::Voronoi { .. } | NodeKind::Strata { .. }
             | NodeKind::RegionValue{..} | NodeKind::RegionBorderMask{..}
             | NodeKind::BitmapColor{..} | NodeKind::BitmapAlpha{..}
-            | NodeKind::FaceSurfaceMask{..} => Color32::from_rgb(43, 95, 131),
+            | NodeKind::FaceSurfaceMask{..} | NodeKind::FaceFacingMask{..}
+            => Color32::from_rgb(43, 95, 131),
         NodeKind::Library { operation, .. } => match operation.category() {
             "Shapes & Gradients" | "Noise" | "Patterns" => Color32::from_rgb(43, 95, 131),
             "Transforms" => Color32::from_rgb(107, 80, 148),
