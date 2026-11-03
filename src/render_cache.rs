@@ -276,4 +276,28 @@ mod tests {
         assert!(cache.render_channel(&graph,0,8,8).is_err());
         assert_eq!(cache.stats().hits,0);
     }
+
+    #[test]
+    fn cache_distinguishes_top_and_side_face_context() {
+        use crate::{FaceSurface,VoxelShape};
+        let mut graph=Graph::default();
+        let surface=graph.add_node(NodeKind::FaceSurfaceMask{
+            surface:FaceSurface::Top},[30.0,60.0]);
+        graph.connect(surface,2,0).unwrap();
+        let top=graph.for_voxel_face(VoxelShape::Cube,4);
+        let side=graph.for_voxel_face(VoxelShape::Cube,0);
+        let mut cache=GraphRenderCache::new(1024*1024);
+        let first=cache.render_channel(&side,0,8,8).unwrap();
+        let second=cache.render_channel(&top,0,8,8).unwrap();
+        assert_ne!(first.as_ref(),second.as_ref());
+        assert!(Arc::ptr_eq(&first,&cache.render_channel(&side,0,8,8).unwrap()));
+        assert_eq!(cache.stats().misses,2);
+        assert_eq!(cache.stats().hits,1);
+        assert!(!serde_json::to_string(&top).unwrap().contains("face_context"));
+        let after:Graph=serde_json::from_str(&serde_json::to_string(&top).unwrap())
+            .unwrap();
+        assert!(after.render_rgba(8,8).unwrap().chunks_exact(4)
+            .all(|pixel|pixel[0]==0));
+    }
+
 }

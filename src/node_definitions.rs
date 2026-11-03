@@ -53,6 +53,11 @@ pub struct ParameterDefinition {
     pub control: ParameterControl,
 }
 
+const FACE_SURFACE_MASK: &[ParameterDefinition]=&[
+    ParameterDefinition{id:"surface",label:"Voxel surface",
+        control:ParameterControl::Choice{
+            options:&["Side","Top","Bottom"],default:"Top"}},
+];
 const BITMAP_SAMPLING: &[ParameterDefinition]=&[
     ParameterDefinition{id:"sampling",label:"Sampling",control:ParameterControl::Choice{
         options:&["Nearest","Bilinear"],default:"Bilinear"}},
@@ -260,6 +265,7 @@ pub fn parameters(kind:&NodeKind)-> &'static [ParameterDefinition] {
         NodeKind::RegionValue{..}=>REGION_VALUE,
         NodeKind::RegionBorderMask{..}=>REGION_BORDER_MASK,
         NodeKind::BitmapColor{..}|NodeKind::BitmapAlpha{..}=>BITMAP_SAMPLING,
+        NodeKind::FaceSurfaceMask{..}=>FACE_SURFACE_MASK,
         NodeKind::Strata{..}=>STRATA,
         NodeKind::Colorize{..}=>COLORIZE,
         NodeKind::Blend{..}=>BLEND,
