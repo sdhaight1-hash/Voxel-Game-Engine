@@ -151,6 +151,10 @@ pub struct FoliageMaterials {
     /// Defaults to 0 so existing tree materials remain pixel-identical.
     #[serde(default = "default_bark_tint_strength")]
     pub bark_tint_strength: f32,
+    /// Optional physical bark tiling in meters per repeat. None preserves
+    /// legacy UV sampling in procedural tree and editable Asset GPU previews.
+    #[serde(default,skip_serializing_if="Option::is_none")]
+    pub bark_meters_per_repeat: Option<f32>,
     pub bark_preset: Option<String>,
     pub leaf_preset: Option<String>,
     /// The shape of the leaf-card cutout. Travels with the authored asset,
@@ -177,6 +181,7 @@ impl Default for FoliageMaterials {
         Self { bark: None, leaf: None, leaf_opacity: None,
             bark_function:None,leaf_function:None,opacity_function:None,
             bark_tint_strength: 0.0,
+            bark_meters_per_repeat: None,
             bark_preset: None, leaf_preset: None,
             leaf_species: PlantPreset::Oak,
             leaf_silhouette: LeafSilhouetteSource::LegacySpecies,
@@ -201,6 +206,11 @@ impl FoliageMaterials {
         if !self.bark_tint_strength.is_finite()
             || !(0.0..=1.0).contains(&self.bark_tint_strength) {
             return Err("Bark tint strength must be 0..1".into());
+        }
+        if let Some(meters)=self.bark_meters_per_repeat {
+            if !meters.is_finite() || !(0.05..=8.0).contains(&meters) {
+                return Err("Bark meters per repeat must be 0.05..8".into());
+            }
         }
         if !self.cutout_threshold.is_finite()
             || !(0.0..=1.0).contains(&self.cutout_threshold) {

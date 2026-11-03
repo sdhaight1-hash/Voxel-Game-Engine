@@ -773,6 +773,9 @@ pub struct Triangle {
     pub points: [[f32; 3]; 3],
     pub material: Material,
     pub uv: [[f32; 2]; 3],
+    /// Mesh-only ring perimeter in meters; zero for unsupported surfaces.
+    /// Independent of the chosen bark repeat length and of hexel occupancy.
+    pub bark_circumference_m: [f32;3],
     pub cutout: bool,
     pub wind_weight: [f32; 3],
     /// Occupied grid cell this visible face belongs to.
@@ -1840,7 +1843,8 @@ fn push_triangle(out: &mut Vec<Triangle>, a: [f32; 3], b: [f32; 3],
                  c: [f32; 3], material: Material, cell: [i32; 3],
                  outward: [i32; 3], uv:[[f32;2];3]) {
     out.push(Triangle { points: [a, b, c], material, cell, outward,
-        uv, cutout: false, wind_weight: [0.0; 3] });
+        uv, bark_circumference_m:[0.0;3],
+        cutout: false, wind_weight: [0.0; 3] });
 }
 /// Each logical 1 m leaf hexel hosts several separate textured sprays.
 /// Their staggered placement increases canopy coverage without creating
@@ -1875,6 +1879,7 @@ fn add_leaf_cards(triangles:&mut Vec<Triangle>, pos:[i32;3],
             triangles.push(Triangle {
                 points:idx.map(|i|quad[i]),
                 material, uv:idx.map(|i|uv[i]),
+                bark_circumference_m:[0.0;3],
                 cutout:true, wind_weight:idx.map(|i|weights[i]),
                 cell:pos, outward:[0,0,1],
             });
@@ -2036,8 +2041,10 @@ fn add_tapered_branch_section(out:&mut Vec<Triangle>,cell:[i32;3],
         let outward=branch_outward(normal);
         push_triangle(out,start[i],start[next],end[next],Material::Bark,cell,
             outward,[uv0,uv1,uv2]);
+        out.last_mut().unwrap().bark_circumference_m=[6.0*r0,6.0*r0,6.0*r1];
         push_triangle(out,start[i],end[next],end[i],Material::Bark,cell,
             outward,[uv0,uv2,uv3]);
+        out.last_mut().unwrap().bark_circumference_m=[6.0*r0,6.0*r1,6.0*r1];
     }
     let start_out=branch_outward(mul3(tangent,-1.0));
     let end_out=branch_outward(tangent);
@@ -2047,6 +2054,26 @@ fn add_tapered_branch_section(out:&mut Vec<Triangle>,cell:[i32;3],
         push_triangle(out,end[0],end[i],end[i+1],Material::Bark,cell,
             end_out,[[0.5,0.5],[0.0,0.0],[1.0,0.0]]);
     }
+}
+
+/// Hexel clipping interpolates unwrapped branch V in meters. Interpolate
+/// physical ring perimeter using that same V; this survives clipping without
+/// changing the general-purpose clipping primitive or mesh ownership.
+fn clipped_bark_circumference(raw:&Triangle,v:f32)->f32 {
+    if raw.bark_circumference_m.iter().all(|value|*value==0.0) {
+        return 0.0;
+    }
+    let mut low=0;
+    let mut high=0;
+    for i in 1..3 {
+        if raw.uv[i][1]<raw.uv[low][1] {low=i;}
+        if raw.uv[i][1]>raw.uv[high][1] {high=i;}
+    }
+    let distance=raw.uv[high][1]-raw.uv[low][1];
+    if distance<=1e-6 {return raw.bark_circumference_m[low];}
+    let t=((v-raw.uv[low][1])/distance).clamp(0.0,1.0);
+    raw.bark_circumference_m[low]*(1.0-t)+
+        raw.bark_circumference_m[high]*t
 }
 
 /// Clip a visible wood fragment to every intersected *occupied* hexel.
@@ -2087,6 +2114,8 @@ fn emit_owned_wood(
             out.push(Triangle {
                 points:piece.map(|v|v.position),
                 uv:piece.map(|v|v.uv),
+                bark_circumference_m:piece.map(|v|
+                    clipped_bark_circumference(&raw,v.uv[1])),
                 cell, ..raw.clone()
             });
         }
@@ -2195,8 +2224,13 @@ fn emit_continuous_span_chain(
                 let u1=(j+1) as f32/SIDES as f32;
                 push_triangle(&mut raw,q0,q1,q2,Material::Bark,[0,0,0],
                     outward,[[u0,uv_v],[u1,uv_v],[u1,uv_v+len]]);
+                // Six straight polygon sides have perimeter 6*r, not 2*pi*r.
+                raw.last_mut().unwrap().bark_circumference_m=[
+                    6.0*radii[i],6.0*radii[i],6.0*radii[i+1]];
                 push_triangle(&mut raw,q0,q2,q3,Material::Bark,[0,0,0],
                     outward,[[u0,uv_v],[u1,uv_v+len],[u0,uv_v+len]]);
+                raw.last_mut().unwrap().bark_circumference_m=[
+                    6.0*radii[i],6.0*radii[i+1],6.0*radii[i+1]];
             }
             // Cap *true* path tips only, not every artificial subdivision.
             // A later world harvesting system may add exposed cut scars.
@@ -2300,6 +2334,8 @@ fn tree_surface_triangles(
                     triangles.push(Triangle{
                         points:piece.map(|v|v.position),
                         uv:piece.map(|v|v.uv),
+                        bark_circumference_m:piece.map(|v|
+                            clipped_bark_circumference(&t,v.uv[1])),
                         cell:part.cell,..t.clone()
                     });
                 }
