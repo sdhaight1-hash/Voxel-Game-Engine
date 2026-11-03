@@ -21,10 +21,13 @@ struct Vertex {
     kind: f32,
     sway_weight: f32,
     phase: f32,
+    /// Mesh-ring perimeter in meters, or zero for legacy/leaf geometry.
+    bark_circumference_m: f32,
 }
-const ATTRIBUTES: [wgpu::VertexAttribute; 6] =
+const ATTRIBUTES: [wgpu::VertexAttribute; 7] =
     wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x2,
-        2 => Float32x4, 3 => Float32, 4 => Float32, 5 => Float32];
+        2 => Float32x4, 3 => Float32, 4 => Float32, 5 => Float32,
+        6 => Float32];
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -36,6 +39,8 @@ struct Uniforms {
     wind: [f32; 4],
     season: [f32; 4],
     leaf_base: [f32; 4],
+    /// x = bark meters per repeat, zero disables physical UV mapping.
+    bark_mapping: [f32;4],
 }
 
 /// Preview-only render mode. Never persisted to tree materials or assets.
@@ -74,6 +79,7 @@ pub struct Scene {
     pub center: [f32; 3],
     pub span: f32,
     bark_rgba: Vec<u8>,
+    bark_repeat_m: f32,
     leaf_rgba: Vec<u8>,
     palette: GpuPalette,
     leaf_base: [f32;4],
@@ -134,6 +140,7 @@ impl Scene {
                     kind,
                     sway_weight:face.wind_weight[i],
                     phase,
+                    bark_circumference_m:face.bark_circumference_m[i],
                 });
             }
         }
@@ -143,7 +150,7 @@ impl Scene {
             .max(max[2]-min[2])).max(mesh.voxel_size);
         Self {
             vertices,center,span,
-            bark_rgba:bark.to_vec(),leaf_rgba:leaf.to_vec(),
+            bark_rgba:bark.to_vec(),bark_repeat_m:0.0,leaf_rgba:leaf.to_vec(),
             palette:GpuPalette{stops:palette},
             leaf_base:[leaf_tint[0] as f32/255.0,leaf_tint[1] as f32/255.0,
                 leaf_tint[2] as f32/255.0,1.0],
@@ -152,6 +159,14 @@ impl Scene {
             voxel_size:mesh.voxel_size,
             flower_kind,
         }
+    }
+
+    /// Changing only this authoring parameter must not modify mesh vertices,
+    /// bark RGBA or palette data; the next frame uploads its small uniform.
+    pub fn with_bark_meters_per_repeat(mut self,meters:Option<f32>)->Self {
+        self.bark_repeat_m=meters.filter(|m|
+            m.is_finite() && (0.05..=8.0).contains(m)).unwrap_or(0.0);
+        self
     }
 
     #[cfg(test)]
@@ -531,6 +546,7 @@ impl egui_wgpu::CallbackTrait for RenderScene {
                 leaf_coverage_uniform(self.leaf_aa_mode),
                 leaf_mipmap_uniform(self.leaf_mipmaps)],
             leaf_base:self.scene.leaf_base,
+            bark_mapping:[self.scene.bark_repeat_m,0.0,0.0,0.0],
         };
         queue.write_buffer(&resources.uniform,0,bytemuck::bytes_of(&globals));
 
