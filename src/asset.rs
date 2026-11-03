@@ -224,7 +224,11 @@ impl VoxelAsset {
 
     /// A compatibility surface mesh; the JSON retains real editable blocks.
     pub fn obj(&self) -> Result<String, String> {
-        Ok(self.mesh()?.obj().replace("mtllib foliage.mtl", "mtllib asset.mtl"))
+        self.materials.validate()?;
+        let mesh=self.mesh()?;
+        Ok(mesh.obj_with_bark_meters_per_repeat(
+            self.materials.bark_meters_per_repeat)?
+            .replace("mtllib foliage.mtl", "mtllib asset.mtl"))
     }
 
     pub fn mtl(&self) -> String {

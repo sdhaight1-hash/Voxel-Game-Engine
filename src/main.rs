@@ -1797,7 +1797,8 @@ impl Studio {
                 .map_err(|e|e.to_string())?;
             let files=[
                 ("foliage.voxels.json", mesh.voxel_json(&self.foliage)?),
-                ("foliage.obj",mesh.obj()),
+                ("foliage.obj",mesh.obj_with_bark_meters_per_repeat(
+                    self.foliage.materials.bark_meters_per_repeat)?),
                 ("foliage.mtl",texture_studio::foliage::mtl(&self.foliage)),
                 ("foliage.json",project),
             ];
