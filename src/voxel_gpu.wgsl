@@ -6,7 +6,7 @@ struct Globals {
     wind: vec4<f32>,
     season: vec4<f32>,
     leaf_base: vec4<f32>,
-    // x = optional physical bark meters per repeat (0 = legacy sampling).
+    // x = bark meters per repeat; y = 1 enables opt-in dielectric PBR.
     bark_mapping: vec4<f32>,
 };
 
@@ -20,6 +20,10 @@ struct SeasonalPalette {
     stops: array<vec4<f32>,16>,
 };
 @group(0) @binding(4) var<uniform> palettes: SeasonalPalette;
+// Data textures are Rgba8Unorm, *not* sRGB. Roughness and normal values
+// must not undergo the albedo color-space transformation.
+@group(0) @binding(5) var bark_roughness_tex: texture_2d<f32>;
+@group(0) @binding(6) var bark_normal_tex: texture_2d<f32>;
 
 // Sample one season's shadow-to-highlight gradient (UV base -> tip).
 fn season_gradient(season:u32, amount:f32)->vec3<f32> {
@@ -102,6 +106,8 @@ struct VertexInput {
     @location(4) sway_weight: f32,
     @location(5) phase: f32,
     @location(6) bark_circumference_m: f32,
+    @location(7) normal: vec3<f32>,
+    @location(8) tangent: vec4<f32>,
 };
 
 struct VertexOutput {
@@ -110,6 +116,8 @@ struct VertexOutput {
     @location(1) tint: vec4<f32>,
     @location(2) kind: f32,
     @location(3) bark_circumference_m: f32,
+    @location(4) normal: vec3<f32>,
+    @location(5) tangent: vec4<f32>,
 };
 
 @vertex
@@ -133,6 +141,8 @@ fn vs_main(input: VertexInput) -> VertexOutput {
     output.tint = input.tint;
     output.kind = input.kind;
     output.bark_circumference_m = input.bark_circumference_m;
+    output.normal = input.normal;
+    output.tangent = input.tangent;
     return output;
 }
 
@@ -152,6 +162,57 @@ fn leaf_coverage_threshold(pixel:vec2<u32>)->f32 {
     return (bayer[index]+0.5)/16.0;
 }
 
+// Albedo RGBA8 is authored in display/sRGB space. The render target is
+// Rgba8Unorm (not sRGB), so convert explicitly for dielectric lighting and
+// encode again on output. Roughness and normal maps stay linear/UNORM.
+fn srgb_to_linear(c:vec3<f32>)->vec3<f32> {
+    let x=clamp(c,vec3<f32>(0.0),vec3<f32>(1.0));
+    return select(x/12.92,pow((x+0.055)/1.055,vec3<f32>(2.4)),
+                  x>vec3<f32>(0.04045));
+}
+fn linear_to_srgb(c:vec3<f32>)->vec3<f32> {
+    let x=max(c,vec3<f32>(0.0));
+    return select(12.92*x,1.055*pow(x,vec3<f32>(1.0/2.4))-0.055,
+                  x>vec3<f32>(0.0031308));
+}
+
+// Direct-light GGX/Smith/Schlick dielectric. This first PBR slice uses one
+// fixed local directional light and a diffuse ambient approximation; it is
+// intentionally not IBL, metallic BRDF, or a world-lighting implementation.
+fn shade_bark_dielectric(albedo_srgb:vec3<f32>,roughness:f32,
+                          tangent_normal:vec3<f32>,normal:vec3<f32>,
+                          tangent:vec4<f32>)->vec3<f32> {
+    let V=normalize(globals.view.xyz);
+    var N=normalize(normal);
+    // The existing foliage pipeline is two-sided: light whichever side
+    // of a bark face is visible without reversing the UV tangent axis.
+    if (dot(N,V)<0.0) { N=-N; }
+    let T=normalize(tangent.xyz-N*dot(N,tangent.xyz));
+    let B=normalize(cross(N,T))*tangent.w;
+    N=normalize(T*tangent_normal.x+B*tangent_normal.y+N*tangent_normal.z);
+    let L=normalize(vec3<f32>(0.46,0.35,0.81));
+    let H=normalize(V+L);
+    let NoL=max(dot(N,L),0.0);
+    let NoV=max(dot(N,V),0.001);
+    let NoH=max(dot(N,H),0.0);
+    let VoH=max(dot(V,H),0.0);
+    let r=clamp(roughness,0.05,1.0);
+    let alpha=r*r;
+    let alpha2=alpha*alpha;
+    let denom=NoH*NoH*(alpha2-1.0)+1.0;
+    let D=alpha2/(3.14159265*denom*denom+0.000001);
+    let k=(r+1.0)*(r+1.0)/8.0;
+    let vis=(NoV/(NoV*(1.0-k)+k)) *
+            (NoL/(NoL*(1.0-k)+k));
+    let F0=vec3<f32>(0.04); // fixed dielectric: bark is not metallic
+    let F=F0+(vec3<f32>(1.0)-F0)*pow(1.0-VoH,5.0);
+    let specular=(D*vis/max(4.0*NoV*NoL,0.0001))*F;
+    let base=srgb_to_linear(albedo_srgb);
+    let diffuse=(vec3<f32>(1.0)-F)*base/3.14159265;
+    let lit=base*0.16+(diffuse+specular)*NoL*2.35;
+    return clamp(linear_to_srgb(lit),vec3<f32>(0.0),vec3<f32>(1.0));
+}
+
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     // Compute derivatives in uniform fragment control flow. The optional
@@ -159,6 +220,9 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let foliage_uv_dx=dpdx(input.uv);
     let foliage_uv_dy=dpdy(input.uv);
     var rgba: vec4<f32>;
+    var bark_uv_main=input.uv;
+    var bark_uv_seam=input.uv;
+    var bark_seam_mix=0.0;
     if (input.kind < 0.5) {
         let meters = globals.bark_mapping.x;
         if (meters > 0.0 && input.bark_circumference_m > 0.0) {
@@ -174,6 +238,9 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
             let uv_seam = vec2<f32>((input.uv.x-1.0) * ring_tiles,
                                     input.uv.y / meters);
             let seam_mix = smoothstep(0.80,1.0,input.uv.x);
+            bark_uv_main=uv_main;
+            bark_uv_seam=uv_seam;
+            bark_seam_mix=seam_mix;
             let a = textureSampleLevel(bark_tex, linear_sampler,uv_main,0.0);
             let b = textureSampleLevel(bark_tex, linear_sampler,uv_seam,0.0);
             rgba = mix(a,b,seam_mix);
@@ -227,5 +294,21 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     } else {
         rgba = vec4<f32>(1.0);
     }
+    if (input.kind < 0.5 && globals.bark_mapping.y > 0.5) {
+        // Same UV pair/seam fade as albedo; data textures are not sRGB.
+        let r0=textureSampleLevel(bark_roughness_tex,linear_sampler,
+                                  bark_uv_main,0.0).r;
+        let r1=textureSampleLevel(bark_roughness_tex,linear_sampler,
+                                  bark_uv_seam,0.0).r;
+        let n0=textureSampleLevel(bark_normal_tex,linear_sampler,
+                                  bark_uv_main,0.0).rgb;
+        let n1=textureSampleLevel(bark_normal_tex,linear_sampler,
+                                  bark_uv_seam,0.0).rgb;
+        let mapped=normalize(mix(n0,n1,bark_seam_mix)*2.0-vec3<f32>(1.0));
+        let lit=shade_bark_dielectric(rgba.rgb,mix(r0,r1,bark_seam_mix),
+                                     mapped,input.normal,input.tangent);
+        return vec4<f32>(lit,rgba.a);
+    }
+    // Legacy bark and ALL foliage modes retain their exact old output path.
     return vec4<f32>(rgba.rgb * input.tint.rgb, rgba.a);
 }
