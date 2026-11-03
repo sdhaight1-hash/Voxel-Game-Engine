@@ -3352,4 +3352,22 @@ mod tests {
         assert!(tree.validate().is_err());
     }
 
+
+    #[test]
+    fn static_bark_uv_wraps_at_both_ring_seam_ends() {
+        // A six-sided tube of radius 0.5m has perimeter 3m,
+        // or 7.5 repeats at 0.4 meters per repeat.
+        let first=metric_bark_obj_uv([0.0,2.0],3.0,Some(0.4));
+        let last=metric_bark_obj_uv([1.0,2.0],3.0,Some(0.4));
+        assert_eq!(first,[0.0,5.0]);
+        assert_eq!(last,[8.0,5.0]);
+        assert_eq!(last[0].fract(),first[0].fract());
+        // Before the final fifth, physical density is unaltered.
+        assert_eq!(metric_bark_obj_uv([0.5,2.0],3.0,Some(0.4)),
+            [3.75,5.0]);
+        assert_eq!(metric_bark_obj_uv([0.9,2.0],0.0,Some(0.4)),
+            [0.9,2.0]);
+        assert_eq!(metric_bark_obj_uv([1.0,2.0],3.0,None),
+            [1.0,2.0]);
+    }
 }
