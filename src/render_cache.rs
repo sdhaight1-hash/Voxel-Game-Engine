@@ -29,6 +29,8 @@ struct RenderKey {
     target: RenderTarget,
     nodes: Vec<(u64,NodeKind)>,
     links: Vec<(u64,u64,usize)>,
+    /// Ephemeral voxel surface context changes the value of Face Surface Mask.
+    face_context: Option<(crate::VoxelShape,usize)>,
     /// Transitive input images only; graph validation verifies fingerprints.
     images: Vec<(u64,u64)>,
 }
@@ -59,6 +61,7 @@ impl RenderKey {
         }
         Self {
             bake_version:BAKE_VERSION,width,height,target,
+            face_context:graph.face_context,
             nodes:graph.nodes.iter().filter(|n|required.contains(&n.id))
                 .map(|n|(n.id,n.kind)).collect(),
             links:graph.links.iter().filter(|link|
