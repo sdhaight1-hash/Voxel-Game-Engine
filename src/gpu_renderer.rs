@@ -23,11 +23,15 @@ struct Vertex {
     phase: f32,
     /// Mesh-ring perimeter in meters, or zero for legacy/leaf geometry.
     bark_circumference_m: f32,
+    /// Geometric object-local surface normal (flat per triangle).
+    normal: [f32;3],
+    /// UV tangent xyz with bitangent handedness in w. Not MikkTSpace.
+    tangent: [f32;4],
 }
-const ATTRIBUTES: [wgpu::VertexAttribute; 7] =
+const ATTRIBUTES: [wgpu::VertexAttribute; 9] =
     wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x2,
         2 => Float32x4, 3 => Float32, 4 => Float32, 5 => Float32,
-        6 => Float32];
+        6 => Float32, 7 => Float32x3, 8 => Float32x4];
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -40,6 +44,7 @@ struct Uniforms {
     season: [f32; 4],
     leaf_base: [f32; 4],
     /// x = bark meters per repeat, zero disables physical UV mapping.
+    /// y = opt-in roughness/normal dielectric BRDF.
     bark_mapping: [f32;4],
 }
 
@@ -80,6 +85,9 @@ pub struct Scene {
     pub span: f32,
     bark_rgba: Vec<u8>,
     bark_repeat_m: f32,
+    bark_roughness_rgba: Vec<u8>,
+    bark_normal_rgba: Vec<u8>,
+    bark_pbr_enabled: bool,
     leaf_rgba: Vec<u8>,
     palette: GpuPalette,
     leaf_base: [f32;4],
@@ -98,6 +106,8 @@ impl Scene {
         let mut vertices = Vec::with_capacity(mesh.triangles.len() * 3);
         let light = [0.46, 0.35, 0.81];
         for face in &mesh.triangles {
+            let (surface_normal,tangent)=
+                triangle_tangent_frame(face.points,face.uv);
             let p = &face.points;
             let a = [p[1][0]-p[0][0],p[1][1]-p[0][1],p[1][2]-p[0][2]];
             let b = [p[2][0]-p[0][0],p[2][1]-p[0][1],p[2][2]-p[0][2]];
@@ -141,6 +151,8 @@ impl Scene {
                     sway_weight:face.wind_weight[i],
                     phase,
                     bark_circumference_m:face.bark_circumference_m[i],
+                    normal:surface_normal,
+                    tangent,
                 });
             }
         }
@@ -150,7 +162,11 @@ impl Scene {
             .max(max[2]-min[2])).max(mesh.voxel_size);
         Self {
             vertices,center,span,
-            bark_rgba:bark.to_vec(),bark_repeat_m:0.0,leaf_rgba:leaf.to_vec(),
+            bark_rgba:bark.to_vec(),bark_repeat_m:0.0,
+            bark_roughness_rgba:vec![204,204,204,255],
+            bark_normal_rgba:vec![128,128,255,255],
+            bark_pbr_enabled:false,
+            leaf_rgba:leaf.to_vec(),
             palette:GpuPalette{stops:palette},
             leaf_base:[leaf_tint[0] as f32/255.0,leaf_tint[1] as f32/255.0,
                 leaf_tint[2] as f32/255.0,1.0],
@@ -169,8 +185,64 @@ impl Scene {
         self
     }
 
+    /// PBR maps are graph-authored unorm data: roughness is linear in R,
+    /// normals are tangent-space XYZ in RGB. Legacy scene paths stay disabled.
+    pub fn with_bark_pbr_maps(mut self,roughness:Vec<u8>,normal:Vec<u8>)->Self {
+        assert!(!roughness.is_empty()&&roughness.len()%4==0);
+        assert_eq!(roughness.len(),normal.len());
+        self.bark_roughness_rgba=roughness;
+        self.bark_normal_rgba=normal;
+        self.bark_pbr_enabled=true;
+        self
+    }
+
     #[cfg(test)]
     pub fn triangle_count(&self)->usize {self.vertices.len()/3}
+}
+
+/// One object-space TBN per authored triangle, retaining UV handedness on
+/// branch rings, clipped hexels and ordinary block faces. Degenerate UVs
+/// use a deterministic orthogonal tangent rather than NaN coordinates.
+///
+/// This is flat per-face tangent space, not MikkTSpace vertex smoothing.
+fn triangle_tangent_frame(p:[[f32;3];3],uv:[[f32;2];3])
+    ->([f32;3],[f32;4]) {
+    let sub=|a:[f32;3],b:[f32;3]|->
+        [f32;3] {[a[0]-b[0],a[1]-b[1],a[2]-b[2]]};
+    let dot=|a:[f32;3],b:[f32;3]|->
+        f32 {a[0]*b[0]+a[1]*b[1]+a[2]*b[2]};
+    let cross=|a:[f32;3],b:[f32;3]|->
+        [f32;3] {[a[1]*b[2]-a[2]*b[1],
+                   a[2]*b[0]-a[0]*b[2],
+                   a[0]*b[1]-a[1]*b[0]]};
+    let normalize=|v:[f32;3]|->Option<[f32;3]> {
+        let length=dot(v,v).sqrt();
+        (length>1e-7 && length.is_finite())
+            .then(||v.map(|a|a/length))
+    };
+    let e1=sub(p[1],p[0]);
+    let e2=sub(p[2],p[0]);
+    let n=normalize(cross(e1,e2)).unwrap_or([0.0,0.0,1.0]);
+    let du1=uv[1][0]-uv[0][0];
+    let dv1=uv[1][1]-uv[0][1];
+    let du2=uv[2][0]-uv[0][0];
+    let dv2=uv[2][1]-uv[0][1];
+    let det=du1*dv2-du2*dv1;
+    let fallback=|| {
+        let axis=if n[2].abs()<0.9 {[0.0,0.0,1.0]}
+            else {[0.0,1.0,0.0]};
+        normalize(cross(axis,n)).unwrap_or([1.0,0.0,0.0])
+    };
+    if !det.is_finite() || det.abs()<1e-8 {
+        let t=fallback();
+        return (n,[t[0],t[1],t[2],1.0]);
+    }
+    let raw_t=std::array::from_fn(|i|(e1[i]*dv2-e2[i]*dv1)/det);
+    let raw_b=std::array::from_fn(|i|(e2[i]*du1-e1[i]*du2)/det);
+    let projected=std::array::from_fn(|i|raw_t[i]-n[i]*dot(n,raw_t));
+    let t=normalize(projected).unwrap_or_else(fallback);
+    let handedness=if dot(cross(n,t),raw_b)<0.0 {-1.0} else {1.0};
+    (n,[t[0],t[1],t[2],handedness])
 }
 
 /// The scene Arc can change for geometry, palette, or material edits.
@@ -180,6 +252,8 @@ struct SceneUploads {
     bark: bool,
     leaf: bool,
     palette: bool,
+    bark_roughness: bool,
+    bark_normal: bool,
 }
 
 fn scene_uploads(previous: Option<&Scene>, next: &Scene) -> SceneUploads {
@@ -190,6 +264,10 @@ fn scene_uploads(previous: Option<&Scene>, next: &Scene) -> SceneUploads {
         bark: previous.is_none_or(|old|old.bark_rgba!=next.bark_rgba),
         leaf: previous.is_none_or(|old|old.leaf_rgba!=next.leaf_rgba),
         palette: previous.is_none_or(|old|old.palette.stops!=next.palette.stops),
+        bark_roughness: previous.is_none_or(|old|
+            old.bark_roughness_rgba!=next.bark_roughness_rgba),
+        bark_normal: previous.is_none_or(|old|
+            old.bark_normal_rgba!=next.bark_normal_rgba),
     }
 }
 
@@ -200,6 +278,8 @@ struct UploadMetrics {
     bark_textures: u64,
     leaf_textures: u64,
     palette_writes: u64,
+    roughness_textures: u64,
+    normal_textures: u64,
 }
 
 impl UploadMetrics {
@@ -208,6 +288,8 @@ impl UploadMetrics {
         self.bark_textures+=u64::from(uploads.bark);
         self.leaf_textures+=u64::from(uploads.leaf);
         self.palette_writes+=u64::from(uploads.palette);
+        self.roughness_textures+=u64::from(uploads.bark_roughness);
+        self.normal_textures+=u64::from(uploads.bark_normal);
     }
 }
 
@@ -231,6 +313,8 @@ struct Resources {
     bind_group: Option<wgpu::BindGroup>,
     bark_view: Option<wgpu::TextureView>,
     leaf_view: Option<wgpu::TextureView>,
+    bark_roughness_view: Option<wgpu::TextureView>,
+    bark_normal_view: Option<wgpu::TextureView>,
     sampler: Option<wgpu::Sampler>,
     vertex: Option<wgpu::Buffer>,
     vertex_count: u32,
@@ -298,6 +382,22 @@ impl GpuViewport {
                     ty:wgpu::BindingType::Buffer {
                         ty:wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset:false,min_binding_size:None,
+                    },count:None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding:5,visibility:wgpu::ShaderStages::FRAGMENT,
+                    ty:wgpu::BindingType::Texture {
+                        multisampled:false,
+                        view_dimension:wgpu::TextureViewDimension::D2,
+                        sample_type:wgpu::TextureSampleType::Float{filterable:true},
+                    },count:None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding:6,visibility:wgpu::ShaderStages::FRAGMENT,
+                    ty:wgpu::BindingType::Texture {
+                        multisampled:false,
+                        view_dimension:wgpu::TextureViewDimension::D2,
+                        sample_type:wgpu::TextureSampleType::Float{filterable:true},
                     },count:None,
                 },
             ],
@@ -415,7 +515,8 @@ impl GpuViewport {
             _msaa4_color:msaa4_color,msaa4_color_view,
             _msaa4_depth:msaa4_depth,msaa4_depth_view,
             group_layout,uniform,palette_buffer,bind_group:None,
-            bark_view:None,leaf_view:None,sampler:None,
+            bark_view:None,leaf_view:None,
+            bark_roughness_view:None,bark_normal_view:None,sampler:None,
             vertex:None,vertex_count:0,last_scene:None,
             upload_metrics:UploadMetrics::default(),
             _target:target,target_view,
@@ -489,7 +590,18 @@ impl egui_wgpu::CallbackTrait for RenderScene {
                 resources.leaf_view=Some(upload_leaf_rgba_mips(device,queue,&scene.leaf_rgba)
                     .create_view(&Default::default()));
             }
-            if uploads.bark || uploads.leaf || resources.bind_group.is_none() {
+            if uploads.bark_roughness {
+                resources.bark_roughness_view=Some(
+                    upload_rgba(device,queue,&scene.bark_roughness_rgba)
+                        .create_view(&Default::default()));
+            }
+            if uploads.bark_normal {
+                resources.bark_normal_view=Some(
+                    upload_rgba(device,queue,&scene.bark_normal_rgba)
+                        .create_view(&Default::default()));
+            }
+            if uploads.bark || uploads.leaf || uploads.bark_roughness
+                || uploads.bark_normal || resources.bind_group.is_none() {
                 let sampler=resources.sampler.get_or_insert_with(||
                     device.create_sampler(&wgpu::SamplerDescriptor {
                         label:Some("voxel-pixel-sampler"),
@@ -512,6 +624,14 @@ impl egui_wgpu::CallbackTrait for RenderScene {
                         wgpu::BindGroupEntry{binding:3,resource:wgpu::BindingResource::Sampler(sampler)},
                         wgpu::BindGroupEntry{binding:4,
                             resource:resources.palette_buffer.as_entire_binding()},
+                        wgpu::BindGroupEntry{binding:5,
+                            resource:wgpu::BindingResource::TextureView(
+                                resources.bark_roughness_view.as_ref()
+                                    .expect("bark roughness uploaded"))},
+                        wgpu::BindGroupEntry{binding:6,
+                            resource:wgpu::BindingResource::TextureView(
+                                resources.bark_normal_view.as_ref()
+                                    .expect("bark normal uploaded"))},
                     ],
                 }));
             }
@@ -546,7 +666,8 @@ impl egui_wgpu::CallbackTrait for RenderScene {
                 leaf_coverage_uniform(self.leaf_aa_mode),
                 leaf_mipmap_uniform(self.leaf_mipmaps)],
             leaf_base:self.scene.leaf_base,
-            bark_mapping:[self.scene.bark_repeat_m,0.0,0.0,0.0],
+            bark_mapping:[self.scene.bark_repeat_m,
+                if self.scene.bark_pbr_enabled {1.0} else {0.0},0.0,0.0],
         };
         queue.write_buffer(&resources.uniform,0,bytemuck::bytes_of(&globals));
 
@@ -723,8 +844,8 @@ mod tests {
         let palette=texture_studio::foliage_materials::SeasonalPalettes::default()
             .gpu_stops();
         let scene=Scene::from_mesh(&mesh,&data,&data,[50,135,75],palette,0.0);
-        assert_eq!(scene_uploads(Some(&scene),&scene),SceneUploads{
-            geometry:false,bark:false,leaf:false,palette:false,
+        assert_eq!(scene_uploads(Some(&scene),&scene),SceneUploads {
+            geometry:false,bark:false,leaf:false,palette:false, bark_roughness:false,bark_normal:false,
         });
     }
 
@@ -844,22 +965,22 @@ mod tests {
             .gpu_stops();
         let baseline=Scene::from_mesh(&mesh,&bark,&leaf,[50,150,80],palette,0.0);
         assert_eq!(scene_uploads(None,&baseline),SceneUploads {
-            geometry:true,bark:true,leaf:true,palette:true,
+            geometry:true,bark:true,leaf:true,palette:true, bark_roughness:false,bark_normal:false,
         });
         let identical=Scene::from_mesh(&mesh,&bark,&leaf,[50,150,80],palette,0.0);
         assert_eq!(scene_uploads(Some(&baseline),&identical),SceneUploads {
-            geometry:false,bark:false,leaf:false,palette:false,
+            geometry:false,bark:false,leaf:false,palette:false, bark_roughness:false,bark_normal:false,
         });
         palette[0][0]=0.7;
         let season=Scene::from_mesh(&mesh,&bark,&leaf,[50,150,80],palette,0.0);
         assert_eq!(scene_uploads(Some(&baseline),&season),SceneUploads {
-            geometry:false,bark:false,leaf:false,palette:true,
+            geometry:false,bark:false,leaf:false,palette:true, bark_roughness:false,bark_normal:false,
         });
         let mut tinted=bark.clone();
         tinted[0]=90;
         let material=Scene::from_mesh(&mesh,&tinted,&leaf,[50,150,80],palette,0.0);
         assert_eq!(scene_uploads(Some(&season),&material),SceneUploads {
-            geometry:false,bark:true,leaf:false,palette:false,
+            geometry:false,bark:true,leaf:false,palette:false, bark_roughness:false,bark_normal:false,
         });
         let grown=FoliageMesh::from_voxels(VoxelShape::Cube,0.5,vec![
             VoxelCell{x:0,y:0,z:0,material:Material::Bark},
@@ -867,14 +988,14 @@ mod tests {
         ]).unwrap();
         let different_mesh=Scene::from_mesh(&grown,&tinted,&leaf,[50,150,80],palette,0.0);
         assert_eq!(scene_uploads(Some(&material),&different_mesh),SceneUploads {
-            geometry:true,bark:false,leaf:false,palette:false,
+            geometry:true,bark:false,leaf:false,palette:false, bark_roughness:false,bark_normal:false,
         });
         // A wind-strength edit changes only a uniform; scene resources stay put.
         let mut wind=Scene::from_mesh(&mesh,&bark,&leaf,[50,150,80],
             texture_studio::foliage_materials::SeasonalPalettes::default().gpu_stops(),0.0);
         wind.wind_strength+=0.1;
         assert_eq!(scene_uploads(Some(&baseline),&wind),SceneUploads {
-            geometry:false,bark:false,leaf:false,palette:false,
+            geometry:false,bark:false,leaf:false,palette:false, bark_roughness:false,bark_normal:false,
         });
         let mut metrics=UploadMetrics::default();
         for changes in [
@@ -909,7 +1030,7 @@ mod tests {
         assert_eq!(leaf_coverage_uniform(LeafAaMode::Ordered),1.0);
         assert_eq!(leaf_coverage_uniform(LeafAaMode::Msaa4),2.0);
         assert_eq!(scene_uploads(Some(&scene),&scene),SceneUploads {
-            geometry:false,bark:false,leaf:false,palette:false,
+            geometry:false,bark:false,leaf:false,palette:false, bark_roughness:false,bark_normal:false,
         });
     }
 
@@ -944,7 +1065,7 @@ mod tests {
             assert_ne!(changed,original,"{species:?} needs a different leaf texture");
             let after=Scene::from_mesh(&mesh,&bark,&changed,tint,palette,0.0);
             assert_eq!(scene_uploads(Some(&before),&after),SceneUploads {
-                geometry:false,bark:false,leaf:true,palette:false,
+                geometry:false,bark:false,leaf:true,palette:false, bark_roughness:false,bark_normal:false,
             },"{species:?} should only update leaf pixels");
         }
     }
@@ -970,8 +1091,8 @@ mod tests {
         let covered=mat.bake_leaf(64,tint).unwrap();
         assert!(covered.chunks_exact(4).any(|px|px[3]>0&&px[3]<255));
         let after=Scene::from_mesh(&mesh,&bark,&covered,tint,palette,0.0);
-        assert_eq!(scene_uploads(Some(&before),&after),SceneUploads{
-            geometry:false,bark:false,leaf:true,palette:false,
+        assert_eq!(scene_uploads(Some(&before),&after),SceneUploads {
+            geometry:false,bark:false,leaf:true,palette:false, bark_roughness:false,bark_normal:false,
         });
     }
 
@@ -1006,13 +1127,13 @@ mod tests {
             .with_bark_meters_per_repeat(Some(0.42));
         assert_eq!(legacy.bark_repeat_m,0.0);
         assert_eq!(metric.bark_repeat_m,0.42);
-        assert_eq!(scene_uploads(Some(&legacy),&metric),SceneUploads{
-            geometry:false,bark:false,leaf:false,palette:false,
+        assert_eq!(scene_uploads(Some(&legacy),&metric),SceneUploads {
+            geometry:false,bark:false,leaf:false,palette:false, bark_roughness:false,bark_normal:false,
         },"changing only the physical repeat must be a GPU uniform update");
         let altered=Scene::from_mesh(&mesh,&bark,&leaf,[70,132,58],palette,0.0)
             .with_bark_meters_per_repeat(Some(2.0));
-        assert_eq!(scene_uploads(Some(&metric),&altered),SceneUploads{
-            geometry:false,bark:false,leaf:false,palette:false,
+        assert_eq!(scene_uploads(Some(&metric),&altered),SceneUploads {
+            geometry:false,bark:false,leaf:false,palette:false, bark_roughness:false,bark_normal:false,
         });
         assert_eq!(Scene::from_mesh(&mesh,&bark,&leaf,[70,132,58],palette,0.0)
             .with_bark_meters_per_repeat(Some(f32::NAN)).bark_repeat_m,0.0);
