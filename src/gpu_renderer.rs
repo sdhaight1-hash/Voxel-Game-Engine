@@ -991,4 +991,34 @@ mod tests {
         assert!(scene.span>0.0);
         assert_eq!(scene.flower_kind,0.0);
     }
+
+    #[test]
+    fn bark_meter_scale_changes_only_uniform_not_mesh_texture_or_palette_uploads() {
+        let mesh=FoliageMesh::from_voxels(VoxelShape::Cube,0.5,vec![
+            VoxelCell{x:0,y:0,z:0,material:Material::Bark},
+        ]).unwrap();
+        let bark=vec![120;TEX_SIZE as usize*TEX_SIZE as usize*4];
+        let leaf=vec![90;TEX_SIZE as usize*TEX_SIZE as usize*4];
+        let palette=texture_studio::foliage_materials::SeasonalPalettes::default()
+            .gpu_stops();
+        let legacy=Scene::from_mesh(&mesh,&bark,&leaf,[70,132,58],palette,0.0);
+        let metric=Scene::from_mesh(&mesh,&bark,&leaf,[70,132,58],palette,0.0)
+            .with_bark_meters_per_repeat(Some(0.42));
+        assert_eq!(legacy.bark_repeat_m,0.0);
+        assert_eq!(metric.bark_repeat_m,0.42);
+        assert_eq!(scene_uploads(Some(&legacy),&metric),SceneUploads{
+            geometry:false,bark:false,leaf:false,palette:false,
+        },"changing only the physical repeat must be a GPU uniform update");
+        let altered=Scene::from_mesh(&mesh,&bark,&leaf,[70,132,58],palette,0.0)
+            .with_bark_meters_per_repeat(Some(2.0));
+        assert_eq!(scene_uploads(Some(&metric),&altered),SceneUploads{
+            geometry:false,bark:false,leaf:false,palette:false,
+        });
+        assert_eq!(Scene::from_mesh(&mesh,&bark,&leaf,[70,132,58],palette,0.0)
+            .with_bark_meters_per_repeat(Some(f32::NAN)).bark_repeat_m,0.0);
+        let shader=include_str!("voxel_gpu.wgsl");
+        assert!(shader.contains("input.bark_circumference_m > 0.0"));
+        assert!(shader.contains("smoothstep(0.80,1.0,input.uv.x)"));
+        assert!(shader.contains("(input.uv.x-1.0) * ring_tiles"));
+    }
 }
