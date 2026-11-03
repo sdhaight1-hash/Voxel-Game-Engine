@@ -244,6 +244,23 @@ fn preview_bark_pbr_maps(cache:&mut GraphRenderCache,materials:&FoliageMaterials
         metallic.as_ref().to_vec()))
 }
 
+/// Leaf graph Roughness and Height-derived tangent normals. The separate
+/// cutout/silhouette, species tint and seasonal palette remain owned by the
+/// existing leaf albedo bake and leaf WGSL branch.
+fn preview_leaf_pbr_maps(cache:&mut GraphRenderCache,materials:&FoliageMaterials)
+    ->Result<(Vec<u8>,Vec<u8>),String> {
+    let Some(graph)=&materials.leaf else {
+        let count=(MATERIAL_SIZE*MATERIAL_SIZE) as usize;
+        return Ok((
+            vec![204,204,204,255].repeat(count),
+            vec![128,128,255,255].repeat(count),
+        ));
+    };
+    let roughness=cache.render_channel(graph,1,MATERIAL_SIZE,MATERIAL_SIZE)?;
+    let normal=cache.render_normal(graph,MATERIAL_SIZE,MATERIAL_SIZE)?;
+    Ok((roughness.as_ref().to_vec(),normal.as_ref().to_vec()))
+}
+
 /// Bake the same material images used by the preview and the static OBJ.
 fn write_foliage_textures(folder:&Path,materials:&FoliageMaterials,
                           bark:[u8;3], leaf:[u8;3], cutout:bool)->Result<(),String> {
@@ -337,6 +354,8 @@ struct Studio {
     leaf_mipmaps: bool,
     /// Opt-in GPU dielectric PBR for bark; does not persist in saved trees.
     gpu_bark_pbr: bool,
+    /// Preview-only dielectric leaf-card shading; never part of preset JSON.
+    gpu_leaf_pbr: bool,
     /// Preview-only lighting option, independent of tree/material saves.
     gpu_studio_ibl: bool,
     leaf_texture: Option<TextureHandle>,
@@ -415,6 +434,7 @@ impl Default for Studio {
             leaf_aa_mode: LeafAaMode::Legacy,
             leaf_mipmaps: false,
             gpu_bark_pbr: false,
+            gpu_leaf_pbr: false,
             gpu_studio_ibl: false,
             leaf_texture: None,
             bark_texture: None,
@@ -1586,12 +1606,19 @@ impl Studio {
             .on_hover_text("Off by default. Enable trilinear alpha-weighted 64/128px foliage mip levels for distant tree-card filtering. Does not modify materials or exported textures.");
         if ui.checkbox(&mut self.gpu_bark_pbr,
             "Preview PBR bark (roughness + normal + metallic)").on_hover_text(
-            "Opt-in GGX metallic-roughness shading with graph-authored roughness, metallic and tangent-space normal maps. Fixed preview light, no IBL; leaf appearance, saved assets and geometry are unchanged."
+            "Opt-in GGX metallic-roughness shading with graph-authored roughness, metallic and tangent-space normal maps. Fixed preview light with optional studio IBL; leaf appearance, saved assets and geometry are unchanged."
             ).changed() {
             self.asset_gpu_scene=None;
             self.foliage_gpu_scene=None;
         }
-        if ui.add_enabled(self.gpu_bark_pbr,
+        if ui.checkbox(&mut self.gpu_leaf_pbr,
+            "Preview PBR foliage (roughness + normal)").on_hover_text(
+            "Opt-in two-sided dielectric shading for cutout leaf cards. Uses the leaf graph's roughness and height-derived normal, while keeping seasonal color, blossom masks, wind and alpha coverage. Solid foliage geometry keeps its legacy shading."
+            ).changed() {
+            self.asset_gpu_scene=None;
+            self.foliage_gpu_scene=None;
+        }
+        if ui.add_enabled(self.gpu_bark_pbr || self.gpu_leaf_pbr,
             egui::Checkbox::new(&mut self.gpu_studio_ibl,
                 "Studio environment reflections (IBL)"))
             .on_hover_text("Deterministic prefiltered studio sky + ground map. The two IBL textures are generated and uploaded once; material edits, tree growth and seasons do not rebuild the environment.")
@@ -1599,7 +1626,7 @@ impl Studio {
             self.asset_gpu_scene=None;
             self.foliage_gpu_scene=None;
         }
-        ui.small("Studio IBL affects bark only; leaf materials and exported textures are unchanged.");
+        ui.small("Studio IBL affects enabled PBR bark and leaf cards; exports and saved materials are unchanged.");
         let available=ui.available_size();
         let desired=Vec2::new(available.x.max(50.0),available.y.max(240.0));
         let (rect,response)=ui.allocate_exact_size(desired,Sense::click_and_drag());
@@ -2116,12 +2143,19 @@ impl Studio {
             .on_hover_text("Off by default. Enable trilinear alpha-weighted 64/128px foliage mip levels for distant tree-card filtering. Does not modify materials or exported textures.");
         if ui.checkbox(&mut self.gpu_bark_pbr,
             "Preview PBR bark (roughness + normal + metallic)").on_hover_text(
-            "Opt-in GGX metallic-roughness shading with graph-authored roughness, metallic and tangent-space normal maps. Fixed preview light, no IBL; leaf appearance, saved assets and geometry are unchanged."
+            "Opt-in GGX metallic-roughness shading with graph-authored roughness, metallic and tangent-space normal maps. Fixed preview light with optional studio IBL; leaf appearance, saved assets and geometry are unchanged."
             ).changed() {
             self.asset_gpu_scene=None;
             self.foliage_gpu_scene=None;
         }
-        if ui.add_enabled(self.gpu_bark_pbr,
+        if ui.checkbox(&mut self.gpu_leaf_pbr,
+            "Preview PBR foliage (roughness + normal)").on_hover_text(
+            "Opt-in two-sided dielectric shading for cutout leaf cards. Uses the leaf graph's roughness and height-derived normal, while keeping seasonal color, blossom masks, wind and alpha coverage. Solid foliage geometry keeps its legacy shading."
+            ).changed() {
+            self.asset_gpu_scene=None;
+            self.foliage_gpu_scene=None;
+        }
+        if ui.add_enabled(self.gpu_bark_pbr || self.gpu_leaf_pbr,
             egui::Checkbox::new(&mut self.gpu_studio_ibl,
                 "Studio environment reflections (IBL)"))
             .on_hover_text("Deterministic prefiltered studio sky + ground map. The two IBL textures are generated and uploaded once; material edits, tree growth and seasons do not rebuild the environment.")
@@ -2129,7 +2163,7 @@ impl Studio {
             self.asset_gpu_scene=None;
             self.foliage_gpu_scene=None;
         }
-        ui.small("Studio IBL affects bark only; leaf materials and exported textures are unchanged.");
+        ui.small("Studio IBL affects enabled PBR bark and leaf cards; exports and saved materials are unchanged.");
         let available=ui.available_size();
         let desired=Vec2::new(available.x.max(50.0),available.y.max(250.0));
         let (rect,_) = ui.allocate_exact_size(desired,Sense::hover());
@@ -3366,6 +3400,15 @@ impl eframe::App for Studio {
                                     format!("Asset PBR preview unavailable: {error}"),
                             }
                         }
+                        if self.gpu_leaf_pbr {
+                            match preview_leaf_pbr_maps(&mut self.preview_render_cache,
+                                &self.asset.materials) {
+                                Ok((roughness,normal)) =>
+                                    scene=scene.with_leaf_pbr_maps(roughness,normal),
+                                Err(error)=>self.status=
+                                    format!("Asset foliage PBR unavailable: {error}"),
+                            }
+                        }
                         self.metrics.asset_scene_builds+=1;
                         self.metrics.report("asset_scene_build",started.elapsed(),true);
                         self.asset_gpu_scene=Some(Arc::new(scene));
@@ -3407,6 +3450,15 @@ impl eframe::App for Studio {
                                     scene=scene.with_bark_pbr_maps(roughness,normal,metallic),
                                 Err(error)=>self.status=
                                     format!("Tree PBR preview unavailable: {error}"),
+                            }
+                        }
+                        if self.gpu_leaf_pbr {
+                            match preview_leaf_pbr_maps(&mut self.preview_render_cache,
+                                &self.foliage.materials) {
+                                Ok((roughness,normal)) =>
+                                    scene=scene.with_leaf_pbr_maps(roughness,normal),
+                                Err(error)=>self.status=
+                                    format!("Tree foliage PBR unavailable: {error}"),
                             }
                         }
                         self.metrics.foliage_scene_builds+=1;
@@ -4074,10 +4126,45 @@ fn main() -> eframe::Result {
 mod bark_gpu_pbr_preview_tests {
     use super::*;
 
+
+    #[test]
+    fn foliage_graph_pbr_maps_use_cache_without_rebaking_cutout_or_tints() {
+        let mats=FoliageMaterials::for_species(PlantPreset::Oak);
+        let mut cache=GraphRenderCache::new(1024*1024);
+        let (rough,normal)=preview_leaf_pbr_maps(&mut cache,&mats).unwrap();
+        assert_eq!(rough.len(),(MATERIAL_SIZE*MATERIAL_SIZE*4) as usize);
+        assert_eq!(normal.len(),rough.len());
+        let misses=cache.stats().misses;
+        assert_eq!((rough.clone(),normal.clone()),
+            preview_leaf_pbr_maps(&mut cache,&mats).unwrap());
+        assert_eq!(cache.stats().misses,misses);
+        let mut edited=mats.clone();
+        let graph=edited.leaf.as_mut().expect("Oak leaf material graph");
+        let scalar=graph.add_node(NodeKind::Scalar{value:1.0},[100.0,100.0]);
+        let output=graph.nodes.iter().find(|node|
+            matches!(node.kind,NodeKind::Output))
+            .expect("leaf graph has Material Output").id;
+        graph.connect(scalar,output,1).unwrap();
+        let (next_r,next_n)=preview_leaf_pbr_maps(&mut cache,&edited).unwrap();
+        assert!(next_r.chunks_exact(4).all(|px|px[0]==255));
+        assert_eq!(next_n,normal,
+            "a roughness edit must not alter Height-derived normals");
+        assert_ne!(next_r,rough);
+        let leaf_before=mats.bake_leaf(MATERIAL_SIZE,[90,147,65]).unwrap();
+        let leaf_after=edited.bake_leaf(MATERIAL_SIZE,[90,147,65]).unwrap();
+        assert_eq!(leaf_before,leaf_after,
+            "PBR roughness must not alter species tint or cutout pixels");
+        let (neutral_r,neutral_n)=preview_leaf_pbr_maps(&mut cache,
+            &FoliageMaterials::default()).unwrap();
+        assert!(neutral_r.chunks_exact(4).all(|px|px==[204,204,204,255]));
+        assert!(neutral_n.chunks_exact(4).all(|px|px==[128,128,255,255]));
+    }
+
     #[test]
     fn bark_gpu_pbr_is_opt_in_and_uses_authored_graph_maps() {
         let app=Studio::default();
         assert!(!app.gpu_bark_pbr);
+        assert!(!app.gpu_leaf_pbr);
         assert!(!app.gpu_studio_ibl);
         let mut cache=GraphRenderCache::new(1024*1024);
         let mats=FoliageMaterials::for_species(PlantPreset::Oak);
