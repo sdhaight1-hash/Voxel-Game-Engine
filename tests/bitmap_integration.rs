@@ -72,3 +72,21 @@ fn missing_assets_and_corrupted_json_fail_validation() {
     roundtrip.images[0].rgba.pop();
     assert!(roundtrip.validate().is_err());
 }
+
+#[test]
+fn unused_images_can_be_explicitly_pruned_and_reimported() {
+    let mut graph=Graph::default();
+    let keep=graph.add_bitmap_rgba("keep.png",1,1,vec![1,2,3,255]).unwrap();
+    let drop_id=graph.add_bitmap_rgba("drop.png",1,1,vec![4,5,6,255]).unwrap();
+    let node=graph.add_node(NodeKind::BitmapColor{asset_id:keep,bilinear:true},[0.0,0.0]);
+    assert_eq!(graph.prune_unused_bitmaps(),1);
+    assert_eq!(graph.images.len(),1);
+    assert_eq!(graph.images[0].id,keep);
+    graph.validate().unwrap();
+    graph.node_mut(node).unwrap().kind=NodeKind::BitmapColor{asset_id:0,bilinear:true};
+    assert_eq!(graph.prune_unused_bitmaps(),1);
+    assert!(graph.images.is_empty());
+    let new_id=graph.add_bitmap_rgba("new.png",1,1,vec![7,8,9,255]).unwrap();
+    assert!(new_id==keep||new_id==drop_id);
+    graph.validate().unwrap();
+}

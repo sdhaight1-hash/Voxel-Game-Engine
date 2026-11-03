@@ -431,6 +431,17 @@ impl Graph {
         Ok(id)
     }
 
+    /// Reclaim unused embedded assets without altering any connected node.
+    /// Explicit, not automatic: artists may keep assets in a project to reuse.
+    pub fn prune_unused_bitmaps(&mut self)->usize {
+        let used:HashSet<u64>=self.nodes.iter()
+            .filter_map(|node|node.kind.bitmap_asset_id())
+            .filter(|id|*id!=0).collect();
+        let before=self.images.len();
+        self.images.retain(|image|used.contains(&image.id));
+        before-self.images.len()
+    }
+
     pub fn import_png_bytes(&mut self,name:&str,source:&[u8])->Result<u64,String> {
         let (width,height,rgba)=bitmap_assets::decode_png(source)?;
         self.add_bitmap_rgba(name,width,height,rgba)

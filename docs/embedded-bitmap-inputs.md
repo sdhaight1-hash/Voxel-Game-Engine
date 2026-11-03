@@ -32,3 +32,6 @@ projects can be substantially larger. FNV-1a is a cache consistency
 checksum, not a cryptographic content signature. Full texture-array
 GPU integration, PBR lighting, ICC conversion, HDR and a compressed
 asset-bundle format remain future tasks.
+
+When no nodes use an embedded image, select a Bitmap node and choose
+**Remove unused embedded images** to reclaim the registry budget.

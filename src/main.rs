@@ -2365,6 +2365,7 @@ impl Studio {
             .map(|image|(image.id,format!("{} ({}x{})",image.name,
                 image.width,image.height))).collect();
         let mut import_bitmap=false;
+        let mut prune_bitmaps=false;
         let Some(node) = self.graph.node_mut(id) else {
             self.selected = None;
             return;
@@ -2668,6 +2669,7 @@ impl Studio {
                     });
                 changed |= ui.checkbox(bilinear,"Bilinear (otherwise nearest)").changed();
                 import_bitmap=ui.button("Import PNG into project").clicked();
+                prune_bitmaps=ui.button("Remove unused embedded images").clicked();
                 ui.small("Max 512x512 RGBA8; 16 images and 8 MiB pixels per graph.");
             }
             NodeKind::RegionValue{cells,seed} => {
@@ -2749,6 +2751,11 @@ impl Studio {
             }
         }
         if import_bitmap {self.import_png_for_node(id);}
+        if prune_bitmaps {
+            let removed=self.graph.prune_unused_bitmaps();
+            if removed>0 {self.dirty=true;}
+            self.status=format!("Removed {removed} unused embedded image(s)");
+        }
     }
 
 
