@@ -53,6 +53,10 @@ pub struct ParameterDefinition {
     pub control: ParameterControl,
 }
 
+const BITMAP_SAMPLING: &[ParameterDefinition]=&[
+    ParameterDefinition{id:"sampling",label:"Sampling",control:ParameterControl::Choice{
+        options:&["Nearest","Bilinear"],default:"Bilinear"}},
+];
 const REGION_VALUE: &[ParameterDefinition]=&[
     ParameterDefinition{id:"cells",label:"Region cells per axis",control:ParameterControl::Integer{
         min:2,max:32,step:1,default:7}},
@@ -255,6 +259,7 @@ pub fn parameters(kind:&NodeKind)-> &'static [ParameterDefinition] {
         NodeKind::Voronoi{..}=>VORONOI,
         NodeKind::RegionValue{..}=>REGION_VALUE,
         NodeKind::RegionBorderMask{..}=>REGION_BORDER_MASK,
+        NodeKind::BitmapColor{..}|NodeKind::BitmapAlpha{..}=>BITMAP_SAMPLING,
         NodeKind::Strata{..}=>STRATA,
         NodeKind::Colorize{..}=>COLORIZE,
         NodeKind::Blend{..}=>BLEND,

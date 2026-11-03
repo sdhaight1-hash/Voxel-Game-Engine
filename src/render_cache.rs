@@ -29,6 +29,8 @@ struct RenderKey {
     target: RenderTarget,
     nodes: Vec<(u64,NodeKind)>,
     links: Vec<(u64,u64,usize)>,
+    /// Transitive input images only; graph validation verifies fingerprints.
+    images: Vec<(u64,u64)>,
 }
 
 impl RenderKey {
@@ -62,6 +64,10 @@ impl RenderKey {
             links:graph.links.iter().filter(|link|
                 required.contains(&link.to) && required.contains(&link.from))
                 .map(|l|(l.from,l.to,l.input)).collect(),
+            images:graph.images.iter().filter(|image|
+                graph.nodes.iter().any(|node|required.contains(&node.id)
+                    &&node.kind.bitmap_asset_id()==Some(image.id)))
+                .map(|image|(image.id,image.fingerprint)).collect(),
         }
     }
 }

@@ -12,6 +12,7 @@ use std::{collections::VecDeque, sync::Arc};
 struct GraphRecipe {
     nodes: Vec<(u64, NodeKind)>,
     links: Vec<(u64, u64, usize)>,
+    images: Vec<(u64,u64)>,
 }
 
 impl GraphRecipe {
@@ -22,7 +23,10 @@ impl GraphRecipe {
         let mut links:Vec<_>=graph.links.iter().map(|link|
             (link.from,link.to,link.input)).collect();
         links.sort_unstable();
-        Self{nodes,links}
+        let images=graph.images.iter().filter(|image|
+            graph.nodes.iter().any(|n|n.kind.bitmap_asset_id()==Some(image.id)))
+            .map(|image|(image.id,image.fingerprint)).collect();
+        Self{nodes,links,images}
     }
 }
 
@@ -359,4 +363,25 @@ mod tests {
         assert!(cache.bake_bark(&FoliageMaterials::default(),0,[20,30,40]).is_err());
         assert_eq!(cache.stats().hits,0);
     }
+
+    #[test]
+    fn embedded_bark_image_edits_invalidate_the_flora_bake_key() {
+        let mut materials=FoliageMaterials::default();
+        let mut graph=crate::Graph::default();
+        let image=graph.add_bitmap_rgba("bark.png",1,1,vec![45,65,80,255])
+            .unwrap();
+        let node=graph.add_node(crate::NodeKind::BitmapColor{
+            asset_id:image,bilinear:false},[20.0,20.0]);
+        graph.connect(node,2,0).unwrap();
+        materials.bark=Some(graph);
+        let mut cache=FoliageBakeCache::new(1024*1024);
+        let first=cache.bake_bark(&materials,16,[110,80,45]).unwrap();
+        assert!(Arc::ptr_eq(&first,
+            &cache.bake_bark(&materials,16,[110,80,45]).unwrap()));
+        materials.bark.as_mut().unwrap()
+            .replace_bitmap_rgba(image,vec![220,65,80,255]).unwrap();
+        let updated=cache.bake_bark(&materials,16,[110,80,45]).unwrap();
+        assert!(!Arc::ptr_eq(&first,&updated));
+    }
+
 }

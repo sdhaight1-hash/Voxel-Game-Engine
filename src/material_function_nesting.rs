@@ -84,6 +84,14 @@ fn splice_child_albedo(parent:&mut Graph,placeholder_id:u64,
     if total>MAX_RESOLVED_NODES {
         return Err("Resolved material function exceeds 2048 nodes".into());
     }
+    // Function image IDs are graph-local. Copy/deduplicate images before
+    // copying nodes, then remap child references to the parent registry.
+    let mut image_remap=HashMap::new();
+    for image in &child.images {
+        let id=parent.add_bitmap_rgba(&image.name,image.width as u32,
+            image.height as u32,image.rgba.clone())?;
+        image_remap.insert(image.id,id);
+    }
     let mut next=parent.nodes.iter().map(|n|n.id).max().unwrap_or(0);
     let mut remap=HashMap::new();
     for node in child.nodes.iter().filter(|n|n.id!=output) {
@@ -92,6 +100,13 @@ fn splice_child_albedo(parent:&mut Graph,placeholder_id:u64,
         remap.insert(node.id,next);
         let mut clone=node.clone();
         clone.id=next;
+        if let NodeKind::BitmapColor{asset_id,..}|
+            NodeKind::BitmapAlpha{asset_id,..}=&mut clone.kind {
+            if *asset_id!=0 {
+                *asset_id=*image_remap.get(asset_id)
+                    .ok_or("Nested bitmap asset reference missing")?;
+            }
+        }
         parent.nodes.push(clone);
     }
     let source_id=*remap.get(&source)
@@ -304,4 +319,29 @@ mod tests {
             library.resolve(&inst("child",1,Some(16)))
                 .unwrap().render_rgba(32,32).unwrap());
     }
+
+    #[test]
+    fn nested_images_are_remapped_when_parent_and_child_ids_collide() {
+        let mut parent=Graph::default();
+        let parent_id=parent.add_bitmap_rgba("parent.png",1,1,
+            vec![200,0,0,255]).unwrap();
+        let original=parent.add_node(NodeKind::BitmapColor{
+            asset_id:parent_id,bilinear:false},[20.0,20.0]);
+        let placeholder=parent.add_node(NodeKind::Color{rgb:[255,0,0]},[30.0,30.0]);
+        parent.connect(placeholder,2,0).unwrap();
+
+        let mut child=Graph::default();
+        let child_id=child.add_bitmap_rgba("child.png",1,1,
+            vec![0,230,0,255]).unwrap();
+        assert_eq!(parent_id,child_id,"collision is intentional");
+        let source=child.add_node(NodeKind::BitmapColor{
+            asset_id:child_id,bilinear:false},[10.0,10.0]);
+        child.connect(source,2,0).unwrap();
+        splice_child_albedo(&mut parent,placeholder,child).unwrap();
+        parent.validate().unwrap();
+        assert_eq!(parent.images.len(),2);
+        assert_eq!(parent.node(original).unwrap().kind.bitmap_asset_id(),Some(parent_id));
+        assert_eq!(&parent.render_rgba(1,1).unwrap()[..4],&[0,230,0,255]);
+    }
+
 }
