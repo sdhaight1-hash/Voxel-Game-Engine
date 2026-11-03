@@ -6,7 +6,7 @@ struct Globals {
     wind: vec4<f32>,
     season: vec4<f32>,
     leaf_base: vec4<f32>,
-    // x = bark meters per repeat; y = metallic PBR, z = studio IBL.
+    // x = bark meters per repeat, y = bark PBR, z = studio IBL, w = leaf PBR.
     bark_mapping: vec4<f32>,
 };
 
@@ -28,6 +28,9 @@ struct SeasonalPalette {
 // CPU-prefiltered linear-RGB studio environment, generated only when enabled.
 @group(0) @binding(8) var studio_specular_tex: texture_2d<f32>;
 @group(0) @binding(9) var studio_irradiance_tex: texture_2d<f32>;
+// Linear data maps for cutout foliage cards, mipmapped like foliage albedo.
+@group(0) @binding(10) var leaf_roughness_tex: texture_2d<f32>;
+@group(0) @binding(11) var leaf_normal_tex: texture_2d<f32>;
 
 // Sample one season's shadow-to-highlight gradient (UV base -> tip).
 fn season_gradient(season:u32, amount:f32)->vec3<f32> {
@@ -354,6 +357,31 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     } else {
         rgba = vec4<f32>(1.0);
     }
+    if (input.kind >= 0.5 && input.kind < 1.5
+        && globals.bark_mapping.w > 0.5) {
+        // All seasonal gradients, blossom color and alpha cutout/coverage
+        // decisions have already run. Shade their final visible albedo,
+        // including the original per-card tint, without touching alpha.
+        var roughness:f32;
+        var normal_rgb:vec3<f32>;
+        if (globals.season.w > 0.5) {
+            // Match the existing optional foliage mipmap derivatives.
+            roughness=textureSampleGrad(leaf_roughness_tex,linear_sampler,
+                input.uv,foliage_uv_dx,foliage_uv_dy).r;
+            normal_rgb=textureSampleGrad(leaf_normal_tex,linear_sampler,
+                input.uv,foliage_uv_dx,foliage_uv_dy).rgb;
+        } else {
+            roughness=textureSampleLevel(leaf_roughness_tex,linear_sampler,
+                input.uv,0.0).r;
+            normal_rgb=textureSampleLevel(leaf_normal_tex,linear_sampler,
+                input.uv,0.0).rgb;
+        }
+        let mapped=normalize(normal_rgb*2.0-vec3<f32>(1.0));
+        let color=shade_bark_metallic_roughness(
+            rgba.rgb * input.tint.rgb,roughness,0.0,
+            mapped,input.normal,input.tangent);
+        return vec4<f32>(color,rgba.a);
+    }
     if (input.kind < 0.5 && globals.bark_mapping.y > 0.5) {
         // Same UV pair/seam fade as albedo; data textures are not sRGB.
         let r0=textureSampleLevel(bark_roughness_tex,linear_sampler,
@@ -375,6 +403,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
                                      mapped,input.normal,input.tangent);
         return vec4<f32>(lit,rgba.a);
     }
-    // Legacy bark and ALL foliage modes retain their exact old output path.
+    // Legacy bark and ALL foliage modes retain their exact old output path
+    // when their respective opt-in PBR controls are disabled.
     return vec4<f32>(rgba.rgb * input.tint.rgb, rgba.a);
 }
