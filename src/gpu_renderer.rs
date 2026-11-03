@@ -965,7 +965,7 @@ mod tests {
             .gpu_stops();
         let baseline=Scene::from_mesh(&mesh,&bark,&leaf,[50,150,80],palette,0.0);
         assert_eq!(scene_uploads(None,&baseline),SceneUploads {
-            geometry:true,bark:true,leaf:true,palette:true, bark_roughness:false,bark_normal:false,
+            geometry:true,bark:true,leaf:true,palette:true, bark_roughness:true,bark_normal:true,
         });
         let identical=Scene::from_mesh(&mesh,&bark,&leaf,[50,150,80],palette,0.0);
         assert_eq!(scene_uploads(Some(&baseline),&identical),SceneUploads {
@@ -1010,6 +1010,7 @@ mod tests {
         }
         assert_eq!(metrics,UploadMetrics {
             vertex_buffers:2,bark_textures:2,leaf_textures:1,palette_writes:2,
+            roughness_textures:1,normal_textures:1,
         });
     }
 
@@ -1141,5 +1142,68 @@ mod tests {
         assert!(shader.contains("input.bark_circumference_m > 0.0"));
         assert!(shader.contains("smoothstep(0.80,1.0,input.uv.x)"));
         assert!(shader.contains("(input.uv.x-1.0) * ring_tiles"));
+    }
+
+    #[test]
+    fn tangent_frame_respects_uv_orientation_and_never_emits_nan() {
+        let tri=[[0.0,0.0,0.0],[1.0,0.0,0.0],[0.0,1.0,0.0]];
+        let (n,t)=triangle_tangent_frame(tri,[
+            [0.0,0.0],[1.0,0.0],[0.0,1.0]]);
+        assert_eq!(n,[0.0,0.0,1.0]);
+        assert_eq!(t,[1.0,0.0,0.0,1.0]);
+        let (_,mirrored)=triangle_tangent_frame(tri,[
+            [0.0,0.0],[-1.0,0.0],[0.0,1.0]]);
+        assert_eq!(&mirrored[..3],&[-1.0,0.0,0.0]);
+        assert_eq!(mirrored[3],-1.0);
+        let (_,fallback)=triangle_tangent_frame(tri,[[0.0,0.0];3]);
+        assert!(fallback.iter().all(|v|v.is_finite()));
+        let (zero_n,zero_t)=triangle_tangent_frame([[1.0,1.0,1.0];3],
+            [[0.0,0.0];3]);
+        assert!(zero_n.iter().all(|v|v.is_finite()));
+        assert!(zero_t.iter().all(|v|v.is_finite()));
+        assert_eq!(zero_t[3],1.0);
+    }
+
+    #[test]
+    fn enabling_pbr_uploads_only_data_maps_not_mesh_or_legacy_bark() {
+        let mesh=FoliageMesh::from_voxels(VoxelShape::Cube,0.5,vec![
+            VoxelCell{x:0,y:0,z:0,material:Material::Bark}
+        ]).unwrap();
+        let pixels=vec![77;64*64*4];
+        let palette=texture_studio::foliage_materials::SeasonalPalettes::default()
+            .gpu_stops();
+        let legacy=Scene::from_mesh(&mesh,&pixels,&pixels,[60,140,70],
+            palette,0.0);
+        assert!(!legacy.bark_pbr_enabled);
+        let rough=vec![90;64*64*4];
+        let normal=vec![128;64*64*4];
+        let pbr=Scene::from_mesh(&mesh,&pixels,&pixels,[60,140,70],
+            palette,0.0).with_bark_pbr_maps(rough.clone(),normal.clone());
+        assert!(pbr.bark_pbr_enabled);
+        assert_eq!(scene_uploads(Some(&legacy),&pbr),SceneUploads {
+            geometry:false,bark:false,leaf:false,palette:false,
+            bark_roughness:true,bark_normal:true,
+        });
+        let next=Scene::from_mesh(&mesh,&pixels,&pixels,[60,140,70],
+            palette,0.0).with_bark_pbr_maps(
+                vec![110;64*64*4],normal.clone());
+        assert_eq!(scene_uploads(Some(&pbr),&next),SceneUploads {
+            geometry:false,bark:false,leaf:false,palette:false,
+            bark_roughness:true,bark_normal:false,
+        });
+        let retiling=Scene::from_mesh(&mesh,&pixels,&pixels,[60,140,70],
+            palette,0.0).with_bark_pbr_maps(rough,normal)
+            .with_bark_meters_per_repeat(Some(0.35));
+        assert_eq!(scene_uploads(Some(&pbr),&retiling),SceneUploads {
+            geometry:false,bark:false,leaf:false,palette:false,
+            bark_roughness:false,bark_normal:false,
+        });
+        let shader=include_str!("voxel_gpu.wgsl");
+        assert!(shader.contains("globals.bark_mapping.y > 0.5"));
+        assert!(shader.contains("shade_bark_dielectric"));
+        assert!(shader.contains("srgb_to_linear"));
+        assert!(shader.contains("bark_roughness_tex"));
+        assert!(shader.contains("bark_normal_tex"));
+        assert!(shader.contains("Legacy bark and ALL foliage modes"));
     }
 }
