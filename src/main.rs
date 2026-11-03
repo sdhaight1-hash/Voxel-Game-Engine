@@ -356,6 +356,10 @@ struct Studio {
     gpu_bark_pbr: bool,
     /// Preview-only dielectric leaf-card shading; never part of preset JSON.
     gpu_leaf_pbr: bool,
+    /// Preview-only thin-sheet transmission; not serialized into saved trees.
+    gpu_leaf_transmission: bool,
+    /// Physical sheet path length (mm) for Beer-Lambert preview absorption.
+    gpu_leaf_thickness_mm: f32,
     /// Preview-only lighting option, independent of tree/material saves.
     gpu_studio_ibl: bool,
     leaf_texture: Option<TextureHandle>,
@@ -435,6 +439,8 @@ impl Default for Studio {
             leaf_mipmaps: false,
             gpu_bark_pbr: false,
             gpu_leaf_pbr: false,
+            gpu_leaf_transmission: false,
+            gpu_leaf_thickness_mm: 0.25,
             gpu_studio_ibl: false,
             leaf_texture: None,
             bark_texture: None,
@@ -1618,6 +1624,23 @@ impl Studio {
             self.asset_gpu_scene=None;
             self.foliage_gpu_scene=None;
         }
+        if ui.add_enabled(self.gpu_leaf_pbr,
+            egui::Checkbox::new(&mut self.gpu_leaf_transmission,
+                "Thin-leaf backlighting (Beer-Lambert)"))
+            .on_hover_text("Approximate reverse-side leaf light transmission with pigment-sensitive absorption; keeps seasonal colors, spring flowers, wind and existing alpha edges. Preview only.")
+            .changed() {
+            self.asset_gpu_scene=None;
+            self.foliage_gpu_scene=None;
+        }
+        if self.gpu_leaf_pbr && self.gpu_leaf_transmission {
+            if ui.add(egui::Slider::new(&mut self.gpu_leaf_thickness_mm,
+                0.1..=1.0).text("Leaf thickness (mm)").fixed_decimals(2))
+                .on_hover_text("Thicker leaves attenuate backlight more strongly. A generic pigment proxy, not laboratory-measured optical constants.")
+                .changed() {
+                self.asset_gpu_scene=None;
+                self.foliage_gpu_scene=None;
+            }
+        }
         if ui.add_enabled(self.gpu_bark_pbr || self.gpu_leaf_pbr,
             egui::Checkbox::new(&mut self.gpu_studio_ibl,
                 "Studio environment reflections (IBL)"))
@@ -2154,6 +2177,23 @@ impl Studio {
             ).changed() {
             self.asset_gpu_scene=None;
             self.foliage_gpu_scene=None;
+        }
+        if ui.add_enabled(self.gpu_leaf_pbr,
+            egui::Checkbox::new(&mut self.gpu_leaf_transmission,
+                "Thin-leaf backlighting (Beer-Lambert)"))
+            .on_hover_text("Approximate reverse-side leaf light transmission with pigment-sensitive absorption; keeps seasonal colors, spring flowers, wind and existing alpha edges. Preview only.")
+            .changed() {
+            self.asset_gpu_scene=None;
+            self.foliage_gpu_scene=None;
+        }
+        if self.gpu_leaf_pbr && self.gpu_leaf_transmission {
+            if ui.add(egui::Slider::new(&mut self.gpu_leaf_thickness_mm,
+                0.1..=1.0).text("Leaf thickness (mm)").fixed_decimals(2))
+                .on_hover_text("Thicker leaves attenuate backlight more strongly. A generic pigment proxy, not laboratory-measured optical constants.")
+                .changed() {
+                self.asset_gpu_scene=None;
+                self.foliage_gpu_scene=None;
+            }
         }
         if ui.add_enabled(self.gpu_bark_pbr || self.gpu_leaf_pbr,
             egui::Checkbox::new(&mut self.gpu_studio_ibl,
@@ -3390,7 +3430,11 @@ impl eframe::App for Studio {
                             else if self.asset.materials.leaf_species==PlantPreset::CherryBlossom {1.0}
                             else {0.0}).with_bark_meters_per_repeat(
                                 self.asset.materials.bark_meters_per_repeat)
-                                .with_studio_ibl(self.gpu_studio_ibl);
+                                .with_studio_ibl(self.gpu_studio_ibl)
+                                .with_leaf_transmission_mm(
+                                    if self.gpu_leaf_pbr && self.gpu_leaf_transmission {
+                                        Some(self.gpu_leaf_thickness_mm)
+                                    } else {None});
                         if self.gpu_bark_pbr {
                             match preview_bark_pbr_maps(&mut self.preview_render_cache,
                                 &self.asset.materials) {
@@ -3442,7 +3486,11 @@ impl eframe::App for Studio {
                             else if self.foliage.materials.leaf_species==PlantPreset::CherryBlossom {1.0}
                             else {0.0}).with_bark_meters_per_repeat(
                                 self.foliage.materials.bark_meters_per_repeat)
-                                .with_studio_ibl(self.gpu_studio_ibl);
+                                .with_studio_ibl(self.gpu_studio_ibl)
+                                .with_leaf_transmission_mm(
+                                    if self.gpu_leaf_pbr && self.gpu_leaf_transmission {
+                                        Some(self.gpu_leaf_thickness_mm)
+                                    } else {None});
                         if self.gpu_bark_pbr {
                             match preview_bark_pbr_maps(&mut self.preview_render_cache,
                                 &self.foliage.materials) {
@@ -4165,6 +4213,8 @@ mod bark_gpu_pbr_preview_tests {
         let app=Studio::default();
         assert!(!app.gpu_bark_pbr);
         assert!(!app.gpu_leaf_pbr);
+        assert!(!app.gpu_leaf_transmission);
+        assert_eq!(app.gpu_leaf_thickness_mm,0.25);
         assert!(!app.gpu_studio_ibl);
         let mut cache=GraphRenderCache::new(1024*1024);
         let mats=FoliageMaterials::for_species(PlantPreset::Oak);

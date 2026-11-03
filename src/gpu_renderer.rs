@@ -47,6 +47,9 @@ struct Uniforms {
     /// x = bark meters per repeat, zero disables physical UV mapping.
     /// y = bark PBR, z = studio IBL, w = cutout leaf PBR.
     bark_mapping: [f32;4],
+    /// x = physical leaf sheet thickness in mm; 0 disables transmission.
+    /// Remaining components reserved, kept vec4-aligned for WGSL uniforms.
+    leaf_transmission: [f32;4],
 }
 
 /// Preview-only render mode. Never persisted to tree materials or assets.
@@ -98,6 +101,8 @@ pub struct Scene {
     leaf_roughness_rgba: Vec<u8>,
     leaf_normal_rgba: Vec<u8>,
     leaf_pbr_enabled: bool,
+    /// Preview-only thin-sheet optical depth in millimeters; 0 = disabled.
+    leaf_transmission_mm: f32,
     palette: GpuPalette,
     leaf_base: [f32;4],
     wind_strength: f32,
@@ -181,6 +186,7 @@ impl Scene {
             leaf_roughness_rgba:vec![204,204,204,255],
             leaf_normal_rgba:vec![128,128,255,255],
             leaf_pbr_enabled:false,
+            leaf_transmission_mm:0.0,
             palette:GpuPalette{stops:palette},
             leaf_base:[leaf_tint[0] as f32/255.0,leaf_tint[1] as f32/255.0,
                 leaf_tint[2] as f32/255.0,1.0],
@@ -222,6 +228,15 @@ impl Scene {
         self.leaf_roughness_rgba=roughness;
         self.leaf_normal_rgba=normal;
         self.leaf_pbr_enabled=true;
+        self
+    }
+
+    /// Thin-leaf Beer-Lambert direct + optional studio backlighting.
+    /// This opt-in setting is not a geometry or map bake input. It does
+    /// not independently enable foliage PBR (the shader gates both).
+    pub fn with_leaf_transmission_mm(mut self,thickness_mm:Option<f32>)->Self {
+        self.leaf_transmission_mm=thickness_mm.filter(|mm|
+            mm.is_finite() && (0.1..=1.0).contains(mm)).unwrap_or(0.0);
         self
     }
 
@@ -839,6 +854,8 @@ impl egui_wgpu::CallbackTrait for RenderScene {
                 if (self.scene.bark_pbr_enabled || self.scene.leaf_pbr_enabled)
                     && self.scene.bark_studio_ibl {1.0} else {0.0},
                 if self.scene.leaf_pbr_enabled {1.0} else {0.0}],
+            leaf_transmission:[if self.scene.leaf_pbr_enabled
+                {self.scene.leaf_transmission_mm} else {0.0},0.0,0.0,0.0],
         };
         queue.write_buffer(&resources.uniform,0,bytemuck::bytes_of(&globals));
 
@@ -1535,5 +1552,76 @@ mod tests {
                 assert!(pixels.chunks_exact(4).all(|pixel|pixel==&data[..4]));
             }
         }
+    }
+
+    #[test]
+    fn leaf_thickness_changes_only_uniform_and_requires_opt_in_pbr() {
+        let mesh=FoliageMesh::from_voxels(VoxelShape::Cube,0.5,vec![
+            VoxelCell{x:0,y:0,z:0,material:Material::Bark},
+            VoxelCell{x:0,y:0,z:1,material:Material::Leaf},
+        ]).unwrap();
+        let pixels=vec![70;64*64*4];
+        let stops=texture_studio::foliage_materials::SeasonalPalettes::default()
+            .gpu_stops();
+        let maps=|| Scene::from_mesh(&mesh,&pixels,&pixels,[76,140,64],
+            stops,0.0).with_leaf_pbr_maps(
+                vec![204,204,204,255].repeat(64*64),
+                vec![128,128,255,255].repeat(64*64));
+        let legacy=Scene::from_mesh(&mesh,&pixels,&pixels,[76,140,64],
+            stops,0.0);
+        assert_eq!(legacy.leaf_transmission_mm,0.0);
+        assert!(!legacy.leaf_pbr_enabled);
+        let pbr=maps();
+        assert_eq!(pbr.leaf_transmission_mm,0.0);
+        let thin=maps().with_leaf_transmission_mm(Some(0.15));
+        let thick=maps().with_leaf_transmission_mm(Some(0.65));
+        assert_eq!(thin.leaf_transmission_mm,0.15);
+        assert_eq!(thick.leaf_transmission_mm,0.65);
+        for new in [&thin,&thick] {
+            assert_eq!(scene_uploads(Some(&pbr),new),SceneUploads {
+                geometry:false,bark:false,leaf:false,palette:false,
+                bark_roughness:false,bark_normal:false,bark_metallic:false,
+                leaf_roughness:false,leaf_normal:false,
+            },"thickness must not rebuild geometry or reupload maps");
+        }
+        let disabled=legacy.with_leaf_transmission_mm(Some(0.3));
+        assert!(!disabled.leaf_pbr_enabled,
+            "transmission must not implicitly activate leaf PBR");
+        for invalid in [-0.5,0.0,0.099,1.001,f32::NAN,f32::INFINITY] {
+            assert_eq!(maps().with_leaf_transmission_mm(Some(invalid))
+                .leaf_transmission_mm,0.0);
+        }
+        for boundary in [0.1,1.0] {
+            assert_eq!(maps().with_leaf_transmission_mm(Some(boundary))
+                .leaf_transmission_mm,boundary);
+        }
+    }
+
+    #[test]
+    fn beer_lambert_leaf_transmission_attenuates_thickness_and_grazing_rays() {
+        // CPU reference of the strictly positive, channel-wise WGSL
+        // absorption law. These are artist-preview coefficients, not
+        // measurements of species-specific pigment concentrations.
+        let attenuation=|linear_color:f32,thickness:f32,cos_incident:f32| {
+            let extinction=0.35+4.0*(1.0-linear_color.clamp(0.0,1.0));
+            (-extinction*thickness/cos_incident.max(0.2)).exp()
+        };
+        for channel in [0.06,0.25,0.78] {
+            let thin=attenuation(channel,0.1,0.8);
+            let thick=attenuation(channel,0.8,0.8);
+            let grazing=attenuation(channel,0.1,0.2);
+            assert!(0.0<thick && thick<thin && thin<=1.0);
+            assert!(grazing<thin);
+        }
+        assert!(attenuation(0.45,0.25,0.8)>
+            attenuation(0.06,0.25,0.8),
+            "a brighter seasonal pigment channel transmits more light");
+        let wgsl=include_str!("voxel_gpu.wgsl");
+        assert!(wgsl.contains("globals.leaf_transmission.x > 0.0"));
+        assert!(wgsl.contains("exp(-extinction*path_mm)"));
+        assert!(wgsl.contains("dot(-N,L)"));
+        assert!(wgsl.contains("studio_irradiance_tex"));
+        assert!(wgsl.contains("return vec4<f32>(color,rgba.a)"),
+            "thin-leaf shading cannot change leaf edge alpha");
     }
 }
