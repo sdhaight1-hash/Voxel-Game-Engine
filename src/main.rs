@@ -9,6 +9,7 @@ use texture_studio::node_definitions::{SocketType, ParameterControl};
 use texture_studio::{ColorRamp,MAX_COLOR_STOPS,CurveRemap,MAX_CURVE_POINTS,SdfBoolean};
 use texture_studio::render_cache::GraphRenderCache;
 use texture_studio::foliage_bake_cache::FoliageBakeCache;
+use texture_studio::material_publish::{RuntimeMaterialRecipe,MaterialPublication,publish};
 use texture_studio::presets::{builtin_presets, Preset};
 use texture_studio::foliage::{FoliageProject, FoliageMesh, FoliageStage, PlantPreset, Material,
     BranchGrowth, LeafGeometry, sway_leaf_vertex};
@@ -261,23 +262,18 @@ fn preview_leaf_pbr_maps(cache:&mut GraphRenderCache,materials:&FoliageMaterials
     Ok((roughness.as_ref().to_vec(),normal.as_ref().to_vec()))
 }
 
-/// Bake the same material images used by the preview and the static OBJ.
-fn write_foliage_textures(folder:&Path,materials:&FoliageMaterials,
-                          bark:[u8;3], leaf:[u8;3], cutout:bool)->Result<(),String> {
-    let size=MATERIAL_SIZE;
-    if materials.bark.is_some() {
-        save_png_rect(&folder.join("bark-albedo.png"),size,size,
-            &materials.bake_bark(size,bark)?)?;
+/// Write the exact cached pixels and self-contained authoring recipe used by
+/// Tree, editable Asset and static season exports. No second bake pipeline.
+fn write_material_publication(folder:&Path,bundle:&MaterialPublication)->Result<(),String> {
+    for (name,pixels) in &bundle.pixels {
+        save_png_rect(&folder.join(name),bundle.snapshot.resolution,
+                      bundle.snapshot.resolution,pixels)?;
     }
-    if cutout {
-        save_png_rect(&folder.join("foliage-leaves.png"),size,size,
-            &materials.bake_leaf(size,leaf)?)?;
-        save_png_rect(&folder.join("foliage-leaves-alpha.png"),size,size,
-            &materials.bake_leaf_opacity(size,leaf)?)?;
-    }
-    for (name,tex) in materials.bake_pbr(size)? {
-        save_png_rect(&folder.join(name),size,size,&tex)?;
-    }
+    std::fs::write(folder.join("material-recipe.json"),bundle.recipe.to_json()?)
+        .map_err(|e|e.to_string())?;
+    std::fs::write(folder.join("appearance-snapshot.json"),
+        serde_json::to_string_pretty(&bundle.snapshot).map_err(|e|e.to_string())?)
+        .map_err(|e|e.to_string())?;
     Ok(())
 }
 
@@ -933,7 +929,10 @@ impl Studio {
         let Some(folder) = rfd::FileDialog::new().pick_folder() else { return; };
         let result: Result<(),String> = (|| {
             let names = ["asset.voxelasset.json", "asset.obj", "asset.mtl",
-                "foliage-leaves.png", "foliage-leaves-alpha.png",
+                "asset-static.obj", "asset-static.mtl",
+                "material-recipe.json", "appearance-snapshot.json",
+                "foliage-leaves.png", "foliage-leaves-season.png",
+                "foliage-leaves-alpha.png",
                 "bark-albedo.png", "bark-roughness.png", "bark-normal.png",
                 "bark-metallic.png", "bark-normal-obj.png",
                 "foliage-leaves-roughness.png", "foliage-leaves-normal.png",
@@ -943,17 +942,23 @@ impl Studio {
                     return Err(format!("{name} already exists — choose an empty folder"));
                 }
             }
+            let recipe=RuntimeMaterialRecipe::from_asset(&self.asset)?;
+            let bundle=publish(&recipe,MATERIAL_SIZE,self.season_preview,
+                &mut self.foliage_bake_cache,&mut self.preview_render_cache)?;
+            let obj=self.asset.obj_pbr()?;
+            let mtl=self.asset.mtl_pbr();
             let files = [
                 ("asset.voxelasset.json", self.asset.to_json()?),
-                ("asset.obj", self.asset.obj_pbr()?),
-                ("asset.mtl", self.asset.mtl_pbr()),
+                ("asset.obj", obj.clone()),
+                ("asset.mtl", mtl.clone()),
+                ("asset-static.obj",
+                    obj.replace("mtllib asset.mtl","mtllib asset-static.mtl")),
+                ("asset-static.mtl",bundle.static_mtl(&mtl)),
             ];
             for (name, contents) in files {
                 std::fs::write(folder.join(name), contents).map_err(|e|e.to_string())?;
             }
-            write_foliage_textures(&folder,&self.asset.materials,
-                self.asset.bark_color,self.asset.leaf_color,
-                self.asset.leaf_render.geometry==LeafGeometry::CrossedCutout)?;
+            write_material_publication(&folder,&bundle)?;
             Ok(())
         })();
         self.status = match result {
@@ -1879,7 +1884,9 @@ impl Studio {
         let Some(folder) = rfd::FileDialog::new().pick_folder() else { return; };
         let result: Result<(),String> = (||{
             let names=["foliage.voxels.json","foliage.obj","foliage.mtl","foliage.json",
-                "foliage-leaves.png","foliage-leaves-alpha.png",
+                "foliage-static.obj","foliage-static.mtl",
+                "material-recipe.json","appearance-snapshot.json",
+                "foliage-leaves.png","foliage-leaves-season.png","foliage-leaves-alpha.png",
                 "bark-albedo.png","bark-roughness.png","bark-normal.png",
                 "bark-metallic.png","bark-normal-obj.png",
                 "foliage-leaves-roughness.png","foliage-leaves-normal.png",
@@ -1889,22 +1896,28 @@ impl Studio {
                     return Err(format!("{name} already exists; choose an empty folder"));
                 }
             }
-            let mesh = self.foliage.generate()?;
-            let project = serde_json::to_string_pretty(&self.foliage)
+            let recipe=RuntimeMaterialRecipe::from_tree(&self.foliage)?;
+            let bundle=publish(&recipe,MATERIAL_SIZE,self.season_preview,
+                &mut self.foliage_bake_cache,&mut self.preview_render_cache)?;
+            let mesh=self.foliage.generate()?;
+            let project=serde_json::to_string_pretty(&self.foliage)
                 .map_err(|e|e.to_string())?;
+            let obj=mesh.obj_with_pbr_normals(
+                self.foliage.materials.bark_meters_per_repeat)?;
+            let mtl=texture_studio::foliage::mtl_pbr(&self.foliage);
             let files=[
-                ("foliage.voxels.json", mesh.voxel_json(&self.foliage)?),
-                ("foliage.obj",mesh.obj_with_pbr_normals(
-                    self.foliage.materials.bark_meters_per_repeat)?),
-                ("foliage.mtl",texture_studio::foliage::mtl_pbr(&self.foliage)),
+                ("foliage.voxels.json",mesh.voxel_json(&self.foliage)?),
+                ("foliage.obj",obj.clone()),
+                ("foliage.mtl",mtl.clone()),
                 ("foliage.json",project),
+                ("foliage-static.obj",
+                    obj.replace("mtllib foliage.mtl","mtllib foliage-static.mtl")),
+                ("foliage-static.mtl",bundle.static_mtl(&mtl)),
             ];
             for (name,contents) in files {
                 std::fs::write(folder.join(name),contents).map_err(|e|e.to_string())?;
             }
-            write_foliage_textures(&folder,&self.foliage.materials,
-                self.foliage.bark_color,self.foliage.leaf_color,
-                self.foliage.leaf_render.geometry==LeafGeometry::CrossedCutout)?;
+            write_material_publication(&folder,&bundle)?;
             Ok(())
         })();
         self.status = match result {
