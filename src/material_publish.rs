@@ -29,6 +29,35 @@ fn fingerprint(domain:&str,bytes:&[u8])->String {
     format!("{value:032x}")
 }
 
+#[derive(Clone,Debug,Serialize,Deserialize,PartialEq,Eq)]
+pub struct EmbeddedMaterialSource {
+    pub role:String,
+    pub name:String,
+    pub bitmap_fingerprint:u64,
+    /// Import UI currently does not capture an SPDX license or source URI.
+    /// Never infer CC0 or clearance from an embedded bitmap filename.
+    pub license_status:String,
+}
+fn embedded_sources(materials:&FoliageMaterials)->Vec<EmbeddedMaterialSource> {
+    let mut sources=Vec::new();
+    for (role,graph) in [("bark",materials.bark.as_ref()),
+                         ("leaf",materials.leaf.as_ref()),
+                         ("opacity",materials.leaf_opacity.as_ref())] {
+        if let Some(graph)=graph {
+            for image in &graph.images {
+                sources.push(EmbeddedMaterialSource{
+                    role:role.into(),name:image.name.clone(),
+                    bitmap_fingerprint:image.fingerprint,
+                    license_status:"unverified".into(),
+                });
+            }
+        }
+    }
+    sources.sort_by(|a,b|(&a.role,&a.name,a.bitmap_fingerprint)
+        .cmp(&(&b.role,&b.name,b.bitmap_fingerprint)));
+    sources
+}
+
 #[derive(Clone,Debug,Serialize,Deserialize)]
 pub struct RuntimeMaterialRecipe {
     pub format_version:u32,
@@ -43,6 +72,9 @@ pub struct RuntimeMaterialRecipe {
     pub cutout:bool,
     /// Explicit effective palette even for legacy sources with None.
     pub palette:SeasonalPalettes,
+    /// Explicit provenance review inventory for user-imported bitmaps.
+    /// Native graphs/patterns contain no external images.
+    pub embedded_sources:Vec<EmbeddedMaterialSource>,
 }
 impl RuntimeMaterialRecipe {
     pub fn new(materials:&FoliageMaterials,bark_color:[u8;3],
@@ -55,7 +87,8 @@ impl RuntimeMaterialRecipe {
         let recipe_id=format!("material/v{RECIPE_VERSION}/{}",
             fingerprint("material-recipe", &bytes));
         Ok(Self{format_version:RECIPE_VERSION,recipe_id,materials:materials.clone(),
-            bark_color,leaf_color,cutout,palette})
+            bark_color,leaf_color,cutout,palette,
+            embedded_sources:embedded_sources(materials)})
     }
     pub fn from_tree(project:&FoliageProject)->Result<Self,String> {
         project.validate()?;
@@ -77,7 +110,8 @@ impl RuntimeMaterialRecipe {
         }
         let original=Self::new(&self.materials,self.bark_color,
                                self.leaf_color,self.cutout)?;
-        if self.recipe_id!=original.recipe_id || self.palette!=original.palette {
+        if self.recipe_id!=original.recipe_id || self.palette!=original.palette
+            || self.embedded_sources!=original.embedded_sources {
             return Err("Material recipe identity/palette does not match its source".into());
         }
         Ok(())
@@ -119,10 +153,18 @@ impl StaticAppearanceSnapshot {
            !snap.season_progress.is_finite() ||
            !(0.0..4.0).contains(&snap.season_progress) ||
            !(1..=1024).contains(&snap.resolution) ||
-           snap.recipe_id.is_empty() || snap.snapshot_id.is_empty() ||
+           !snap.recipe_id.starts_with("material/v1/") ||
+           !snap.snapshot_id.starts_with("appearance/v1/") ||
+           snap.textures.is_empty() ||
            snap.textures.iter().any(|x|
                x.size!=[snap.resolution,snap.resolution] ||
-               (x.color_space!="srgb" && x.color_space!="linear-unorm")) {
+               x.name.is_empty() || x.name.contains('/') || x.name.contains('\\') ||
+               !x.resource_id.starts_with("texture/v1/") ||
+               (x.color_space!="srgb" && x.color_space!="linear-unorm")) ||
+           {
+               let mut files=std::collections::HashSet::new();
+               snap.textures.iter().any(|x|!files.insert(&x.name))
+           } {
             return Err("Invalid static appearance snapshot".into());
         }
         Ok(snap)
@@ -195,7 +237,6 @@ pub fn publish(recipe:&RuntimeMaterialRecipe,size:u32,season:f32,
     for (name,graph) in [("bark",mats.bark.as_ref()),
                          ("foliage-leaves",mats.leaf.as_ref())] {
         let Some(graph)=graph else {continue;};
-        if name=="foliage-leaves" && !recipe.cutout {continue;}
         pixels.push((format!("{name}-roughness.png"),
             graph_cache.render_channel(graph,1,size,size)?.to_vec()));
         if name=="bark" {
