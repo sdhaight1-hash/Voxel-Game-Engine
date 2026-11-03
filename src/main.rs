@@ -2179,6 +2179,10 @@ impl Studio {
                     cells:10,scale:0.8,jitter:0.2,rotation:1.0,
                     brightness:0.3,seed:55}),
             ]),
+            ("HEIGHT LAYERS", vec![
+                ("Height Blend Mask", NodeKind::HeightBlendMask{influence:0.4}),
+                ("Mask Mix", NodeKind::MaskMix),
+            ]),
             ("MIX & ROUTING", vec![
                 ("Blend", NodeKind::Blend { factor: 0.5 }),
                 ("Color Reroute", NodeKind::Reroute {kind:SocketType::Color}),
@@ -2609,6 +2613,17 @@ impl Studio {
             NodeKind::Luminance => {
                 ui.label("Convert RGB to a scalar using luminance weights.");
                 ui.small("Use between legacy RGB generators and typed Scalar inputs.");
+            }
+            NodeKind::HeightBlendMask{influence} => {
+                ui.small("Height A + Height B and Base Mask determine one reusable mask.");
+                changed |= ui.add(egui::Slider::new(influence,0.0..=1.0)
+                    .text("Height influence")).changed();
+                ui.small("0: use the base mask exactly; higher height wins in transitions.");
+                ui.small("Reuse this output for Albedo, Roughness, Metallic and Height Mask Mix nodes.");
+            }
+            NodeKind::MaskMix => {
+                ui.small("Blend A and B by a typed Mask; connect one shared height blend mask to every PBR channel.");
+                ui.small("Scalar and Mask sources can feed Color sockets. Color cannot implicitly feed Mask.");
             }
             NodeKind::Blend { factor } => {
                 changed |= ui.add(egui::Slider::new(factor, 0.0..=1.0).text("Mix")).changed();
@@ -3433,6 +3448,7 @@ fn node_accent(kind: NodeKind) -> Color32 {
             | NodeKind::Colorize { .. } | NodeKind::Levels { .. }
             | NodeKind::ThresholdMask { .. } | NodeKind::ColorRamp { .. }
             | NodeKind::CurveRemap { .. } | NodeKind::Reroute { .. }
+            | NodeKind::HeightBlendMask{..} | NodeKind::MaskMix
             => Color32::from_rgb(115, 64, 127),
         NodeKind::SdfCircle{..}|NodeKind::SdfEllipse{..}|NodeKind::SdfCapsule{..}
             |NodeKind::SdfBezierStroke{..}|NodeKind::SdfCombine{..}

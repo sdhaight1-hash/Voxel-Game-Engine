@@ -53,6 +53,10 @@ pub struct ParameterDefinition {
     pub control: ParameterControl,
 }
 
+const HEIGHT_BLEND_MASK: &[ParameterDefinition]=&[
+    ParameterDefinition{id:"influence",label:"Height influence",control:ParameterControl::Float{
+        min:0.0,max:1.0,default:0.4,unit:"normalized"}},
+];
 const SHAPE_SCATTER: &[ParameterDefinition]=&[
     ParameterDefinition{id:"cells",label:"Cells per axis",control:ParameterControl::Integer{
         min:2,max:32,step:1,default:10}},
@@ -232,6 +236,7 @@ pub fn parameters(kind:&NodeKind)-> &'static [ParameterDefinition] {
         NodeKind::SdfCombine{..}=>SDF_BOOLEAN,
         NodeKind::SdfToMask{..}=>SDF_TO_MASK,
         NodeKind::ShapeScatter{..}=>SHAPE_SCATTER,
+        NodeKind::HeightBlendMask{..}=>HEIGHT_BLEND_MASK,
         NodeKind::Noise{..}=>NOISE,
         NodeKind::Checker{..}=>CHECKER,
         NodeKind::Bricks{..}=>BRICKS,
