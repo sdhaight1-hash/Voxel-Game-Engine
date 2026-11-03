@@ -29,6 +29,7 @@ pub use curve_remap::{CurveRemap, CurvePoint, MAX_CURVE_POINTS};
 pub mod render_cache;
 pub use color_ramp::{ColorRamp, ColorStop, MAX_COLOR_STOPS};
 pub mod foliage_bake_cache;
+pub mod material_publish;
 pub mod material_functions;
 pub mod material_function_nesting;
 pub use node_library::LibraryNode;
