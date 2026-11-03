@@ -231,6 +231,24 @@ impl VoxelAsset {
             .replace("mtllib foliage.mtl", "mtllib asset.mtl"))
     }
 
+    /// Extended export for OBJ readers supporting PBR MTL conventions.
+    /// Leaves the legacy obj()/mtl() methods unchanged for existing clients.
+    pub fn obj_pbr(&self)->Result<String,String> {
+        self.materials.validate()?;
+        Ok(self.mesh()?.obj_with_pbr_normals(
+            self.materials.bark_meters_per_repeat)?
+            .replace("mtllib foliage.mtl","mtllib asset.mtl"))
+    }
+
+    pub fn mtl_pbr(&self)->String {
+        let mut project=FoliageProject::default();
+        project.bark_color=self.bark_color;
+        project.leaf_color=self.leaf_color;
+        project.leaf_render=self.leaf_render;
+        project.materials=self.materials.clone();
+        crate::foliage::mtl_pbr(&project)
+    }
+
     pub fn mtl(&self) -> String {
         let mut pseudo_project = FoliageProject::default();
         pseudo_project.bark_color = self.bark_color;
