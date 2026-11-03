@@ -66,7 +66,7 @@ fn static_metric_obj_uvs_preserve_wood_topology_leaves_and_physical_density() {
     }
     assert!(changed>100 && unchanged>100 && inner>50 && seam>0,
         "all tube, seam and non-tube paths must be exercised");
-    assert!(metric_uv.iter().any(|line|!legacy_uv.contains(line)));
+    assert!(metric_uv.iter().zip(&legacy_uv).any(|(metric,legacy)|metric!=legacy));
     // Editing a static export's coordinates never mutates physical hexels.
     assert_eq!(mesh.voxels,project.generate().unwrap().voxels);
 }
