@@ -8,6 +8,8 @@ struct Globals {
     leaf_base: vec4<f32>,
     // x = bark meters per repeat, y = bark PBR, z = studio IBL, w = leaf PBR.
     bark_mapping: vec4<f32>,
+    // x = leaf thickness in mm when backlighting enabled, else 0.
+    leaf_transmission: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> globals: Globals;
@@ -276,6 +278,52 @@ fn shade_bark_metallic_roughness(albedo_srgb:vec3<f32>,roughness:f32,
     return clamp(linear_to_srgb(lit),vec3<f32>(0.0),vec3<f32>(1.0));
 }
 
+// Thin-sheet *approximation*, not volumetric SSS: the viewer sees diffuse
+// light arriving on the OTHER side of a leaf. Pigment-dependent extinction
+// follows Beer-Lambert through the incidence-adjusted sheet thickness.
+// The final seasonal/petal RGB is used as the pigment-color proxy, so
+// autumn leaves transmit a different spectrum without changing any mask.
+fn shade_leaf_thin_sheet(base_srgb:vec3<f32>,reflected_srgb:vec3<f32>,
+                         tangent_normal:vec3<f32>,normal:vec3<f32>,
+                         tangent:vec4<f32>,thickness_mm:f32)->vec3<f32> {
+    let V=normalize(globals.view.xyz);
+    var N=normalize(normal);
+    // Keep the same two-sided tangent-normal orientation as the
+    // pre-existing GGX reflection, including mirrored card UVs.
+    if (dot(N,V)<0.0) { N=-N; }
+    let T=normalize(tangent.xyz-N*dot(N,tangent.xyz));
+    let B=normalize(cross(N,T))*tangent.w;
+    N=normalize(T*tangent_normal.x+B*tangent_normal.y+N*tangent_normal.z);
+    let L=normalize(vec3<f32>(0.46,0.35,0.81));
+    let back_nol=max(dot(-N,L),0.0);
+    if (back_nol<=0.0 && globals.bark_mapping.z<=0.5) {
+        // Front-lit leaves and legacy ambient must stay identical
+        // when there is no light arriving from their reverse side.
+        return reflected_srgb;
+    }
+    let base=srgb_to_linear(base_srgb);
+    // Artist-preview extinction in inverse millimeters. Pigment-specific
+    // absorption is inferred from the FINAL season-dependent albedo rather
+    // than inventing per-species measured spectra.
+    let extinction=vec3<f32>(0.35)+vec3<f32>(4.0)*
+        (vec3<f32>(1.0)-clamp(base,vec3<f32>(0.0),vec3<f32>(1.0)));
+    let path_mm=thickness_mm/max(back_nol,0.2);
+    let attenuation=exp(-extinction*path_mm);
+    // Dielectric entry/exit transmission losses. The direct-light term
+    // approximates diffuse forward scattering with a cosine response.
+    let interface_pass=(1.0-0.04)*(1.0-0.04);
+    var incoming=vec3<f32>(back_nol*(2.35/3.14159265));
+    if (globals.bark_mapping.z>0.5) {
+        // Add the same already-cached studio irradiance from the *reverse*
+        // hemisphere, instead of another environment generator or probe.
+        incoming+=textureSampleLevel(studio_irradiance_tex,linear_sampler,
+            environment_uv(-N),0.0).rgb;
+    }
+    let transmitted=attenuation*incoming*interface_pass;
+    let result=srgb_to_linear(reflected_srgb)+transmitted;
+    return clamp(linear_to_srgb(result),vec3<f32>(0.0),vec3<f32>(1.0));
+}
+
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     // Compute derivatives in uniform fragment control flow. The optional
@@ -377,9 +425,14 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
                 input.uv,0.0).rgb;
         }
         let mapped=normalize(normal_rgb*2.0-vec3<f32>(1.0));
-        let color=shade_bark_metallic_roughness(
-            rgba.rgb * input.tint.rgb,roughness,0.0,
+        let base_color=rgba.rgb * input.tint.rgb;
+        var color=shade_bark_metallic_roughness(
+            base_color,roughness,0.0,
             mapped,input.normal,input.tangent);
+        if (globals.leaf_transmission.x > 0.0) {
+            color=shade_leaf_thin_sheet(base_color,color,mapped,
+                input.normal,input.tangent,globals.leaf_transmission.x);
+        }
         return vec4<f32>(color,rgba.a);
     }
     if (input.kind < 0.5 && globals.bark_mapping.y > 0.5) {
