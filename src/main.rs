@@ -337,6 +337,8 @@ struct Studio {
     leaf_mipmaps: bool,
     /// Opt-in GPU dielectric PBR for bark; does not persist in saved trees.
     gpu_bark_pbr: bool,
+    /// Preview-only lighting option, independent of tree/material saves.
+    gpu_studio_ibl: bool,
     leaf_texture: Option<TextureHandle>,
     bark_texture: Option<TextureHandle>,
     asset_leaf_texture: Option<TextureHandle>,
@@ -413,6 +415,7 @@ impl Default for Studio {
             leaf_aa_mode: LeafAaMode::Legacy,
             leaf_mipmaps: false,
             gpu_bark_pbr: false,
+            gpu_studio_ibl: false,
             leaf_texture: None,
             bark_texture: None,
             asset_leaf_texture: None,
@@ -1588,7 +1591,15 @@ impl Studio {
             self.asset_gpu_scene=None;
             self.foliage_gpu_scene=None;
         }
-        ui.small("PBR bark uses GGX metallic-roughness, fixed preview lighting; environment IBL is not yet implemented.");
+        if ui.add_enabled(self.gpu_bark_pbr,
+            egui::Checkbox::new(&mut self.gpu_studio_ibl,
+                "Studio environment reflections (IBL)"))
+            .on_hover_text("Deterministic prefiltered studio sky + ground map. The two IBL textures are generated and uploaded once; material edits, tree growth and seasons do not rebuild the environment.")
+            .changed() {
+            self.asset_gpu_scene=None;
+            self.foliage_gpu_scene=None;
+        }
+        ui.small("Studio IBL affects bark only; leaf materials and exported textures are unchanged.");
         let available=ui.available_size();
         let desired=Vec2::new(available.x.max(50.0),available.y.max(240.0));
         let (rect,response)=ui.allocate_exact_size(desired,Sense::click_and_drag());
@@ -2110,7 +2121,15 @@ impl Studio {
             self.asset_gpu_scene=None;
             self.foliage_gpu_scene=None;
         }
-        ui.small("PBR bark uses GGX metallic-roughness, fixed preview lighting; environment IBL is not yet implemented.");
+        if ui.add_enabled(self.gpu_bark_pbr,
+            egui::Checkbox::new(&mut self.gpu_studio_ibl,
+                "Studio environment reflections (IBL)"))
+            .on_hover_text("Deterministic prefiltered studio sky + ground map. The two IBL textures are generated and uploaded once; material edits, tree growth and seasons do not rebuild the environment.")
+            .changed() {
+            self.asset_gpu_scene=None;
+            self.foliage_gpu_scene=None;
+        }
+        ui.small("Studio IBL affects bark only; leaf materials and exported textures are unchanged.");
         let available=ui.available_size();
         let desired=Vec2::new(available.x.max(50.0),available.y.max(250.0));
         let (rect,_) = ui.allocate_exact_size(desired,Sense::hover());
@@ -3336,7 +3355,8 @@ impl eframe::App for Studio {
                             if self.asset.materials.leaf_species.is_coffee() {2.0}
                             else if self.asset.materials.leaf_species==PlantPreset::CherryBlossom {1.0}
                             else {0.0}).with_bark_meters_per_repeat(
-                                self.asset.materials.bark_meters_per_repeat);
+                                self.asset.materials.bark_meters_per_repeat)
+                                .with_studio_ibl(self.gpu_studio_ibl);
                         if self.gpu_bark_pbr {
                             match preview_bark_pbr_maps(&mut self.preview_render_cache,
                                 &self.asset.materials) {
@@ -3378,7 +3398,8 @@ impl eframe::App for Studio {
                             if self.foliage.materials.leaf_species.is_coffee() {2.0}
                             else if self.foliage.materials.leaf_species==PlantPreset::CherryBlossom {1.0}
                             else {0.0}).with_bark_meters_per_repeat(
-                                self.foliage.materials.bark_meters_per_repeat);
+                                self.foliage.materials.bark_meters_per_repeat)
+                                .with_studio_ibl(self.gpu_studio_ibl);
                         if self.gpu_bark_pbr {
                             match preview_bark_pbr_maps(&mut self.preview_render_cache,
                                 &self.foliage.materials) {
@@ -4057,6 +4078,7 @@ mod bark_gpu_pbr_preview_tests {
     fn bark_gpu_pbr_is_opt_in_and_uses_authored_graph_maps() {
         let app=Studio::default();
         assert!(!app.gpu_bark_pbr);
+        assert!(!app.gpu_studio_ibl);
         let mut cache=GraphRenderCache::new(1024*1024);
         let mats=FoliageMaterials::for_species(PlantPreset::Oak);
         let (rough,normal,metallic)=preview_bark_pbr_maps(&mut cache,&mats).unwrap();
