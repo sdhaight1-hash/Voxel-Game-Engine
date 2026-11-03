@@ -223,6 +223,23 @@ fn paint_voxel_triangle(
     }
 }
 
+/// Render already-authored bark PBR outputs through the existing bounded
+/// graph preview cache. Roughness and normal are UNORM data maps, not colors.
+/// This runs only on GPU scene creation while opt-in preview is enabled.
+fn preview_bark_pbr_maps(cache:&mut GraphRenderCache,materials:&FoliageMaterials)
+    ->Result<(Vec<u8>,Vec<u8>),String> {
+    let Some(graph)=&materials.bark else {
+        let count=(MATERIAL_SIZE*MATERIAL_SIZE) as usize;
+        return Ok((
+            vec![204,204,204,255].repeat(count),
+            vec![128,128,255,255].repeat(count),
+        ));
+    };
+    let rough=cache.render_channel(graph,1,MATERIAL_SIZE,MATERIAL_SIZE)?;
+    let normal=cache.render_normal(graph,MATERIAL_SIZE,MATERIAL_SIZE)?;
+    Ok((rough.as_ref().to_vec(),normal.as_ref().to_vec()))
+}
+
 /// Bake the same material images used by the preview and the static OBJ.
 fn write_foliage_textures(folder:&Path,materials:&FoliageMaterials,
                           bark:[u8;3], leaf:[u8;3], cutout:bool)->Result<(),String> {
@@ -314,6 +331,8 @@ struct Studio {
     leaf_aa_mode: LeafAaMode,
     /// Preview-only mip selection; legacy sample level zero remains the default.
     leaf_mipmaps: bool,
+    /// Opt-in GPU dielectric PBR for bark; does not persist in saved trees.
+    gpu_bark_pbr: bool,
     leaf_texture: Option<TextureHandle>,
     bark_texture: Option<TextureHandle>,
     asset_leaf_texture: Option<TextureHandle>,
@@ -389,6 +408,7 @@ impl Default for Studio {
             season_preview: 1.0,
             leaf_aa_mode: LeafAaMode::Legacy,
             leaf_mipmaps: false,
+            gpu_bark_pbr: false,
             leaf_texture: None,
             bark_texture: None,
             asset_leaf_texture: None,
@@ -1557,6 +1577,14 @@ impl Studio {
             self.gpu.as_ref().is_some_and(|gpu|gpu.msaa4_supported));
         ui.checkbox(&mut self.leaf_mipmaps,"Preview foliage mipmapping")
             .on_hover_text("Off by default. Enable trilinear alpha-weighted 64/128px foliage mip levels for distant tree-card filtering. Does not modify materials or exported textures.");
+        if ui.checkbox(&mut self.gpu_bark_pbr,
+            "Preview PBR bark (roughness + normal)").on_hover_text(
+            "Opt-in dielectric GGX shading with graph-authored linear roughness and tangent-space normal maps. Uses a fixed preview light; leaf appearance, saved assets and geometry are unchanged."
+            ).changed() {
+            self.asset_gpu_scene=None;
+            self.foliage_gpu_scene=None;
+        }
+        ui.small("PBR bark uses direct + ambient preview lighting; metallic and environment IBL are not implemented.");
         let available=ui.available_size();
         let desired=Vec2::new(available.x.max(50.0),available.y.max(240.0));
         let (rect,response)=ui.allocate_exact_size(desired,Sense::click_and_drag());
@@ -2071,6 +2099,14 @@ impl Studio {
             self.gpu.as_ref().is_some_and(|gpu|gpu.msaa4_supported));
         ui.checkbox(&mut self.leaf_mipmaps,"Preview foliage mipmapping")
             .on_hover_text("Off by default. Enable trilinear alpha-weighted 64/128px foliage mip levels for distant tree-card filtering. Does not modify materials or exported textures.");
+        if ui.checkbox(&mut self.gpu_bark_pbr,
+            "Preview PBR bark (roughness + normal)").on_hover_text(
+            "Opt-in dielectric GGX shading with graph-authored linear roughness and tangent-space normal maps. Uses a fixed preview light; leaf appearance, saved assets and geometry are unchanged."
+            ).changed() {
+            self.asset_gpu_scene=None;
+            self.foliage_gpu_scene=None;
+        }
+        ui.small("PBR bark uses direct + ambient preview lighting; metallic and environment IBL are not implemented.");
         let available=ui.available_size();
         let desired=Vec2::new(available.x.max(50.0),available.y.max(250.0));
         let (rect,_) = ui.allocate_exact_size(desired,Sense::hover());
@@ -3288,7 +3324,7 @@ impl eframe::App for Studio {
                     if self.asset_leaf_pixels.len()==64*64*4
                         && self.asset_bark_pixels.len()==64*64*4 {
                         let started=Instant::now();
-                        let scene=GpuScene::from_mesh(
+                        let mut scene=GpuScene::from_mesh(
                             mesh,&self.asset_bark_pixels,&self.asset_leaf_pixels,
                             self.asset.leaf_color,
                             self.asset.materials.effective_palettes(self.asset.leaf_color)
@@ -3297,6 +3333,15 @@ impl eframe::App for Studio {
                             else if self.asset.materials.leaf_species==PlantPreset::CherryBlossom {1.0}
                             else {0.0}).with_bark_meters_per_repeat(
                                 self.asset.materials.bark_meters_per_repeat);
+                        if self.gpu_bark_pbr {
+                            match preview_bark_pbr_maps(&mut self.preview_render_cache,
+                                &self.asset.materials) {
+                                Ok((roughness,normal)) =>
+                                    scene=scene.with_bark_pbr_maps(roughness,normal),
+                                Err(error)=>self.status=
+                                    format!("Asset PBR preview unavailable: {error}"),
+                            }
+                        }
                         self.metrics.asset_scene_builds+=1;
                         self.metrics.report("asset_scene_build",started.elapsed(),true);
                         self.asset_gpu_scene=Some(Arc::new(scene));
@@ -3321,7 +3366,7 @@ impl eframe::App for Studio {
                     if self.foliage_leaf_pixels.len()==64*64*4
                         && self.foliage_bark_pixels.len()==64*64*4 {
                         let started=Instant::now();
-                        let scene=GpuScene::from_mesh(
+                        let mut scene=GpuScene::from_mesh(
                             mesh,&self.foliage_bark_pixels,&self.foliage_leaf_pixels,
                             self.foliage.leaf_color,
                             self.foliage.materials.effective_palettes(self.foliage.leaf_color)
@@ -3330,6 +3375,15 @@ impl eframe::App for Studio {
                             else if self.foliage.materials.leaf_species==PlantPreset::CherryBlossom {1.0}
                             else {0.0}).with_bark_meters_per_repeat(
                                 self.foliage.materials.bark_meters_per_repeat);
+                        if self.gpu_bark_pbr {
+                            match preview_bark_pbr_maps(&mut self.preview_render_cache,
+                                &self.foliage.materials) {
+                                Ok((roughness,normal)) =>
+                                    scene=scene.with_bark_pbr_maps(roughness,normal),
+                                Err(error)=>self.status=
+                                    format!("Tree PBR preview unavailable: {error}"),
+                            }
+                        }
                         self.metrics.foliage_scene_builds+=1;
                         self.metrics.report("foliage_scene_build",started.elapsed(),true);
                         self.foliage_gpu_scene=Some(Arc::new(scene));
@@ -3988,4 +4042,24 @@ fn main() -> eframe::Result {
         ..Default::default()
     };
     eframe::run_native("voxel-game-engine", options, Box::new(|cc| Ok(Box::new(Studio::new(cc)))))
+
+    #[test]
+    fn bark_gpu_pbr_is_opt_in_and_uses_authored_graph_maps() {
+        let app=Studio::default();
+        assert!(!app.gpu_bark_pbr);
+        let mut cache=GraphRenderCache::new(1024*1024);
+        let mats=FoliageMaterials::for_species(PlantPreset::Oak);
+        let (rough,normal)=preview_bark_pbr_maps(&mut cache,&mats).unwrap();
+        assert_eq!(rough.len(),(MATERIAL_SIZE*MATERIAL_SIZE*4) as usize);
+        assert_eq!(normal.len(),rough.len());
+        let misses=cache.stats().misses;
+        let again=preview_bark_pbr_maps(&mut cache,&mats).unwrap();
+        assert_eq!((rough,normal),again);
+        assert_eq!(cache.stats().misses,misses,
+            "unchanged bark maps should be served from preview cache");
+        let (fallback_r,fallback_n)=preview_bark_pbr_maps(
+            &mut cache,&FoliageMaterials::default()).unwrap();
+        assert_eq!(&fallback_r[..4],&[204,204,204,255]);
+        assert_eq!(&fallback_n[..4],&[128,128,255,255]);
+    }
 }
