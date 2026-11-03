@@ -87,6 +87,8 @@ pub struct Scene {
     bark_repeat_m: f32,
     bark_roughness_rgba: Vec<u8>,
     bark_normal_rgba: Vec<u8>,
+    /// Graph Metallic output, R8 linear factor carried in RGBA8 data.
+    bark_metallic_rgba: Vec<u8>,
     bark_pbr_enabled: bool,
     leaf_rgba: Vec<u8>,
     palette: GpuPalette,
@@ -165,6 +167,7 @@ impl Scene {
             bark_rgba:bark.to_vec(),bark_repeat_m:0.0,
             bark_roughness_rgba:vec![204,204,204,255],
             bark_normal_rgba:vec![128,128,255,255],
+            bark_metallic_rgba:vec![0,0,0,255],
             bark_pbr_enabled:false,
             leaf_rgba:leaf.to_vec(),
             palette:GpuPalette{stops:palette},
@@ -185,13 +188,17 @@ impl Scene {
         self
     }
 
-    /// PBR maps are graph-authored unorm data: roughness is linear in R,
-    /// normals are tangent-space XYZ in RGB. Legacy scene paths stay disabled.
-    pub fn with_bark_pbr_maps(mut self,roughness:Vec<u8>,normal:Vec<u8>)->Self {
+    /// PBR maps are graph-authored linear UNORM data, never sRGB colors:
+    /// roughness and metallic are scalar R, normals are tangent XYZ in RGB.
+    /// The legacy branch remains disabled by default for every species.
+    pub fn with_bark_pbr_maps(mut self,roughness:Vec<u8>,normal:Vec<u8>,
+                              metallic:Vec<u8>)->Self {
         assert!(!roughness.is_empty()&&roughness.len()%4==0);
         assert_eq!(roughness.len(),normal.len());
+        assert_eq!(roughness.len(),metallic.len());
         self.bark_roughness_rgba=roughness;
         self.bark_normal_rgba=normal;
+        self.bark_metallic_rgba=metallic;
         self.bark_pbr_enabled=true;
         self
     }
@@ -254,6 +261,7 @@ struct SceneUploads {
     palette: bool,
     bark_roughness: bool,
     bark_normal: bool,
+    bark_metallic: bool,
 }
 
 fn scene_uploads(previous: Option<&Scene>, next: &Scene) -> SceneUploads {
@@ -268,6 +276,8 @@ fn scene_uploads(previous: Option<&Scene>, next: &Scene) -> SceneUploads {
             old.bark_roughness_rgba!=next.bark_roughness_rgba),
         bark_normal: previous.is_none_or(|old|
             old.bark_normal_rgba!=next.bark_normal_rgba),
+        bark_metallic: previous.is_none_or(|old|
+            old.bark_metallic_rgba!=next.bark_metallic_rgba),
     }
 }
 
@@ -280,6 +290,7 @@ struct UploadMetrics {
     palette_writes: u64,
     roughness_textures: u64,
     normal_textures: u64,
+    metallic_textures: u64,
 }
 
 impl UploadMetrics {
@@ -290,6 +301,7 @@ impl UploadMetrics {
         self.palette_writes+=u64::from(uploads.palette);
         self.roughness_textures+=u64::from(uploads.bark_roughness);
         self.normal_textures+=u64::from(uploads.bark_normal);
+        self.metallic_textures+=u64::from(uploads.bark_metallic);
     }
 }
 
@@ -315,6 +327,7 @@ struct Resources {
     leaf_view: Option<wgpu::TextureView>,
     bark_roughness_view: Option<wgpu::TextureView>,
     bark_normal_view: Option<wgpu::TextureView>,
+    bark_metallic_view: Option<wgpu::TextureView>,
     sampler: Option<wgpu::Sampler>,
     vertex: Option<wgpu::Buffer>,
     vertex_count: u32,
@@ -394,6 +407,14 @@ impl GpuViewport {
                 },
                 wgpu::BindGroupLayoutEntry {
                     binding:6,visibility:wgpu::ShaderStages::FRAGMENT,
+                    ty:wgpu::BindingType::Texture {
+                        multisampled:false,
+                        view_dimension:wgpu::TextureViewDimension::D2,
+                        sample_type:wgpu::TextureSampleType::Float{filterable:true},
+                    },count:None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding:7,visibility:wgpu::ShaderStages::FRAGMENT,
                     ty:wgpu::BindingType::Texture {
                         multisampled:false,
                         view_dimension:wgpu::TextureViewDimension::D2,
@@ -516,7 +537,8 @@ impl GpuViewport {
             _msaa4_depth:msaa4_depth,msaa4_depth_view,
             group_layout,uniform,palette_buffer,bind_group:None,
             bark_view:None,leaf_view:None,
-            bark_roughness_view:None,bark_normal_view:None,sampler:None,
+            bark_roughness_view:None,bark_normal_view:None,
+            bark_metallic_view:None,sampler:None,
             vertex:None,vertex_count:0,last_scene:None,
             upload_metrics:UploadMetrics::default(),
             _target:target,target_view,
@@ -600,8 +622,14 @@ impl egui_wgpu::CallbackTrait for RenderScene {
                     upload_rgba(device,queue,&scene.bark_normal_rgba)
                         .create_view(&Default::default()));
             }
+            if uploads.bark_metallic {
+                resources.bark_metallic_view=Some(
+                    upload_rgba(device,queue,&scene.bark_metallic_rgba)
+                        .create_view(&Default::default()));
+            }
             if uploads.bark || uploads.leaf || uploads.bark_roughness
-                || uploads.bark_normal || resources.bind_group.is_none() {
+                || uploads.bark_normal || uploads.bark_metallic
+                || resources.bind_group.is_none() {
                 let sampler=resources.sampler.get_or_insert_with(||
                     device.create_sampler(&wgpu::SamplerDescriptor {
                         label:Some("voxel-pixel-sampler"),
@@ -632,6 +660,10 @@ impl egui_wgpu::CallbackTrait for RenderScene {
                             resource:wgpu::BindingResource::TextureView(
                                 resources.bark_normal_view.as_ref()
                                     .expect("bark normal uploaded"))},
+                        wgpu::BindGroupEntry{binding:7,
+                            resource:wgpu::BindingResource::TextureView(
+                                resources.bark_metallic_view.as_ref()
+                                    .expect("bark metallic uploaded"))},
                     ],
                 }));
             }
@@ -845,7 +877,7 @@ mod tests {
             .gpu_stops();
         let scene=Scene::from_mesh(&mesh,&data,&data,[50,135,75],palette,0.0);
         assert_eq!(scene_uploads(Some(&scene),&scene),SceneUploads {
-            geometry:false,bark:false,leaf:false,palette:false, bark_roughness:false,bark_normal:false,
+            geometry:false,bark:false,leaf:false,palette:false, bark_roughness:false,bark_normal:false,bark_metallic:false,
         });
     }
 
@@ -965,22 +997,22 @@ mod tests {
             .gpu_stops();
         let baseline=Scene::from_mesh(&mesh,&bark,&leaf,[50,150,80],palette,0.0);
         assert_eq!(scene_uploads(None,&baseline),SceneUploads {
-            geometry:true,bark:true,leaf:true,palette:true, bark_roughness:true,bark_normal:true,
+            geometry:true,bark:true,leaf:true,palette:true, bark_roughness:true,bark_normal:true,bark_metallic:false,
         });
         let identical=Scene::from_mesh(&mesh,&bark,&leaf,[50,150,80],palette,0.0);
         assert_eq!(scene_uploads(Some(&baseline),&identical),SceneUploads {
-            geometry:false,bark:false,leaf:false,palette:false, bark_roughness:false,bark_normal:false,
+            geometry:false,bark:false,leaf:false,palette:false, bark_roughness:false,bark_normal:false,bark_metallic:false,
         });
         palette[0][0]=0.7;
         let season=Scene::from_mesh(&mesh,&bark,&leaf,[50,150,80],palette,0.0);
         assert_eq!(scene_uploads(Some(&baseline),&season),SceneUploads {
-            geometry:false,bark:false,leaf:false,palette:true, bark_roughness:false,bark_normal:false,
+            geometry:false,bark:false,leaf:false,palette:true, bark_roughness:false,bark_normal:false,bark_metallic:false,
         });
         let mut tinted=bark.clone();
         tinted[0]=90;
         let material=Scene::from_mesh(&mesh,&tinted,&leaf,[50,150,80],palette,0.0);
         assert_eq!(scene_uploads(Some(&season),&material),SceneUploads {
-            geometry:false,bark:true,leaf:false,palette:false, bark_roughness:false,bark_normal:false,
+            geometry:false,bark:true,leaf:false,palette:false, bark_roughness:false,bark_normal:false,bark_metallic:false,
         });
         let grown=FoliageMesh::from_voxels(VoxelShape::Cube,0.5,vec![
             VoxelCell{x:0,y:0,z:0,material:Material::Bark},
@@ -988,14 +1020,14 @@ mod tests {
         ]).unwrap();
         let different_mesh=Scene::from_mesh(&grown,&tinted,&leaf,[50,150,80],palette,0.0);
         assert_eq!(scene_uploads(Some(&material),&different_mesh),SceneUploads {
-            geometry:true,bark:false,leaf:false,palette:false, bark_roughness:false,bark_normal:false,
+            geometry:true,bark:false,leaf:false,palette:false, bark_roughness:false,bark_normal:false,bark_metallic:false,
         });
         // A wind-strength edit changes only a uniform; scene resources stay put.
         let mut wind=Scene::from_mesh(&mesh,&bark,&leaf,[50,150,80],
             texture_studio::foliage_materials::SeasonalPalettes::default().gpu_stops(),0.0);
         wind.wind_strength+=0.1;
         assert_eq!(scene_uploads(Some(&baseline),&wind),SceneUploads {
-            geometry:false,bark:false,leaf:false,palette:false, bark_roughness:false,bark_normal:false,
+            geometry:false,bark:false,leaf:false,palette:false, bark_roughness:false,bark_normal:false,bark_metallic:false,
         });
         let mut metrics=UploadMetrics::default();
         for changes in [
@@ -1010,7 +1042,7 @@ mod tests {
         }
         assert_eq!(metrics,UploadMetrics {
             vertex_buffers:2,bark_textures:2,leaf_textures:1,palette_writes:2,
-            roughness_textures:1,normal_textures:1,
+            roughness_textures:1,normal_textures:1,metallic_textures:1,
         });
     }
 
@@ -1031,7 +1063,7 @@ mod tests {
         assert_eq!(leaf_coverage_uniform(LeafAaMode::Ordered),1.0);
         assert_eq!(leaf_coverage_uniform(LeafAaMode::Msaa4),2.0);
         assert_eq!(scene_uploads(Some(&scene),&scene),SceneUploads {
-            geometry:false,bark:false,leaf:false,palette:false, bark_roughness:false,bark_normal:false,
+            geometry:false,bark:false,leaf:false,palette:false, bark_roughness:false,bark_normal:false,bark_metallic:false,
         });
     }
 
@@ -1066,7 +1098,7 @@ mod tests {
             assert_ne!(changed,original,"{species:?} needs a different leaf texture");
             let after=Scene::from_mesh(&mesh,&bark,&changed,tint,palette,0.0);
             assert_eq!(scene_uploads(Some(&before),&after),SceneUploads {
-                geometry:false,bark:false,leaf:true,palette:false, bark_roughness:false,bark_normal:false,
+                geometry:false,bark:false,leaf:true,palette:false, bark_roughness:false,bark_normal:false,bark_metallic:false,
             },"{species:?} should only update leaf pixels");
         }
     }
@@ -1093,7 +1125,7 @@ mod tests {
         assert!(covered.chunks_exact(4).any(|px|px[3]>0&&px[3]<255));
         let after=Scene::from_mesh(&mesh,&bark,&covered,tint,palette,0.0);
         assert_eq!(scene_uploads(Some(&before),&after),SceneUploads {
-            geometry:false,bark:false,leaf:true,palette:false, bark_roughness:false,bark_normal:false,
+            geometry:false,bark:false,leaf:true,palette:false, bark_roughness:false,bark_normal:false,bark_metallic:false,
         });
     }
 
@@ -1129,12 +1161,12 @@ mod tests {
         assert_eq!(legacy.bark_repeat_m,0.0);
         assert_eq!(metric.bark_repeat_m,0.42);
         assert_eq!(scene_uploads(Some(&legacy),&metric),SceneUploads {
-            geometry:false,bark:false,leaf:false,palette:false, bark_roughness:false,bark_normal:false,
+            geometry:false,bark:false,leaf:false,palette:false, bark_roughness:false,bark_normal:false,bark_metallic:false,
         },"changing only the physical repeat must be a GPU uniform update");
         let altered=Scene::from_mesh(&mesh,&bark,&leaf,[70,132,58],palette,0.0)
             .with_bark_meters_per_repeat(Some(2.0));
         assert_eq!(scene_uploads(Some(&metric),&altered),SceneUploads {
-            geometry:false,bark:false,leaf:false,palette:false, bark_roughness:false,bark_normal:false,
+            geometry:false,bark:false,leaf:false,palette:false, bark_roughness:false,bark_normal:false,bark_metallic:false,
         });
         assert_eq!(Scene::from_mesh(&mesh,&bark,&leaf,[70,132,58],palette,0.0)
             .with_bark_meters_per_repeat(Some(f32::NAN)).bark_repeat_m,0.0);
@@ -1182,21 +1214,21 @@ mod tests {
         assert!(pbr.bark_pbr_enabled);
         assert_eq!(scene_uploads(Some(&legacy),&pbr),SceneUploads {
             geometry:false,bark:false,leaf:false,palette:false,
-            bark_roughness:true,bark_normal:true,
+            bark_roughness:true,bark_normal:true,bark_metallic:false,
         });
         let next=Scene::from_mesh(&mesh,&pixels,&pixels,[60,140,70],
             palette,0.0).with_bark_pbr_maps(
                 vec![110;64*64*4],normal.clone());
         assert_eq!(scene_uploads(Some(&pbr),&next),SceneUploads {
             geometry:false,bark:false,leaf:false,palette:false,
-            bark_roughness:true,bark_normal:false,
+            bark_roughness:true,bark_normal:false,bark_metallic:false,
         });
         let retiling=Scene::from_mesh(&mesh,&pixels,&pixels,[60,140,70],
             palette,0.0).with_bark_pbr_maps(rough,normal)
             .with_bark_meters_per_repeat(Some(0.35));
         assert_eq!(scene_uploads(Some(&pbr),&retiling),SceneUploads {
             geometry:false,bark:false,leaf:false,palette:false,
-            bark_roughness:false,bark_normal:false,
+            bark_roughness:false,bark_normal:false,bark_metallic:false,
         });
         let shader=include_str!("voxel_gpu.wgsl");
         assert!(shader.contains("globals.bark_mapping.y > 0.5"));
