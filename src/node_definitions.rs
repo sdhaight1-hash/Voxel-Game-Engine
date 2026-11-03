@@ -53,6 +53,19 @@ pub struct ParameterDefinition {
     pub control: ParameterControl,
 }
 
+const SHAPE_SCATTER: &[ParameterDefinition]=&[
+    ParameterDefinition{id:"cells",label:"Cells per axis",control:ParameterControl::Integer{
+        min:2,max:32,step:1,default:10}},
+    ParameterDefinition{id:"scale",label:"Stamp scale",control:ParameterControl::Float{
+        min:0.1,max:0.85,default:0.8,unit:"cell"}},
+    ParameterDefinition{id:"jitter",label:"Position jitter",control:ParameterControl::Float{
+        min:0.0,max:0.25,default:0.2,unit:"cell"}},
+    ParameterDefinition{id:"rotation",label:"Rotation variation",control:ParameterControl::Float{
+        min:0.0,max:1.0,default:1.0,unit:"turn"}},
+    ParameterDefinition{id:"brightness",label:"Brightness variation",control:ParameterControl::Float{
+        min:0.0,max:1.0,default:0.3,unit:"normalized"}},
+    ParameterDefinition{id:"seed",label:"Seed",control:ParameterControl::Seed{default:55}},
+];
 const SDF_CIRCLE: &[ParameterDefinition]=&[
     ParameterDefinition{id:"center_x",label:"Center X",control:ParameterControl::Float{
         min:0.0,max:1.0,default:0.5,unit:"tile UV"}},
@@ -218,6 +231,7 @@ pub fn parameters(kind:&NodeKind)-> &'static [ParameterDefinition] {
         NodeKind::SdfContourWarp{..}=>SDF_CONTOUR_WARP,
         NodeKind::SdfCombine{..}=>SDF_BOOLEAN,
         NodeKind::SdfToMask{..}=>SDF_TO_MASK,
+        NodeKind::ShapeScatter{..}=>SHAPE_SCATTER,
         NodeKind::Noise{..}=>NOISE,
         NodeKind::Checker{..}=>CHECKER,
         NodeKind::Bricks{..}=>BRICKS,

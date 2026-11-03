@@ -2174,6 +2174,11 @@ impl Studio {
                     frequency:8,amount:0.05,seed:57}),
                 ("Distance to Mask", NodeKind::SdfToMask{edge_width:0.01}),
             ]),
+            ("PATTERN SCATTER", vec![
+                ("Shape Scatter", NodeKind::ShapeScatter{
+                    cells:10,scale:0.8,jitter:0.2,rotation:1.0,
+                    brightness:0.3,seed:55}),
+            ]),
             ("MIX & ROUTING", vec![
                 ("Blend", NodeKind::Blend { factor: 0.5 }),
                 ("Color Reroute", NodeKind::Reroute {kind:SocketType::Color}),
@@ -2572,6 +2577,22 @@ impl Studio {
                     .speed(1).prefix("Seed: ")).changed();
                 ui.small("0 offset is exact pass-through; positive values distort the original contour.");
                 ui.small("Feed an SDF shape into this node; convert to Mask after warping.");
+            }
+            NodeKind::ShapeScatter{cells,scale,jitter,rotation,brightness,seed} => {
+                ui.small("Scatter a connected Pattern Mask across tileable UV; optional Density Mask defaults to full.");
+                changed |= ui.add(egui::Slider::new(cells,2..=32)
+                    .text("Cells per axis")).changed();
+                changed |= ui.add(egui::Slider::new(scale,0.1..=0.85)
+                    .text("Stamp scale / cell")).changed();
+                changed |= ui.add(egui::Slider::new(jitter,0.0..=0.25)
+                    .text("Position jitter / cell")).changed();
+                changed |= ui.add(egui::Slider::new(rotation,0.0..=1.0)
+                    .text("Rotation variation")).changed();
+                changed |= ui.add(egui::Slider::new(brightness,0.0..=1.0)
+                    .text("Brightness variation")).changed();
+                changed |= ui.add(egui::DragValue::new(seed)
+                    .speed(1).prefix("Seed: ")).changed();
+                ui.small("At most 9 neighboring grid cells sampled per pixel. Output: Mask.");
             }
             NodeKind::SdfToMask{edge_width} => {
                 ui.small("Explicit signed Distance to Mask conversion. Negative distance is inside.");
@@ -3416,6 +3437,7 @@ fn node_accent(kind: NodeKind) -> Color32 {
         NodeKind::SdfCircle{..}|NodeKind::SdfEllipse{..}|NodeKind::SdfCapsule{..}
             |NodeKind::SdfBezierStroke{..}|NodeKind::SdfCombine{..}
             |NodeKind::SdfContourWarp{..}|NodeKind::SdfToMask{..}
+            |NodeKind::ShapeScatter{..}
             => Color32::from_rgb(119,70,140),
         NodeKind::Output => Color32::from_rgb(43, 105, 77),
     }

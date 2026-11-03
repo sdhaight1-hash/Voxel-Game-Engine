@@ -18,6 +18,7 @@ pub mod node_definitions;
 pub mod sdf;
 pub mod leaf_vector;
 pub mod sdf_bezier;
+pub mod shape_scatter;
 pub use sdf::SdfBoolean;
 pub mod color_ramp;
 pub mod curve_remap;
@@ -153,6 +154,9 @@ pub enum NodeKind {
     SdfContourWarp { frequency:u32, amount:f32, seed:u32 },
     /// Explicit signed Distance -> normalized coverage Mask conversion.
     SdfToMask { edge_width:f32 },
+    /// Seeded, tileable splatter of a connected Mask with optional density Mask.
+    ShapeScatter { cells:u32, scale:f32, jitter:f32, rotation:f32,
+        brightness:f32, seed:u32 },
     Invert,
     Blend { factor: f32 },
     Bricks { columns: u32, rows: u32, mortar: f32 },
@@ -183,6 +187,7 @@ impl NodeKind {
             Self::SdfCombine{..}=>"SDF Boolean",
             Self::SdfContourWarp{..}=>"SDF Contour Warp",
             Self::SdfToMask{..}=>"Distance to Mask",
+            Self::ShapeScatter{..}=>"Shape Scatter",
             Self::Invert => "Invert",
             Self::Blend { .. } => "Blend",
             Self::Bricks { .. } => "Bricks",
@@ -206,7 +211,7 @@ impl NodeKind {
                 | Self::ColorRamp { .. } | Self::CurveRemap { .. }
                 | Self::Reroute { .. } | Self::SdfToMask{..}
                 | Self::SdfContourWarp{..} => 1,
-            Self::Blend { .. } | Self::SdfCombine{..} => 2,
+            Self::Blend { .. } | Self::SdfCombine{..} | Self::ShapeScatter{..} => 2,
             Self::Library { operation, .. } => operation.input_count(),
             Self::Output => 4,
         }
@@ -226,6 +231,8 @@ impl NodeKind {
             (Self::Reroute { .. },0) => "Input",
             (Self::SdfCombine{..},0) => "Distance A",
             (Self::SdfCombine{..},1) => "Distance B",
+            (Self::ShapeScatter{..},0) => "Pattern Mask",
+            (Self::ShapeScatter{..},1) => "Density Mask",
             (Self::SdfToMask{..} | Self::SdfContourWarp{..},0) => "Distance",
             (Self::Invert | Self::Colorize { .. }, 0) => "Image",
             (Self::Library { operation, .. }, i) => operation.input_name(i),
@@ -254,6 +261,7 @@ impl NodeKind {
             Self::SdfCombine{..}=>"sdf_boolean".into(),
             Self::SdfContourWarp{..}=>"sdf_contour_warp".into(),
             Self::SdfToMask{..}=>"sdf_to_mask".into(),
+            Self::ShapeScatter{..}=>"shape_scatter".into(),
             Self::Invert=>"invert".into(),
             Self::Blend{..}=>"blend".into(),
             Self::Bricks{..}=>"bricks".into(),
@@ -269,7 +277,8 @@ impl NodeKind {
         match self {
             Self::Scalar{..}|Self::Luminance|Self::Levels{..}
                 |Self::CurveRemap{..}=>SocketType::Scalar,
-            Self::ThresholdMask{..}|Self::SdfToMask{..}=>SocketType::Mask,
+            Self::ThresholdMask{..}|Self::SdfToMask{..}
+                |Self::ShapeScatter{..}=>SocketType::Mask,
             Self::SdfCircle{..}|Self::SdfEllipse{..}|Self::SdfCapsule{..}
                 |Self::SdfBezierStroke{..}|Self::SdfCombine{..}
                 |Self::SdfContourWarp{..}=>SocketType::Distance,
@@ -281,6 +290,7 @@ impl NodeKind {
     pub fn input_type(&self, index:usize) -> Option<SocketType> {
         if index>=self.input_count() {return None;}
         Some(if let Self::Reroute{kind}=self { *kind }
+            else if matches!(self,Self::ShapeScatter{..}) { SocketType::Mask }
             else if matches!(self,Self::SdfCombine{..}|Self::SdfToMask{..}
                 |Self::SdfContourWarp{..}) {
                 SocketType::Distance
@@ -497,6 +507,9 @@ impl Graph {
                 NodeKind::SdfToMask{edge_width}
                     if !edge_width.is_finite()||!(0.0..=0.25).contains(&edge_width) =>
                     return Err("Distance to Mask edge width must be 0..0.25 UV units".into()),
+                NodeKind::ShapeScatter{cells,scale,jitter,rotation,brightness,seed} =>
+                    shape_scatter::ScatterSettings{cells,scale,jitter,rotation,
+                        brightness,seed}.validate()?,
                 _ => {}
             }
         }
@@ -803,6 +816,18 @@ impl Graph {
             NodeKind::SdfToMask{edge_width} => {
                 let distance=self.sample_input_memo(id,0,u,v,memo)[0];
                 [sdf::to_mask(distance,edge_width);3]
+            }
+            NodeKind::ShapeScatter{cells,scale,jitter,rotation,brightness,seed} => {
+                let has_density=self.links.iter().any(|link|link.to==id && link.input==1);
+                let settings=shape_scatter::ScatterSettings{
+                    cells,scale,jitter,rotation,brightness,seed,
+                };
+                let value=shape_scatter::sample(u,v,settings,
+                    |su,sv|self.sample_input_memo(id,0,su,sv,memo)[0],
+                    |su,sv|if has_density {
+                        self.sample_input_memo(id,1,su,sv,memo)[0]
+                    } else {1.0});
+                [value;3]
             }
             NodeKind::Invert => self.sample_input_memo(id, 0, u, v,memo).map(|c| 1.0 - c),
             NodeKind::Blend { factor } => {
