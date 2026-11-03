@@ -19,6 +19,7 @@ pub mod sdf;
 pub mod leaf_vector;
 pub mod sdf_bezier;
 pub mod shape_scatter;
+pub mod height_blend;
 pub use sdf::SdfBoolean;
 pub mod color_ramp;
 pub mod curve_remap;
@@ -157,6 +158,10 @@ pub enum NodeKind {
     /// Seeded, tileable splatter of a connected Mask with optional density Mask.
     ShapeScatter { cells:u32, scale:f32, jitter:f32, rotation:f32,
         brightness:f32, seed:u32 },
+    /// Derive one shared transition weight from two normalized heights + Mask.
+    HeightBlendMask { influence:f32 },
+    /// Mix two Color/scalar-compatible materials using a typed Mask input.
+    MaskMix,
     Invert,
     Blend { factor: f32 },
     Bricks { columns: u32, rows: u32, mortar: f32 },
@@ -188,6 +193,8 @@ impl NodeKind {
             Self::SdfContourWarp{..}=>"SDF Contour Warp",
             Self::SdfToMask{..}=>"Distance to Mask",
             Self::ShapeScatter{..}=>"Shape Scatter",
+            Self::HeightBlendMask{..}=>"Height Blend Mask",
+            Self::MaskMix=>"Mask Mix",
             Self::Invert => "Invert",
             Self::Blend { .. } => "Blend",
             Self::Bricks { .. } => "Bricks",
@@ -212,6 +219,7 @@ impl NodeKind {
                 | Self::Reroute { .. } | Self::SdfToMask{..}
                 | Self::SdfContourWarp{..} => 1,
             Self::Blend { .. } | Self::SdfCombine{..} | Self::ShapeScatter{..} => 2,
+            Self::HeightBlendMask{..} | Self::MaskMix => 3,
             Self::Library { operation, .. } => operation.input_count(),
             Self::Output => 4,
         }
@@ -233,6 +241,12 @@ impl NodeKind {
             (Self::SdfCombine{..},1) => "Distance B",
             (Self::ShapeScatter{..},0) => "Pattern Mask",
             (Self::ShapeScatter{..},1) => "Density Mask",
+            (Self::HeightBlendMask{..},0) => "Height A",
+            (Self::HeightBlendMask{..},1) => "Height B",
+            (Self::HeightBlendMask{..},2) => "Base Mask",
+            (Self::MaskMix,0) => "A",
+            (Self::MaskMix,1) => "B",
+            (Self::MaskMix,2) => "Mix Mask",
             (Self::SdfToMask{..} | Self::SdfContourWarp{..},0) => "Distance",
             (Self::Invert | Self::Colorize { .. }, 0) => "Image",
             (Self::Library { operation, .. }, i) => operation.input_name(i),
@@ -262,6 +276,8 @@ impl NodeKind {
             Self::SdfContourWarp{..}=>"sdf_contour_warp".into(),
             Self::SdfToMask{..}=>"sdf_to_mask".into(),
             Self::ShapeScatter{..}=>"shape_scatter".into(),
+            Self::HeightBlendMask{..}=>"height_blend_mask".into(),
+            Self::MaskMix=>"mask_mix".into(),
             Self::Invert=>"invert".into(),
             Self::Blend{..}=>"blend".into(),
             Self::Bricks{..}=>"bricks".into(),
@@ -278,7 +294,7 @@ impl NodeKind {
             Self::Scalar{..}|Self::Luminance|Self::Levels{..}
                 |Self::CurveRemap{..}=>SocketType::Scalar,
             Self::ThresholdMask{..}|Self::SdfToMask{..}
-                |Self::ShapeScatter{..}=>SocketType::Mask,
+                |Self::ShapeScatter{..}|Self::HeightBlendMask{..}=>SocketType::Mask,
             Self::SdfCircle{..}|Self::SdfEllipse{..}|Self::SdfCapsule{..}
                 |Self::SdfBezierStroke{..}|Self::SdfCombine{..}
                 |Self::SdfContourWarp{..}=>SocketType::Distance,
@@ -290,7 +306,11 @@ impl NodeKind {
     pub fn input_type(&self, index:usize) -> Option<SocketType> {
         if index>=self.input_count() {return None;}
         Some(if let Self::Reroute{kind}=self { *kind }
-            else if matches!(self,Self::ShapeScatter{..}) { SocketType::Mask }
+            else if matches!(self,Self::HeightBlendMask{..}) {
+                if index==2 { SocketType::Mask } else { SocketType::Scalar }
+            } else if matches!(self,Self::MaskMix) {
+                if index==2 { SocketType::Mask } else { SocketType::Color }
+            } else if matches!(self,Self::ShapeScatter{..}) { SocketType::Mask }
             else if matches!(self,Self::SdfCombine{..}|Self::SdfToMask{..}
                 |Self::SdfContourWarp{..}) {
                 SocketType::Distance
@@ -510,6 +530,9 @@ impl Graph {
                 NodeKind::ShapeScatter{cells,scale,jitter,rotation,brightness,seed} =>
                     shape_scatter::ScatterSettings{cells,scale,jitter,rotation,
                         brightness,seed}.validate()?,
+                NodeKind::HeightBlendMask{influence}
+                    if !influence.is_finite() || !(0.0..=1.0).contains(&influence) =>
+                    return Err("Height Blend Mask influence must be finite and in 0..1".into()),
                 _ => {}
             }
         }
@@ -828,6 +851,18 @@ impl Graph {
                         self.sample_input_memo(id,1,su,sv,memo)[0]
                     } else {1.0});
                 [value;3]
+            }
+            NodeKind::HeightBlendMask{influence} => {
+                let ha=self.sample_input_memo(id,0,u,v,memo)[0];
+                let hb=self.sample_input_memo(id,1,u,v,memo)[0];
+                let mask=self.sample_input_memo(id,2,u,v,memo)[0];
+                [height_blend::weight(ha,hb,mask,influence);3]
+            }
+            NodeKind::MaskMix => {
+                let a=self.sample_input_memo(id,0,u,v,memo);
+                let b=self.sample_input_memo(id,1,u,v,memo);
+                let mask=self.sample_input_memo(id,2,u,v,memo)[0];
+                height_blend::mix(a,b,mask)
             }
             NodeKind::Invert => self.sample_input_memo(id, 0, u, v,memo).map(|c| 1.0 - c),
             NodeKind::Blend { factor } => {
