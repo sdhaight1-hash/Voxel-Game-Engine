@@ -935,7 +935,9 @@ impl Studio {
             let names = ["asset.voxelasset.json", "asset.obj", "asset.mtl",
                 "foliage-leaves.png", "foliage-leaves-alpha.png",
                 "bark-albedo.png", "bark-roughness.png", "bark-normal.png",
-                "foliage-leaves-roughness.png", "foliage-leaves-normal.png"];
+                "bark-metallic.png", "bark-normal-obj.png",
+                "foliage-leaves-roughness.png", "foliage-leaves-normal.png",
+                "foliage-leaves-normal-obj.png"];
             for name in names {
                 if folder.join(name).exists() {
                     return Err(format!("{name} already exists — choose an empty folder"));
@@ -943,8 +945,8 @@ impl Studio {
             }
             let files = [
                 ("asset.voxelasset.json", self.asset.to_json()?),
-                ("asset.obj", self.asset.obj()?),
-                ("asset.mtl", self.asset.mtl()),
+                ("asset.obj", self.asset.obj_pbr()?),
+                ("asset.mtl", self.asset.mtl_pbr()),
             ];
             for (name, contents) in files {
                 std::fs::write(folder.join(name), contents).map_err(|e|e.to_string())?;
@@ -1879,7 +1881,9 @@ impl Studio {
             let names=["foliage.voxels.json","foliage.obj","foliage.mtl","foliage.json",
                 "foliage-leaves.png","foliage-leaves-alpha.png",
                 "bark-albedo.png","bark-roughness.png","bark-normal.png",
-                "foliage-leaves-roughness.png","foliage-leaves-normal.png"];
+                "bark-metallic.png","bark-normal-obj.png",
+                "foliage-leaves-roughness.png","foliage-leaves-normal.png",
+                "foliage-leaves-normal-obj.png"];
             for name in names {
                 if folder.join(name).exists() {
                     return Err(format!("{name} already exists; choose an empty folder"));
@@ -1890,9 +1894,9 @@ impl Studio {
                 .map_err(|e|e.to_string())?;
             let files=[
                 ("foliage.voxels.json", mesh.voxel_json(&self.foliage)?),
-                ("foliage.obj",mesh.obj_with_bark_meters_per_repeat(
+                ("foliage.obj",mesh.obj_with_pbr_normals(
                     self.foliage.materials.bark_meters_per_repeat)?),
-                ("foliage.mtl",texture_studio::foliage::mtl(&self.foliage)),
+                ("foliage.mtl",texture_studio::foliage::mtl_pbr(&self.foliage)),
                 ("foliage.json",project),
             ];
             for (name,contents) in files {

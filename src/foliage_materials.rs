@@ -452,8 +452,21 @@ impl FoliageMaterials {
             if let Some(g)=graph {
                 result.push((format!("{label}-roughness.png"),
                     g.render_output_channel_rgba(1,size,size)?));
-                result.push((format!("{label}-normal.png"),
-                    g.render_normal_rgba(size,size)?));
+                if label=="bark" {
+                    result.push(("bark-metallic.png".into(),
+                        g.render_output_channel_rgba(2,size,size)?));
+                }
+                let normal=g.render_normal_rgba(size,size)?;
+                // OBJ exports V as 1-v; an importer reconstructing
+                // tangents from those UVs reverses the bitangent.
+                // Flip tangent-normal G for the PBR MTL normal map,
+                // keeping the original preview normal PNG unchanged.
+                let mut obj_normal=normal.clone();
+                for pixel in obj_normal.chunks_exact_mut(4) {
+                    pixel[1]=255-pixel[1];
+                }
+                result.push((format!("{label}-normal.png"),normal));
+                result.push((format!("{label}-normal-obj.png"),obj_normal));
             }
         }
         Ok(result)
