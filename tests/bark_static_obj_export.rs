@@ -4,8 +4,8 @@ use texture_studio::asset::VoxelAsset;
 fn vt_lines(obj:&str)->Vec<&str> {
     obj.lines().filter(|line|line.starts_with("vt ")).collect()
 }
-fn fixed_uv(uv:[f32;2])->String {
-    format!("vt {:.6} {:.6}",uv[0],1.0-uv[1])
+fn non_uv_lines(obj:&str)->Vec<&str> {
+    obj.lines().filter(|line|!line.starts_with("vt ")).collect()
 }
 
 #[test]
@@ -31,9 +31,7 @@ fn static_metric_obj_uvs_preserve_wood_topology_leaves_and_physical_density() {
     assert_ne!(legacy,metric,"organic bark must use metric UV when enabled");
     // All non-UV OBJ records, including texture material bindings and
     // triangle faces, must remain byte-for-byte identical.
-    let non_uv=|obj:&str|obj.lines().filter(|l|!l.starts_with("vt "))
-        .collect::<Vec<_>>();
-    assert_eq!(non_uv(&metric),non_uv(&legacy));
+    assert_eq!(non_uv_lines(&metric),non_uv_lines(&legacy));
     let legacy_uv=vt_lines(&legacy);
     let metric_uv=vt_lines(&metric);
     assert_eq!(metric_uv.len(),mesh.triangles.len()*3);
