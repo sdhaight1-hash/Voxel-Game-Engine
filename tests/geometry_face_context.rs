@@ -97,3 +97,17 @@ fn legacy_atlas_matches_original_bake_resample_path() {
         }
     }
 }
+
+#[test]
+fn disconnected_surface_authoring_node_does_not_switch_legacy_preview_path() {
+    let mut graph=Graph::demo_bricks();
+    let settings=VoxelSettings::default();
+    let reference_atlas=render_atlas(&graph,0,settings,32).unwrap().1;
+    let reference_preview=render_voxel_preview(&graph,settings,64,0.8).unwrap();
+    graph.add_node(NodeKind::FaceSurfaceMask{surface:FaceSurface::Bottom},
+        [10.0,20.0]);
+    assert_eq!(render_atlas(&graph,0,settings,32).unwrap().1,
+        reference_atlas,"disconnected mask must not change atlas pixels");
+    assert_eq!(render_voxel_preview(&graph,settings,64,0.8).unwrap(),
+        reference_preview,"disconnected mask must not change 3D pixels");
+}

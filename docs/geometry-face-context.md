@@ -39,3 +39,6 @@ voxel neighbors, curvature and heightfield slope, foliage-mesh local
 coordinates, advanced layered materials or full GPU PBR shaders all
 need further Phase 7/9 work. These must be designed around consistent
 physical units and mesh-space inputs, not invented from 2D UV.
+
+A disconnected Face Surface Mask does not switch the renderer into
+per-face baking; only dependencies reachable from Material Output count.

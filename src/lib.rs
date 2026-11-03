@@ -419,8 +419,22 @@ impl Graph {
     /// Whether the graph needs the voxel's per-face material context.
     /// Used only on opt-in voxel atlas and 3D-preview paths.
     pub(crate) fn uses_face_context(&self)->bool {
-        self.nodes.iter().any(|node|
-            matches!(node.kind,NodeKind::FaceSurfaceMask{..}))
+        // A disconnected authoring node is not a reason to bake every face.
+        // Only sources reachable from Material Output can affect an atlas.
+        let mut pending:Vec<u64>=self.nodes.iter()
+            .filter(|node|matches!(node.kind,NodeKind::Output))
+            .map(|node|node.id).collect();
+        let mut seen=HashSet::new();
+        while let Some(id)=pending.pop() {
+            if !seen.insert(id) {continue;}
+            if self.node(id).is_some_and(|node|
+                matches!(node.kind,NodeKind::FaceSurfaceMask{..})) {
+                return true;
+            }
+            pending.extend(self.links.iter().filter(|link|link.to==id)
+                .map(|link|link.from));
+        }
+        false
     }
 
     /// Clone the validated authoring recipe with an ephemeral face selector.
