@@ -6,7 +6,7 @@ struct Globals {
     wind: vec4<f32>,
     season: vec4<f32>,
     leaf_base: vec4<f32>,
-    // x = bark meters per repeat; y = 1 enables opt-in dielectric PBR.
+    // x = bark meters per repeat; y = metallic PBR, z = studio IBL.
     bark_mapping: vec4<f32>,
 };
 
@@ -25,6 +25,9 @@ struct SeasonalPalette {
 @group(0) @binding(5) var bark_roughness_tex: texture_2d<f32>;
 @group(0) @binding(6) var bark_normal_tex: texture_2d<f32>;
 @group(0) @binding(7) var bark_metallic_tex: texture_2d<f32>;
+// CPU-prefiltered linear-RGB studio environment, generated only when enabled.
+@group(0) @binding(8) var studio_specular_tex: texture_2d<f32>;
+@group(0) @binding(9) var studio_irradiance_tex: texture_2d<f32>;
 
 // Sample one season's shadow-to-highlight gradient (UV base -> tip).
 fn season_gradient(season:u32, amount:f32)->vec3<f32> {
@@ -177,6 +180,54 @@ fn linear_to_srgb(c:vec3<f32>)->vec3<f32> {
                   x>vec3<f32>(0.0031308));
 }
 
+// Lat-long reflection lookup: horizontal wrap, guarded vertical bands.
+// Generated CPU atlas: width=48, height=24, band=26, levels=5, total=130.
+fn environment_uv(dir:vec3<f32>)->vec2<f32> {
+    let d=normalize(dir);
+    let u=atan2(d.y,d.x)/(2.0*3.14159265)+0.5;
+    let v=acos(clamp(d.z,-1.0,1.0))/3.14159265;
+    return vec2<f32>(u,clamp(v,0.5/24.0,1.0-0.5/24.0));
+}
+fn studio_specular_band(dir:vec3<f32>,level:f32)->vec3<f32> {
+    let uv=environment_uv(dir);
+    // One padded row on each side prevents roughness bands bleeding.
+    let y=(level*26.0+1.5+uv.y*23.0)/130.0;
+    return textureSampleLevel(studio_specular_tex,linear_sampler,
+                              vec2<f32>(uv.x,y),0.0).rgb;
+}
+fn studio_reflection(dir:vec3<f32>,roughness:f32)->vec3<f32> {
+    let level=clamp(roughness,0.0,1.0)*4.0;
+    let lower=floor(level);
+    let upper=min(lower+1.0,4.0);
+    let a=studio_specular_band(dir,lower);
+    let b=studio_specular_band(dir,upper);
+    return mix(a,b,level-lower);
+}
+// F0 scale/bias fit for split-sum environment BRDF (Karis/UE4).
+// Approximates BRDF integration without a third runtime lookup texture.
+fn studio_brdf_approx(NoV:f32,roughness:f32)->vec2<f32> {
+    let c0=vec4<f32>(-1.0,-0.0275,-0.572,0.022);
+    let c1=vec4<f32>(1.0,0.0425,1.04,-0.04);
+    let r=roughness*c0+c1;
+    let a004=min(r.x*r.x,exp2(-9.28*NoV))*r.x+r.y;
+    return vec2<f32>(-1.04,1.04)*a004+r.zw;
+}
+fn studio_indirect(N:vec3<f32>,V:vec3<f32>,base:vec3<f32>,
+                   F0:vec3<f32>,metal:f32,roughness:f32)->vec3<f32> {
+    let NoV=clamp(dot(N,V),0.001,1.0);
+    let R=reflect(-V,N);
+    let uv=environment_uv(N);
+    let irradiance=textureSampleLevel(
+        studio_irradiance_tex,linear_sampler,uv,0.0).rgb;
+    let kS=F0+(vec3<f32>(1.0)-F0)*pow(1.0-NoV,5.0);
+    let kD=(vec3<f32>(1.0)-kS)*(1.0-metal);
+    let diffuse=irradiance*base*kD;
+    let prefiltered=studio_reflection(R,roughness);
+    let ab=studio_brdf_approx(NoV,roughness);
+    let specular=prefiltered*(F0*ab.x+vec3<f32>(ab.y));
+    return diffuse+specular;
+}
+
 // Metallic-roughness microfacet BRDF with GGX/Smith/Schlick. Conductor
 // reflectance uses *linear* base color; dielectric F0 is 0.04. This is
 // one fixed local preview light plus diffuse ambient, not environment IBL.
@@ -214,7 +265,11 @@ fn shade_bark_metallic_roughness(albedo_srgb:vec3<f32>,roughness:f32,
     let F=F0+(vec3<f32>(1.0)-F0)*pow(1.0-VoH,5.0);
     let specular=(D*vis/max(4.0*NoV*NoL,0.0001))*F;
     let diffuse=(vec3<f32>(1.0)-F)*base*(1.0-metal)/3.14159265;
-    let lit=base*(1.0-metal)*0.16+(diffuse+specular)*NoL*2.35;
+    var ambient=base*(1.0-metal)*0.16; // Exact prior preview when IBL is off.
+    if (globals.bark_mapping.z > 0.5) {
+        ambient=studio_indirect(N,V,base,F0,metal,r);
+    }
+    let lit=ambient+(diffuse+specular)*NoL*2.35;
     return clamp(linear_to_srgb(lit),vec3<f32>(0.0),vec3<f32>(1.0));
 }
 
