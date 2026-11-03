@@ -129,9 +129,9 @@ fn season_only_changes_the_static_snapshot_not_bark_leaf_or_pbr_resources() {
     assert_eq!(s.len(),a.len());
     for (name,id) in s {
         if name=="foliage-leaves-season.png" {
-            assert_ne!(id,a[name]);
+            assert_ne!(id,a[&name]);
         } else {
-            assert_eq!(id,a[name],"{name} incorrectly rebaked for season only");
+            assert_eq!(id,a[&name],"{name} incorrectly rebaked for season only");
         }
     }
     let wrap=publish(&recipe,32,4.0,&mut f,&mut g).unwrap();
