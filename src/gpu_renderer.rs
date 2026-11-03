@@ -997,7 +997,7 @@ mod tests {
             .gpu_stops();
         let baseline=Scene::from_mesh(&mesh,&bark,&leaf,[50,150,80],palette,0.0);
         assert_eq!(scene_uploads(None,&baseline),SceneUploads {
-            geometry:true,bark:true,leaf:true,palette:true, bark_roughness:true,bark_normal:true,bark_metallic:false,
+            geometry:true,bark:true,leaf:true,palette:true, bark_roughness:true,bark_normal:true,bark_metallic:true,
         });
         let identical=Scene::from_mesh(&mesh,&bark,&leaf,[50,150,80],palette,0.0);
         assert_eq!(scene_uploads(Some(&baseline),&identical),SceneUploads {
@@ -1209,22 +1209,30 @@ mod tests {
         assert!(!legacy.bark_pbr_enabled);
         let rough=vec![90;64*64*4];
         let normal=vec![128;64*64*4];
+        let metal=vec![0,0,0,255].repeat(64*64);
         let pbr=Scene::from_mesh(&mesh,&pixels,&pixels,[60,140,70],
-            palette,0.0).with_bark_pbr_maps(rough.clone(),normal.clone());
+            palette,0.0).with_bark_pbr_maps(rough.clone(),normal.clone(),metal.clone());
         assert!(pbr.bark_pbr_enabled);
         assert_eq!(scene_uploads(Some(&legacy),&pbr),SceneUploads {
             geometry:false,bark:false,leaf:false,palette:false,
-            bark_roughness:true,bark_normal:true,bark_metallic:false,
+            bark_roughness:true,bark_normal:true,bark_metallic:true,
         });
         let next=Scene::from_mesh(&mesh,&pixels,&pixels,[60,140,70],
             palette,0.0).with_bark_pbr_maps(
-                vec![110;64*64*4],normal.clone());
+                vec![110;64*64*4],normal.clone(),metal.clone());
         assert_eq!(scene_uploads(Some(&pbr),&next),SceneUploads {
             geometry:false,bark:false,leaf:false,palette:false,
             bark_roughness:true,bark_normal:false,bark_metallic:false,
         });
+        let next_metal=Scene::from_mesh(&mesh,&pixels,&pixels,[60,140,70],
+            palette,0.0).with_bark_pbr_maps(rough.clone(),normal.clone(),
+                vec![255,255,255,255].repeat(64*64));
+        assert_eq!(scene_uploads(Some(&pbr),&next_metal),SceneUploads {
+            geometry:false,bark:false,leaf:false,palette:false,
+            bark_roughness:false,bark_normal:false,bark_metallic:true,
+        },"metallic-only graph edits must upload one data texture");
         let retiling=Scene::from_mesh(&mesh,&pixels,&pixels,[60,140,70],
-            palette,0.0).with_bark_pbr_maps(rough,normal)
+            palette,0.0).with_bark_pbr_maps(rough,normal,metal)
             .with_bark_meters_per_repeat(Some(0.35));
         assert_eq!(scene_uploads(Some(&pbr),&retiling),SceneUploads {
             geometry:false,bark:false,leaf:false,palette:false,
@@ -1232,7 +1240,11 @@ mod tests {
         });
         let shader=include_str!("voxel_gpu.wgsl");
         assert!(shader.contains("globals.bark_mapping.y > 0.5"));
-        assert!(shader.contains("shade_bark_dielectric"));
+        assert!(shader.contains("shade_bark_metallic_roughness"));
+        assert!(shader.contains("bark_metallic_tex"));
+        assert!(shader.contains("F0=mix(vec3<f32>(0.04),base,metal)"));
+        assert!(shader.contains("base*(1.0-metal)"));
+        assert!(shader.contains("mix(m0,m1,bark_seam_mix)"));
         assert!(shader.contains("srgb_to_linear"));
         assert!(shader.contains("bark_roughness_tex"));
         assert!(shader.contains("bark_normal_tex"));
