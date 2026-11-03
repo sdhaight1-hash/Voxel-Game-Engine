@@ -33,7 +33,7 @@ pub mod material_functions;
 pub mod material_function_nesting;
 pub use node_library::LibraryNode;
 use node_definitions::{PortDefinition, SocketType};
-pub use voxel::{VoxelSettings, VoxelShape, SideMapping, FaceSurface};
+pub use voxel::{VoxelSettings, VoxelShape, SideMapping, FaceSurface, FaceAxis};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Graph {
@@ -184,6 +184,8 @@ pub enum NodeKind {
     BitmapAlpha { asset_id:u64, bilinear:bool },
     /// Match top/bottom/side voxel faces. Neutral black in context-free 2D.
     FaceSurfaceMask { surface: FaceSurface },
+    /// Geometry-aware object-local direction dot face normal, as a Mask.
+    FaceFacingMask { axis: FaceAxis, sharpness: f32 },
     Strata { bands: u32, warp: f32, seed: u32 },
     Library { operation: LibraryNode, amount: f32, seed: u32 },
     Colorize { dark: [u8; 3], light: [u8; 3] },
@@ -222,6 +224,7 @@ impl NodeKind {
             Self::BitmapColor{..}=>"Bitmap Color",
             Self::BitmapAlpha{..}=>"Bitmap Alpha",
             Self::FaceSurfaceMask{..}=>"Face Surface Mask",
+            Self::FaceFacingMask{..}=>"Face Facing Mask",
             Self::Strata { .. } => "Strata",
             Self::Library { operation, .. } => operation.name(),
             Self::Colorize { .. } => "Colorize",
@@ -235,7 +238,7 @@ impl NodeKind {
                 | Self::Scalar { .. } | Self::Bricks { .. } | Self::Voronoi { .. }
                 | Self::RegionValue{..} | Self::RegionBorderMask{..}
                 | Self::BitmapColor{..} | Self::BitmapAlpha{..}
-                | Self::FaceSurfaceMask{..}
+                | Self::FaceSurfaceMask{..} | Self::FaceFacingMask{..}
                 | Self::Strata { .. } | Self::SdfCircle{..}
                 | Self::SdfEllipse{..} | Self::SdfCapsule{..}
                 | Self::SdfBezierStroke{..} => 0,
@@ -313,6 +316,7 @@ impl NodeKind {
             Self::BitmapColor{..}=>"bitmap_color".into(),
             Self::BitmapAlpha{..}=>"bitmap_alpha".into(),
             Self::FaceSurfaceMask{..}=>"face_surface_mask".into(),
+            Self::FaceFacingMask{..}=>"face_facing_mask".into(),
             Self::Strata{..}=>"strata".into(),
             Self::Colorize{..}=>"colorize".into(),
             Self::Library{operation,..}=>format!("library.{operation:?}"),
@@ -327,7 +331,7 @@ impl NodeKind {
             Self::ThresholdMask{..}|Self::SdfToMask{..}
                 |Self::ShapeScatter{..}|Self::HeightBlendMask{..}
                 |Self::RegionBorderMask{..}|Self::BitmapAlpha{..}
-                |Self::FaceSurfaceMask{..}=>SocketType::Mask,
+                |Self::FaceSurfaceMask{..}|Self::FaceFacingMask{..}=>SocketType::Mask,
             Self::SdfCircle{..}|Self::SdfEllipse{..}|Self::SdfCapsule{..}
                 |Self::SdfBezierStroke{..}|Self::SdfCombine{..}
                 |Self::SdfContourWarp{..}=>SocketType::Distance,
@@ -428,7 +432,8 @@ impl Graph {
         while let Some(id)=pending.pop() {
             if !seen.insert(id) {continue;}
             if self.node(id).is_some_and(|node|
-                matches!(node.kind,NodeKind::FaceSurfaceMask{..})) {
+                matches!(node.kind,NodeKind::FaceSurfaceMask{..}|
+                    NodeKind::FaceFacingMask{..})) {
                 return true;
             }
             pending.extend(self.links.iter().filter(|link|link.to==id)
@@ -607,6 +612,9 @@ impl Graph {
                     => return Err("Brick settings out of range".into()),
                 NodeKind::Voronoi { cells, .. } if !(2..=32).contains(&cells)
                     => return Err("Voronoi cells out of range".into()),
+                NodeKind::FaceFacingMask{sharpness,..}
+                    if !sharpness.is_finite() || !(0.25..=8.0).contains(&sharpness) =>
+                    return Err("Face Facing Mask sharpness must be 0.25..8".into()),
                 NodeKind::RegionValue{cells,..} if !(2..=32).contains(&cells) =>
                     return Err("Region Value requires 2..32 cells".into()),
                 NodeKind::RegionBorderMask{cells,width,..}
@@ -1016,6 +1024,12 @@ impl Graph {
                     .min(vertical.min(1.0 - vertical));
                 let brick = ((edge - mortar * 0.5) / 0.025).clamp(0.0, 1.0);
                 [brick; 3]
+            }
+            NodeKind::FaceFacingMask{axis,sharpness} => {
+                let value=self.face_context
+                    .and_then(|(shape,face)|voxel::face_normal(shape,face))
+                    .map_or(0.0,|normal|axis.coverage(normal,sharpness));
+                [value;3]
             }
             NodeKind::FaceSurfaceMask{surface} => {
                 let coverage=self.face_context.map_or(0.0,|(shape,face)|
