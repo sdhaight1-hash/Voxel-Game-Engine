@@ -76,7 +76,10 @@ fn geometry_aware_mask_drives_all_four_pbr_atlas_outputs() {
     }
     let (_meta,normals)=render_atlas(&graph,4,settings,32).unwrap();
     assert!(normals.chunks_exact(4).any(|p|p[3]==255));
-    let screen=render_voxel_preview(&graph,settings,96,0.8).unwrap();
+    // Both graphs are black in context-free 2D. Only a face-aware
+    // 3D renderer can make these two otherwise-identical masks differ.
+    let screen=render_voxel_preview(&graph_for_surface(FaceSurface::Top),
+        settings,96,0.8).unwrap();
     let other=render_voxel_preview(&graph_for_surface(FaceSurface::Bottom),
         settings,96,0.8).unwrap();
     assert_ne!(screen,other,"3D preview must consume per-face mask, not flat 2D fallback");
