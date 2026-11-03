@@ -2345,6 +2345,21 @@ fn tree_surface_triangles(
     triangles
 }
 
+/// Static OBJ approximation of the GPU bark's physical repeat map.
+///
+/// Exact at U <= 0.80, and periodic at the ring seam U=0/1.
+/// The final 20% uses a rounded periodic UV warp rather than the
+/// interactive shader's two-sample color blend. This is not pixel-identical
+/// and can introduce repeat-count changes across strongly tapered rings.
+fn metric_bark_obj_uv(uv:[f32;2],perimeter_m:f32,meters:Option<f32>)->[f32;2] {
+    let Some(m)=meters else {return uv;};
+    if perimeter_m<=0.0 || !perimeter_m.is_finite() {return uv;}
+    let repeats=perimeter_m/m;
+    let t=((uv[0]-0.8)/0.2).clamp(0.0,1.0);
+    let seam=t*t*(3.0-2.0*t);
+    [uv[0]*repeats+(repeats.round()-repeats)*seam,uv[1]/m]
+}
+
 impl FoliageMesh {
     /// Rebuild a render/export surface from individually editable occupied cells.
     /// This is shared by procedural foliage and the general-purpose asset editor.
@@ -2412,9 +2427,27 @@ impl FoliageMesh {
         })).map_err(|e| e.to_string())
     }
 
-    /// Only exposed faces are exported; shared internal faces are removed.
-    /// Every triangle belongs to a snapped cube or hexagonal-prism voxel.
+    /// The legacy OBJ path is preserved byte-for-byte for old projects.
+    /// For opt-in physical bark, use obj_with_bark_meters_per_repeat.
     pub fn obj(&self) -> String {
+        self.obj_with_uv_scale(None)
+    }
+
+    /// A conventional static OBJ can export meter-scaled bark coordinates,
+    /// with a repeat-compatible ring seam. The GPU preview cross-fades two
+    /// samples near the seam; a plain OBJ cannot express that blend exactly.
+    /// Geometry, voxel ownership, and non-tube/leaf coordinates are unchanged.
+    pub fn obj_with_bark_meters_per_repeat(&self, meters:Option<f32>)
+        -> Result<String,String> {
+        if let Some(value)=meters {
+            if !value.is_finite() || !(0.05..=8.0).contains(&value) {
+                return Err("OBJ bark meters per repeat must be 0.05..8".into());
+            }
+        }
+        Ok(self.obj_with_uv_scale(meters))
+    }
+
+    fn obj_with_uv_scale(&self,meters:Option<f32>)->String {
         let mut output = String::from(
             "# Voxel tree surface mesh - generated from occupied grid cells\n\
              mtllib foliage.mtl\n\
@@ -2427,7 +2460,11 @@ impl FoliageMesh {
             }
         }
         for face in &self.triangles {
-            for uv in face.uv {
+            for corner in 0..3 {
+                let uv=if face.material==Material::Bark {
+                    metric_bark_obj_uv(face.uv[corner],
+                        face.bark_circumference_m[corner],meters)
+                } else {face.uv[corner]};
                 output.push_str(&format!("vt {:.6} {:.6}\n",uv[0],1.0-uv[1]));
             }
         }
@@ -3315,4 +3352,22 @@ mod tests {
         assert!(tree.validate().is_err());
     }
 
+
+    #[test]
+    fn static_bark_uv_wraps_at_both_ring_seam_ends() {
+        // A six-sided tube of radius 0.5m has perimeter 3m,
+        // or 7.5 repeats at 0.4 meters per repeat.
+        let first=metric_bark_obj_uv([0.0,2.0],3.0,Some(0.4));
+        let last=metric_bark_obj_uv([1.0,2.0],3.0,Some(0.4));
+        assert_eq!(first,[0.0,5.0]);
+        assert_eq!(last,[8.0,5.0]);
+        assert_eq!(last[0].fract(),first[0].fract());
+        // Before the final fifth, physical density is unaltered.
+        assert_eq!(metric_bark_obj_uv([0.5,2.0],3.0,Some(0.4)),
+            [3.75,5.0]);
+        assert_eq!(metric_bark_obj_uv([0.9,2.0],0.0,Some(0.4)),
+            [0.9,2.0]);
+        assert_eq!(metric_bark_obj_uv([1.0,2.0],3.0,None),
+            [1.0,2.0]);
+    }
 }
