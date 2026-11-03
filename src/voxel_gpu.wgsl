@@ -191,7 +191,7 @@ fn environment_uv(dir:vec3<f32>)->vec2<f32> {
 fn studio_specular_band(dir:vec3<f32>,level:f32)->vec3<f32> {
     let uv=environment_uv(dir);
     // One padded row on each side prevents roughness bands bleeding.
-    let y=(level*26.0+1.5+uv.y*23.0)/130.0;
+    let y=(level*26.0+1.0+uv.y*24.0)/130.0;
     return textureSampleLevel(studio_specular_tex,linear_sampler,
                               vec2<f32>(uv.x,y),0.0).rgb;
 }

@@ -1344,4 +1344,50 @@ mod tests {
         assert!(shader.contains("bark_normal_tex"));
         assert!(shader.contains("Legacy bark and ALL foliage modes"));
     }
+
+    #[test]
+    fn studio_ibl_only_changes_the_preview_uniform_not_resources() {
+        let mesh=FoliageMesh::from_voxels(VoxelShape::Cube,0.5,vec![
+            VoxelCell{x:0,y:0,z:0,material:Material::Bark}
+        ]).unwrap();
+        let pixels=vec![130;64*64*4];
+        let stops=texture_studio::foliage_materials::SeasonalPalettes::default()
+            .gpu_stops();
+        let rough=vec![190;64*64*4];
+        let normal=vec![128;64*64*4];
+        let metallic=vec![60;64*64*4];
+        let direct=Scene::from_mesh(&mesh,&pixels,&pixels,[60,140,70],
+            stops,0.0)
+            .with_bark_pbr_maps(rough.clone(),normal.clone(),metallic.clone());
+        assert!(!direct.bark_studio_ibl);
+        let indirect=Scene::from_mesh(&mesh,&pixels,&pixels,[60,140,70],
+            stops,0.0)
+            .with_bark_pbr_maps(rough.clone(),normal.clone(),metallic.clone())
+            .with_studio_ibl(true);
+        assert!(indirect.bark_studio_ibl);
+        assert_eq!(scene_uploads(Some(&direct),&indirect),SceneUploads{
+            geometry:false,bark:false,leaf:false,palette:false,
+            bark_roughness:false,bark_normal:false,bark_metallic:false,
+        });
+        // Toggling IBL off and back on does not remove the cached viewport
+        // images or dirty graph material resources.
+        let reverted=indirect.with_studio_ibl(false);
+        assert_eq!(scene_uploads(Some(&direct),&reverted),SceneUploads{
+            geometry:false,bark:false,leaf:false,palette:false,
+            bark_roughness:false,bark_normal:false,bark_metallic:false,
+        });
+        // Studio reflections do not opt the material into PBR implicitly.
+        let legacy=Scene::from_mesh(&mesh,&pixels,&pixels,[60,140,70],
+            stops,0.0).with_studio_ibl(true);
+        assert!(!legacy.bark_pbr_enabled);
+        assert!(legacy.bark_studio_ibl);
+        let shader=include_str!("voxel_gpu.wgsl");
+        assert!(shader.contains("globals.bark_mapping.z > 0.5"));
+        assert!(shader.contains("studio_specular_tex"));
+        assert!(shader.contains("studio_irradiance_tex"));
+        assert!(shader.contains("studio_brdf_approx"));
+        assert!(shader.contains("ambient=studio_indirect"));
+        assert!(shader.contains("var ambient=base*(1.0-metal)*0.16"));
+        assert!(shader.contains("level*26.0+1.0+uv.y*24.0"));
+    }
 }
