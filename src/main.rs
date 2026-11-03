@@ -2146,7 +2146,10 @@ impl Studio {
                     self.import_tree_as_asset();
                 }
                 ui.small("Opens in Assets for per-cell removal/painting and saving.");
-                if ui.button("Export voxel tree").clicked() { self.export_foliage(); }
+                if ui.button("Export voxel tree").on_hover_text(
+                    "Publish editable material-recipe.json and a fixed leaf-season snapshot at the Season preview value, alongside the existing OBJ/PBR exports."
+                    ).clicked() { self.export_foliage(); }
+                ui.small("Export captures the currently selected Season preview into a static leaf texture.");
                 if ui.button("Save foliage project").clicked() { self.save_foliage(); }
                 if ui.button("Save Flora prefab JSON").clicked() {
                     self.save_flora_prefab();
@@ -3544,7 +3547,9 @@ impl eframe::App for Studio {
                     if ui.button("Open Asset").clicked() { self.open_asset(); }
                     if ui.button("Save Asset").clicked() { self.save_asset(false); }
                     if ui.button("Save As").clicked() { self.save_asset(true); }
-                    if ui.button("Export Asset").clicked() { self.export_asset(); }
+                    if ui.button("Export Asset").on_hover_text(
+                        "Publishes editable material-recipe.json, cached material textures and a static snapshot of the currently selected Season preview."
+                        ).clicked() { self.export_asset(); }
                     ui.separator();
                     if ui.add_enabled(!self.asset_undo.is_empty(),
                         egui::Button::new("Undo")).clicked() { self.undo_asset(); }
@@ -3559,7 +3564,9 @@ impl eframe::App for Studio {
                     }
                     if ui.button("Open Tree").clicked() { self.open_foliage(); }
                     if ui.button("Save Tree").clicked() { self.save_foliage(); }
-                    if ui.button("Export Voxel Tree").clicked() { self.export_foliage(); }
+                    if ui.button("Export Voxel Tree").on_hover_text(
+                        "Publishes the editable material recipe and static season snapshot, with OBJ/MTL and all authored PBR channel maps."
+                        ).clicked() { self.export_foliage(); }
                     if ui.button("Edit Tree as Asset").clicked() { self.import_tree_as_asset(); }
                     ui.separator();
                 } else {

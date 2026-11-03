@@ -22,9 +22,9 @@ fn fingerprint(domain:&str,bytes:&[u8])->String {
     const OFFSET:u128=0x6c62272e07bb014262b821756295c58d;
     const PRIME:u128=0x0000000001000000000000000000013b;
     let mut value=OFFSET;
-    for byte in domain.as_bytes().iter().chain([0].iter())
-        .chain(bytes.iter()) {
-        value=(value^(*byte as u128)).wrapping_mul(PRIME);
+    for byte in domain.as_bytes().iter().copied()
+        .chain(std::iter::once(0u8)).chain(bytes.iter().copied()) {
+        value=(value^(byte as u128)).wrapping_mul(PRIME);
     }
     format!("{value:032x}")
 }
