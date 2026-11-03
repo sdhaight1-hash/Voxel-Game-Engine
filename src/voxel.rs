@@ -60,6 +60,21 @@ impl Default for SideMapping {
     fn default() -> Self { Self::Wrap }
 }
 
+/// Geometric surface selector for CPU-authored voxel face masks.
+#[derive(Clone,Copy,Debug,PartialEq,Eq,Serialize,Deserialize)]
+pub enum FaceSurface { Side, Top, Bottom }
+
+impl FaceSurface {
+    pub fn matches(self,shape:VoxelShape,face:usize)->bool {
+        let sides=shape.sides();
+        match self {
+            Self::Side=>face<sides,
+            Self::Top=>face==sides,
+            Self::Bottom=>face==sides+1,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct VoxelSettings {
@@ -223,6 +238,38 @@ pub fn render_atlas(
     if settings.geometryless {
         return Err("Geometryless 2D materials export regular square PBR maps, not atlases".into());
     }
+    if graph.uses_face_context() {
+        // Geometry-dependent nodes need the target face at evaluation time.
+        // Do not change the old bake/resample path for legacy recipes.
+        graph.validate()?;
+        if channel>4 {return Err("Unsupported voxel atlas channel".into());}
+        let atlas=layout(settings,tile_size)?;
+        let source_size=tile_size.min(512).max(64);
+        let mut pixels=vec![0u8;atlas.width as usize*atlas.height as usize*4];
+        for face in &atlas.faces {
+            let face_graph=graph.for_voxel_face(settings.shape,face.index);
+            let source=if channel==4 {
+                face_graph.render_normal_rgba(source_size,source_size)?
+            } else {
+                face_graph.render_output_channel_rgba(channel,source_size,source_size)?
+            };
+            for py in 0..tile_size {
+                for px in 0..tile_size {
+                    let u=(px as f32+0.5)/tile_size as f32;
+                    let v=(py as f32+0.5)/tile_size as f32;
+                    if face.index>=settings.shape.sides()
+                        &&!cap_contains(settings.shape,u,v) {continue;}
+                    let rgba=sample_bilinear(&source,source_size,
+                        source_uv(settings,face.index,u,v));
+                    let ax=face.column as u32*tile_size+px;
+                    let ay=face.row as u32*tile_size+py;
+                    let index=(ay as usize*atlas.width as usize+ax as usize)*4;
+                    pixels[index..index+4].copy_from_slice(&rgba);
+                }
+            }
+        }
+        return Ok((atlas,pixels));
+    }
     // Capping the intermediate source at 512 keeps export memory predictable.
     let source_size = tile_size.min(512).max(64);
     let pixels = if channel == 4 {
@@ -244,9 +291,27 @@ pub fn render_voxel_preview(
     if !(32..=512).contains(&size) {
         return Err("Voxel preview size must be 32–512".into());
     }
-    let albedo = graph.render_output_channel_rgba(0, size, size)?;
-    let roughness = graph.render_output_channel_rgba(1, size, size)?;
-    let metallic = graph.render_output_channel_rgba(2, size, size)?;
+    // Per-face material graphs are opt-in. Without them the legacy preview
+    // still bakes only three shared 2D textures, byte-for-byte unchanged.
+    let contextual=graph.uses_face_context();
+    let (albedo,roughness,metallic)=if contextual {
+        (Vec::new(),Vec::new(),Vec::new())
+    } else {
+        (graph.render_output_channel_rgba(0,size,size)?,
+         graph.render_output_channel_rgba(1,size,size)?,
+         graph.render_output_channel_rgba(2,size,size)?)
+    };
+    let face_size=size.min(256);
+    let faces:Option<Vec<(Vec<u8>,Vec<u8>,Vec<u8>)>>=if contextual {
+        Some((0..settings.shape.face_count()).map(|face|{
+            let g=graph.for_voxel_face(settings.shape,face);
+            Ok((
+                g.render_output_channel_rgba(0,face_size,face_size)?,
+                g.render_output_channel_rgba(1,face_size,face_size)?,
+                g.render_output_channel_rgba(2,face_size,face_size)?,
+            ))
+        }).collect::<Result<Vec<_>,String>>()?)
+    } else {None};
     let mut image = vec![0u8; size as usize * size as usize * 4];
     let mut depths = vec![-f32::INFINITY; size as usize * size as usize];
     for rgba in image.chunks_exact_mut(4) {
@@ -296,9 +361,13 @@ pub fn render_voxel_preview(
                 let uv = source_uv(settings, face,
                     a.1[0]*w0+b.1[0]*w1+c.1[0]*w2,
                     a.1[1]*w0+b.1[1]*w1+c.1[1]*w2);
-                let base = sample_bilinear(&albedo,size,uv);
-                let rough = sample_bilinear(&roughness,size,uv)[0] as f32/255.0;
-                let metal = sample_bilinear(&metallic,size,uv)[0] as f32/255.0;
+                let (color_map,rough_map,metal_map,map_size)=if let Some(faces)=&faces {
+                    let (a,r,m)=&faces[face];
+                    (a,r,m,face_size)
+                } else {(&albedo,&roughness,&metallic,size)};
+                let base=sample_bilinear(color_map,map_size,uv);
+                let rough=sample_bilinear(rough_map,map_size,uv)[0] as f32/255.0;
+                let metal=sample_bilinear(metal_map,map_size,uv)[0] as f32/255.0;
                 let shine = (normal[0]*0.2+normal[1]*0.3+normal[2]*0.93).max(0.0)
                     .powf(10.0 + (1.0-rough)*55.0) * (1.0-rough*0.7);
                 for c in 0..3 {

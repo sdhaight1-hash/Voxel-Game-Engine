@@ -3,7 +3,7 @@ use std::sync::Arc;
 use gpu_renderer::{GpuViewport, Scene as GpuScene,LeafAaMode};
 use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, TextureHandle, Vec2};
 use std::{collections::HashMap, path::{Path, PathBuf}, time::Instant};
-use texture_studio::{Graph, NodeKind, LibraryNode, VoxelShape, SideMapping};
+use texture_studio::{Graph, NodeKind, LibraryNode, VoxelShape, SideMapping, FaceSurface};
 use texture_studio::node_definitions::{SocketType, ParameterControl};
 use texture_studio::{ColorRamp,MAX_COLOR_STOPS,CurveRemap,MAX_CURVE_POINTS,SdfBoolean};
 use texture_studio::render_cache::GraphRenderCache;
@@ -2207,6 +2207,9 @@ impl Studio {
                     cells:10,scale:0.8,jitter:0.2,rotation:1.0,
                     brightness:0.3,seed:55}),
             ]),
+            ("GEOMETRY CONTEXT",vec![
+                ("Face Surface Mask",NodeKind::FaceSurfaceMask{surface:FaceSurface::Top}),
+            ]),
             ("BITMAP INPUTS", vec![
                 ("Bitmap Color",NodeKind::BitmapColor{asset_id:0,bilinear:true}),
                 ("Bitmap Alpha",NodeKind::BitmapAlpha{asset_id:0,bilinear:true}),
@@ -2654,6 +2657,26 @@ impl Studio {
             NodeKind::Luminance => {
                 ui.label("Convert RGB to a scalar using luminance weights.");
                 ui.small("Use between legacy RGB generators and typed Scalar inputs.");
+            }
+            NodeKind::FaceSurfaceMask{surface} => {
+                ui.small("Voxel-only surface context: sides, top cap or bottom cap.");
+                egui::ComboBox::from_id_salt(("face_surface",id))
+                    .selected_text(match surface {
+                        FaceSurface::Side=>"Side walls",
+                        FaceSurface::Top=>"Top cap",
+                        FaceSurface::Bottom=>"Bottom cap",
+                    })
+                    .show_ui(ui,|ui|{
+                        changed|=ui.selectable_value(surface,FaceSurface::Side,
+                            "Side walls").changed();
+                        changed|=ui.selectable_value(surface,FaceSurface::Top,
+                            "Top cap").changed();
+                        changed|=ui.selectable_value(surface,FaceSurface::Bottom,
+                            "Bottom cap").changed();
+                    });
+                ui.small("Outputs 1 for matching voxel faces, 0 otherwise.");
+                ui.small("2D, Node and Flora bakes have no face context: output 0.");
+                ui.small("Use a Mask Mix per PBR channel to blend side and cap materials.");
             }
             NodeKind::BitmapColor{asset_id,bilinear} |
             NodeKind::BitmapAlpha{asset_id,bilinear} => {
@@ -3521,7 +3544,8 @@ fn node_accent(kind: NodeKind) -> Color32 {
         NodeKind::Noise { .. } | NodeKind::Checker { .. } | NodeKind::Color { .. }
             | NodeKind::Scalar { .. } | NodeKind::Bricks { .. } | NodeKind::Voronoi { .. } | NodeKind::Strata { .. }
             | NodeKind::RegionValue{..} | NodeKind::RegionBorderMask{..}
-            | NodeKind::BitmapColor{..} | NodeKind::BitmapAlpha{..} => Color32::from_rgb(43, 95, 131),
+            | NodeKind::BitmapColor{..} | NodeKind::BitmapAlpha{..}
+            | NodeKind::FaceSurfaceMask{..} => Color32::from_rgb(43, 95, 131),
         NodeKind::Library { operation, .. } => match operation.category() {
             "Shapes & Gradients" | "Noise" | "Patterns" => Color32::from_rgb(43, 95, 131),
             "Transforms" => Color32::from_rgb(107, 80, 148),

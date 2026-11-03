@@ -33,7 +33,7 @@ pub mod material_functions;
 pub mod material_function_nesting;
 pub use node_library::LibraryNode;
 use node_definitions::{PortDefinition, SocketType};
-pub use voxel::{VoxelSettings, VoxelShape, SideMapping};
+pub use voxel::{VoxelSettings, VoxelShape, SideMapping, FaceSurface};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Graph {
@@ -45,6 +45,9 @@ pub struct Graph {
     /// Owned, portable image bytes; omitted from serialized legacy graphs.
     #[serde(default,skip_serializing_if="Vec::is_empty")]
     pub images: Vec<bitmap_assets::BitmapAsset>,
+    /// Transient per-face context. Never persisted in a material recipe.
+    #[serde(skip)]
+    pub(crate) face_context: Option<(VoxelShape,usize)>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -179,6 +182,8 @@ pub enum NodeKind {
     BitmapColor { asset_id:u64, bilinear:bool },
     /// Repeat-UV embedded RGBA asset sampled as typed Alpha Mask.
     BitmapAlpha { asset_id:u64, bilinear:bool },
+    /// Match top/bottom/side voxel faces. Neutral black in context-free 2D.
+    FaceSurfaceMask { surface: FaceSurface },
     Strata { bands: u32, warp: f32, seed: u32 },
     Library { operation: LibraryNode, amount: f32, seed: u32 },
     Colorize { dark: [u8; 3], light: [u8; 3] },
@@ -216,6 +221,7 @@ impl NodeKind {
             Self::RegionBorderMask{..}=>"Region Border Mask",
             Self::BitmapColor{..}=>"Bitmap Color",
             Self::BitmapAlpha{..}=>"Bitmap Alpha",
+            Self::FaceSurfaceMask{..}=>"Face Surface Mask",
             Self::Strata { .. } => "Strata",
             Self::Library { operation, .. } => operation.name(),
             Self::Colorize { .. } => "Colorize",
@@ -229,6 +235,7 @@ impl NodeKind {
                 | Self::Scalar { .. } | Self::Bricks { .. } | Self::Voronoi { .. }
                 | Self::RegionValue{..} | Self::RegionBorderMask{..}
                 | Self::BitmapColor{..} | Self::BitmapAlpha{..}
+                | Self::FaceSurfaceMask{..}
                 | Self::Strata { .. } | Self::SdfCircle{..}
                 | Self::SdfEllipse{..} | Self::SdfCapsule{..}
                 | Self::SdfBezierStroke{..} => 0,
@@ -305,6 +312,7 @@ impl NodeKind {
             Self::RegionBorderMask{..}=>"region_border_mask".into(),
             Self::BitmapColor{..}=>"bitmap_color".into(),
             Self::BitmapAlpha{..}=>"bitmap_alpha".into(),
+            Self::FaceSurfaceMask{..}=>"face_surface_mask".into(),
             Self::Strata{..}=>"strata".into(),
             Self::Colorize{..}=>"colorize".into(),
             Self::Library{operation,..}=>format!("library.{operation:?}"),
@@ -318,7 +326,8 @@ impl NodeKind {
                 |Self::CurveRemap{..}|Self::RegionValue{..}=>SocketType::Scalar,
             Self::ThresholdMask{..}|Self::SdfToMask{..}
                 |Self::ShapeScatter{..}|Self::HeightBlendMask{..}
-                |Self::RegionBorderMask{..}|Self::BitmapAlpha{..}=>SocketType::Mask,
+                |Self::RegionBorderMask{..}|Self::BitmapAlpha{..}
+                |Self::FaceSurfaceMask{..}=>SocketType::Mask,
             Self::SdfCircle{..}|Self::SdfEllipse{..}|Self::SdfCapsule{..}
                 |Self::SdfBezierStroke{..}|Self::SdfCombine{..}
                 |Self::SdfContourWarp{..}=>SocketType::Distance,
@@ -380,6 +389,7 @@ impl Default for Graph {
             links: vec![Link { from: 1, to: 2, input: 0 }],
             voxel: VoxelSettings::default(),
             images: Vec::new(),
+            face_context: None,
         }
     }
 }
@@ -402,7 +412,37 @@ impl Graph {
             ],
             voxel: VoxelSettings::default(),
             images: Vec::new(),
+            face_context: None,
         }
+    }
+
+    /// Whether the graph needs the voxel's per-face material context.
+    /// Used only on opt-in voxel atlas and 3D-preview paths.
+    pub(crate) fn uses_face_context(&self)->bool {
+        // A disconnected authoring node is not a reason to bake every face.
+        // Only sources reachable from Material Output can affect an atlas.
+        let mut pending:Vec<u64>=self.nodes.iter()
+            .filter(|node|matches!(node.kind,NodeKind::Output))
+            .map(|node|node.id).collect();
+        let mut seen=HashSet::new();
+        while let Some(id)=pending.pop() {
+            if !seen.insert(id) {continue;}
+            if self.node(id).is_some_and(|node|
+                matches!(node.kind,NodeKind::FaceSurfaceMask{..})) {
+                return true;
+            }
+            pending.extend(self.links.iter().filter(|link|link.to==id)
+                .map(|link|link.from));
+        }
+        false
+    }
+
+    /// Clone the validated authoring recipe with an ephemeral face selector.
+    /// Render-cache keys separate these contexts; JSON never serializes them.
+    pub(crate) fn for_voxel_face(&self,shape:VoxelShape,face:usize)->Self {
+        let mut graph=self.clone();
+        graph.face_context=Some((shape,face));
+        graph
     }
 
     /// Import decoded RGBA8 into the owning Graph. Identical images are reused.
@@ -976,6 +1016,11 @@ impl Graph {
                     .min(vertical.min(1.0 - vertical));
                 let brick = ((edge - mortar * 0.5) / 0.025).clamp(0.0, 1.0);
                 [brick; 3]
+            }
+            NodeKind::FaceSurfaceMask{surface} => {
+                let coverage=self.face_context.map_or(0.0,|(shape,face)|
+                    if surface.matches(shape,face) {1.0} else {0.0});
+                [coverage;3]
             }
             NodeKind::BitmapColor{asset_id,bilinear} => {
                 self.images.iter().find(|image|image.id==asset_id)

@@ -291,6 +291,7 @@ impl Preset {
             ],
             voxel,
             images: Vec::new(),
+            face_context: None,
         }
     }
 }
