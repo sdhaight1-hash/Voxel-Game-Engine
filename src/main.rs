@@ -4079,7 +4079,11 @@ mod bark_gpu_pbr_preview_tests {
         let mut edited=mats.clone();
         let g=edited.bark.as_mut().expect("Oak bark graph");
         let node=g.add_node(NodeKind::Scalar{value:1.0},[100.0,100.0]);
-        g.connect(node,2,2).unwrap();
+        // Preset graphs do not promise a fixed Material Output ID.
+        let output=g.nodes.iter().find(|node|
+            matches!(node.kind,NodeKind::Output))
+            .expect("bark graph has Material Output").id;
+        g.connect(node,output,2).unwrap();
         let (next_r,next_n,next_m)=preview_bark_pbr_maps(&mut cache,&edited)
             .unwrap();
         assert_eq!(next_r,rough);
