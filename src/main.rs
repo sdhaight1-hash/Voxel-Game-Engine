@@ -1,4 +1,5 @@
 mod gpu_renderer;
+mod studio_environment;
 use std::sync::Arc;
 use gpu_renderer::{GpuViewport, Scene as GpuScene,LeafAaMode};
 use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, TextureHandle, Vec2};
