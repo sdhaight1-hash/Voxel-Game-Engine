@@ -4043,6 +4043,12 @@ fn main() -> eframe::Result {
     };
     eframe::run_native("voxel-game-engine", options, Box::new(|cc| Ok(Box::new(Studio::new(cc)))))
 
+}
+
+#[cfg(test)]
+mod bark_gpu_pbr_preview_tests {
+    use super::*;
+
     #[test]
     fn bark_gpu_pbr_is_opt_in_and_uses_authored_graph_maps() {
         let app=Studio::default();
