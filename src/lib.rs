@@ -20,6 +20,7 @@ pub mod leaf_vector;
 pub mod sdf_bezier;
 pub mod shape_scatter;
 pub mod height_blend;
+pub mod region_variation;
 pub use sdf::SdfBoolean;
 pub mod color_ramp;
 pub mod curve_remap;
@@ -166,6 +167,10 @@ pub enum NodeKind {
     Blend { factor: f32 },
     Bricks { columns: u32, rows: u32, mortar: f32 },
     Voronoi { cells: u32, seed: u32 },
+    /// Periodic Voronoi cell hash as a uniform normalized Scalar per region.
+    RegionValue { cells:u32, seed:u32 },
+    /// Smooth coverage at periodic Voronoi region boundaries.
+    RegionBorderMask { cells:u32, seed:u32, width:f32 },
     Strata { bands: u32, warp: f32, seed: u32 },
     Library { operation: LibraryNode, amount: f32, seed: u32 },
     Colorize { dark: [u8; 3], light: [u8; 3] },
@@ -199,6 +204,8 @@ impl NodeKind {
             Self::Blend { .. } => "Blend",
             Self::Bricks { .. } => "Bricks",
             Self::Voronoi { .. } => "Voronoi",
+            Self::RegionValue{..}=>"Region Value",
+            Self::RegionBorderMask{..}=>"Region Border Mask",
             Self::Strata { .. } => "Strata",
             Self::Library { operation, .. } => operation.name(),
             Self::Colorize { .. } => "Colorize",
@@ -210,6 +217,7 @@ impl NodeKind {
         match self {
             Self::Noise { .. } | Self::Checker { .. } | Self::Color { .. }
                 | Self::Scalar { .. } | Self::Bricks { .. } | Self::Voronoi { .. }
+                | Self::RegionValue{..} | Self::RegionBorderMask{..}
                 | Self::Strata { .. } | Self::SdfCircle{..}
                 | Self::SdfEllipse{..} | Self::SdfCapsule{..}
                 | Self::SdfBezierStroke{..} => 0,
@@ -282,6 +290,8 @@ impl NodeKind {
             Self::Blend{..}=>"blend".into(),
             Self::Bricks{..}=>"bricks".into(),
             Self::Voronoi{..}=>"voronoi".into(),
+            Self::RegionValue{..}=>"region_value".into(),
+            Self::RegionBorderMask{..}=>"region_border_mask".into(),
             Self::Strata{..}=>"strata".into(),
             Self::Colorize{..}=>"colorize".into(),
             Self::Library{operation,..}=>format!("library.{operation:?}"),
@@ -292,9 +302,10 @@ impl NodeKind {
     pub fn output_type(&self) -> SocketType {
         match self {
             Self::Scalar{..}|Self::Luminance|Self::Levels{..}
-                |Self::CurveRemap{..}=>SocketType::Scalar,
+                |Self::CurveRemap{..}|Self::RegionValue{..}=>SocketType::Scalar,
             Self::ThresholdMask{..}|Self::SdfToMask{..}
-                |Self::ShapeScatter{..}|Self::HeightBlendMask{..}=>SocketType::Mask,
+                |Self::ShapeScatter{..}|Self::HeightBlendMask{..}
+                |Self::RegionBorderMask{..}=>SocketType::Mask,
             Self::SdfCircle{..}|Self::SdfEllipse{..}|Self::SdfCapsule{..}
                 |Self::SdfBezierStroke{..}|Self::SdfCombine{..}
                 |Self::SdfContourWarp{..}=>SocketType::Distance,
@@ -476,6 +487,12 @@ impl Graph {
                     => return Err("Brick settings out of range".into()),
                 NodeKind::Voronoi { cells, .. } if !(2..=32).contains(&cells)
                     => return Err("Voronoi cells out of range".into()),
+                NodeKind::RegionValue{cells,..} if !(2..=32).contains(&cells) =>
+                    return Err("Region Value requires 2..32 cells".into()),
+                NodeKind::RegionBorderMask{cells,width,..}
+                    if !(2..=32).contains(&cells)||!width.is_finite()
+                        ||!(0.01..=0.5).contains(&width) =>
+                    return Err("Region Border Mask requires 2..32 cells and width 0.01..0.5".into()),
                 NodeKind::Strata { bands, warp, .. } if !(1..=64).contains(&bands) || !warp.is_finite() || !(0.0..=1.0).contains(&warp)
                     => return Err("Strata settings out of range".into()),
                 NodeKind::Library { amount, .. } if !amount.is_finite() || !(0.0..=1.0).contains(&amount)
@@ -879,6 +896,13 @@ impl Graph {
                     .min(vertical.min(1.0 - vertical));
                 let brick = ((edge - mortar * 0.5) / 0.025).clamp(0.0, 1.0);
                 [brick; 3]
+            }
+            NodeKind::RegionValue{cells,seed} => {
+                [region_variation::sample(u,v,cells,seed).0;3]
+            }
+            NodeKind::RegionBorderMask{cells,seed,width} => {
+                let gap=region_variation::sample(u,v,cells,seed).1;
+                [region_variation::border_mask(gap,width);3]
             }
             NodeKind::Voronoi { cells, seed } => {
                 let x = u * cells as f32;

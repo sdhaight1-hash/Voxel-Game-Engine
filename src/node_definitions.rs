@@ -53,6 +53,18 @@ pub struct ParameterDefinition {
     pub control: ParameterControl,
 }
 
+const REGION_VALUE: &[ParameterDefinition]=&[
+    ParameterDefinition{id:"cells",label:"Region cells per axis",control:ParameterControl::Integer{
+        min:2,max:32,step:1,default:7}},
+    ParameterDefinition{id:"seed",label:"Region seed",control:ParameterControl::Seed{default:17}},
+];
+const REGION_BORDER_MASK: &[ParameterDefinition]=&[
+    ParameterDefinition{id:"cells",label:"Region cells per axis",control:ParameterControl::Integer{
+        min:2,max:32,step:1,default:7}},
+    ParameterDefinition{id:"seed",label:"Region seed",control:ParameterControl::Seed{default:17}},
+    ParameterDefinition{id:"width",label:"Border width",control:ParameterControl::Float{
+        min:0.01,max:0.5,default:0.2,unit:"cell"}},
+];
 const HEIGHT_BLEND_MASK: &[ParameterDefinition]=&[
     ParameterDefinition{id:"influence",label:"Height influence",control:ParameterControl::Float{
         min:0.0,max:1.0,default:0.4,unit:"normalized"}},
@@ -241,6 +253,8 @@ pub fn parameters(kind:&NodeKind)-> &'static [ParameterDefinition] {
         NodeKind::Checker{..}=>CHECKER,
         NodeKind::Bricks{..}=>BRICKS,
         NodeKind::Voronoi{..}=>VORONOI,
+        NodeKind::RegionValue{..}=>REGION_VALUE,
+        NodeKind::RegionBorderMask{..}=>REGION_BORDER_MASK,
         NodeKind::Strata{..}=>STRATA,
         NodeKind::Colorize{..}=>COLORIZE,
         NodeKind::Blend{..}=>BLEND,

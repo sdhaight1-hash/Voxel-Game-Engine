@@ -2179,6 +2179,10 @@ impl Studio {
                     cells:10,scale:0.8,jitter:0.2,rotation:1.0,
                     brightness:0.3,seed:55}),
             ]),
+            ("REGION VARIATION", vec![
+                ("Region Value", NodeKind::RegionValue{cells:7,seed:17}),
+                ("Region Border Mask", NodeKind::RegionBorderMask{cells:7,seed:17,width:0.2}),
+            ]),
             ("HEIGHT LAYERS", vec![
                 ("Height Blend Mask", NodeKind::HeightBlendMask{influence:0.4}),
                 ("Mask Mix", NodeKind::MaskMix),
@@ -2613,6 +2617,24 @@ impl Studio {
             NodeKind::Luminance => {
                 ui.label("Convert RGB to a scalar using luminance weights.");
                 ui.small("Use between legacy RGB generators and typed Scalar inputs.");
+            }
+            NodeKind::RegionValue{cells,seed} => {
+                ui.small("One stable random Scalar per periodic Voronoi region. Threshold to Mask for material variation.");
+                changed |= ui.add(egui::Slider::new(cells,2..=32)
+                    .text("Cells per tile axis")).changed();
+                changed |= ui.add(egui::DragValue::new(seed)
+                    .speed(1).prefix("Seed: ")).changed();
+                ui.small("Match cells/seed with Region Border Mask to keep regions aligned.");
+            }
+            NodeKind::RegionBorderMask{cells,seed,width} => {
+                ui.small("Typed Mask strongest at Voronoi region borders, fading within each cell.");
+                changed |= ui.add(egui::Slider::new(cells,2..=32)
+                    .text("Cells per tile axis")).changed();
+                changed |= ui.add(egui::DragValue::new(seed)
+                    .speed(1).prefix("Seed: ")).changed();
+                changed |= ui.add(egui::Slider::new(width,0.01..=0.5)
+                    .text("Border width / cell")).changed();
+                ui.small("No bitmap assets or new material ownership. Feed Mask into shared PBR blending.");
             }
             NodeKind::HeightBlendMask{influence} => {
                 ui.small("Height A + Height B and Base Mask determine one reusable mask.");
@@ -3437,7 +3459,8 @@ fn port_type_color(kind: SocketType)->Color32 {
 fn node_accent(kind: NodeKind) -> Color32 {
     match kind {
         NodeKind::Noise { .. } | NodeKind::Checker { .. } | NodeKind::Color { .. }
-            | NodeKind::Scalar { .. } | NodeKind::Bricks { .. } | NodeKind::Voronoi { .. } | NodeKind::Strata { .. } => Color32::from_rgb(43, 95, 131),
+            | NodeKind::Scalar { .. } | NodeKind::Bricks { .. } | NodeKind::Voronoi { .. } | NodeKind::Strata { .. }
+            | NodeKind::RegionValue{..} | NodeKind::RegionBorderMask{..} => Color32::from_rgb(43, 95, 131),
         NodeKind::Library { operation, .. } => match operation.category() {
             "Shapes & Gradients" | "Noise" | "Patterns" => Color32::from_rgb(43, 95, 131),
             "Transforms" => Color32::from_rgb(107, 80, 148),
