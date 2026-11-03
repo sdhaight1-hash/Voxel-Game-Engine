@@ -6,6 +6,8 @@ struct Globals {
     wind: vec4<f32>,
     season: vec4<f32>,
     leaf_base: vec4<f32>,
+    // x = optional physical bark meters per repeat (0 = legacy sampling).
+    bark_mapping: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> globals: Globals;
@@ -99,6 +101,7 @@ struct VertexInput {
     @location(3) kind: f32,
     @location(4) sway_weight: f32,
     @location(5) phase: f32,
+    @location(6) bark_circumference_m: f32,
 };
 
 struct VertexOutput {
@@ -106,6 +109,7 @@ struct VertexOutput {
     @location(0) uv: vec2<f32>,
     @location(1) tint: vec4<f32>,
     @location(2) kind: f32,
+    @location(3) bark_circumference_m: f32,
 };
 
 @vertex
@@ -128,6 +132,7 @@ fn vs_main(input: VertexInput) -> VertexOutput {
     output.uv = input.uv;
     output.tint = input.tint;
     output.kind = input.kind;
+    output.bark_circumference_m = input.bark_circumference_m;
     return output;
 }
 
@@ -155,7 +160,26 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let foliage_uv_dy=dpdy(input.uv);
     var rgba: vec4<f32>;
     if (input.kind < 0.5) {
-        rgba = textureSampleLevel(bark_tex, linear_sampler, input.uv, 0.0);
+        let meters = globals.bark_mapping.x;
+        if (meters > 0.0 && input.bark_circumference_m > 0.0) {
+            // V is the cumulative wood-branch arc length in meters.
+            // U is the angular ring fraction; the mesh supplies physical
+            // polygon circumference, including taper through clipped wood.
+            let ring_tiles = input.bark_circumference_m / meters;
+            let uv_main = vec2<f32>(input.uv.x * ring_tiles,
+                                    input.uv.y / meters);
+            // Noninteger repeat counts cannot wrap around a closed ring.
+            // Smoothly realign the last fifth of each ring to its start,
+            // so u=1 and u=0 sample identically without repeat-count jumps.
+            let uv_seam = vec2<f32>((input.uv.x-1.0) * ring_tiles,
+                                    input.uv.y / meters);
+            let seam_mix = smoothstep(0.80,1.0,input.uv.x);
+            let a = textureSampleLevel(bark_tex, linear_sampler,uv_main,0.0);
+            let b = textureSampleLevel(bark_tex, linear_sampler,uv_seam,0.0);
+            rgba = mix(a,b,seam_mix);
+        } else {
+            rgba = textureSampleLevel(bark_tex,linear_sampler,input.uv,0.0);
+        }
     } else if (input.kind < 1.5) {
         if (globals.season.w > 0.5) {
             rgba = textureSampleGrad(foliage_tex, linear_sampler,

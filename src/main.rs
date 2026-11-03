@@ -1069,6 +1069,26 @@ impl Studio {
                 }
             });
         }
+        if slot==MaterialRole::Bark {
+            // This is a GPU appearance uniform. Geometry, bark bake and
+            // leaf/season resources remain untouched when only scale changes.
+            let mut physical=mat.bark_meters_per_repeat.is_some();
+            let mut mapping_changed=ui.checkbox(&mut physical,
+                "Physical bark repeats (GPU preview)").changed();
+            if mapping_changed {
+                mat.bark_meters_per_repeat=if physical {Some(0.45)} else {None};
+            }
+            if let Some(meters)=&mut mat.bark_meters_per_repeat {
+                mapping_changed|=ui.add(egui::Slider::new(meters,0.05..=8.0)
+                    .text("Meters per bark repeat")).changed();
+                ui.small("Physical tube circumference + branch arc length; seam-corrected.");
+            }
+            if mapping_changed {
+                if for_asset {self.asset_gpu_scene=None;}
+                else {self.foliage_gpu_scene=None;}
+            }
+            ui.small("Block-like wood and thin twig ribbons retain legacy UVs.");
+        }
         if slot==MaterialRole::Bark && mat.bark.is_some() {
             if ui.add(egui::Slider::new(&mut mat.bark_tint_strength,0.0..=1.0)
                 .text("Bark tint mix")).changed() {
@@ -3274,7 +3294,8 @@ impl eframe::App for Studio {
                                 .gpu_stops(),
                             if self.asset.materials.leaf_species.is_coffee() {2.0}
                             else if self.asset.materials.leaf_species==PlantPreset::CherryBlossom {1.0}
-                            else {0.0});
+                            else {0.0}).with_bark_meters_per_repeat(
+                                self.asset.materials.bark_meters_per_repeat);
                         self.metrics.asset_scene_builds+=1;
                         self.metrics.report("asset_scene_build",started.elapsed(),true);
                         self.asset_gpu_scene=Some(Arc::new(scene));
@@ -3306,7 +3327,8 @@ impl eframe::App for Studio {
                                 .gpu_stops(),
                             if self.foliage.materials.leaf_species.is_coffee() {2.0}
                             else if self.foliage.materials.leaf_species==PlantPreset::CherryBlossom {1.0}
-                            else {0.0});
+                            else {0.0}).with_bark_meters_per_repeat(
+                                self.foliage.materials.bark_meters_per_repeat);
                         self.metrics.foliage_scene_builds+=1;
                         self.metrics.report("foliage_scene_build",started.elapsed(),true);
                         self.foliage_gpu_scene=Some(Arc::new(scene));
