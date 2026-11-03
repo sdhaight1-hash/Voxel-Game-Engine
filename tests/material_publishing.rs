@@ -121,7 +121,7 @@ fn season_only_changes_the_static_snapshot_not_bark_leaf_or_pbr_resources() {
     assert_eq!(f.stats().misses,misses);
     assert_ne!(summer.snapshot.snapshot_id,autumn.snapshot.snapshot_id);
     let references=|p:&texture_studio::material_publish::MaterialPublication| {
-        p.snapshot.textures.iter().map(|x|(x.name.as_str(),x.resource_id.as_str()))
+        p.snapshot.textures.iter().map(|x|(x.name.clone(),x.resource_id.clone()))
             .collect::<HashMap<_,_>>()
     };
     let s=references(&summer);
