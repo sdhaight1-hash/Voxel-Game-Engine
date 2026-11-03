@@ -61,3 +61,6 @@ be implemented at the tree mesh/material binding boundary (geometry
 provides actual circumference/length; material controls repetition);
 blindly scaling current UVs would cause stretch and seams. That work
 remains a separately testable Phase 8 slice.
+
+The hexagonal prism's six outward side normals are stored as a fixed
+unit-vector table, so evaluating the Mask does not calculate trig per pixel.

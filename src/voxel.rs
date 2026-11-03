@@ -114,8 +114,13 @@ pub fn face_normal(shape:VoxelShape,face:usize)->Option<[f32;3]> {
             2=>[0.0,-1.0,0.0],_=>[1.0,0.0,0.0],
         },
         VoxelShape::HexPrism => {
-            let angle=(face as f32+1.0)*PI/3.0;
-            [angle.cos(),angle.sin(),0.0]
+            // Six static radial normals; no sin/cos in the per-pixel sampler.
+            const H:f32=0.866_025_4;
+            const NORMALS:[[f32;3];6]=[
+                [0.5,H,0.0],[-0.5,H,0.0],[-1.0,0.0,0.0],
+                [-0.5,-H,0.0],[0.5,-H,0.0],[1.0,0.0,0.0],
+            ];
+            NORMALS[face]
         }
     })
 }
