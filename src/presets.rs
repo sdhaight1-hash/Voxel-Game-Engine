@@ -290,6 +290,7 @@ impl Preset {
                 Link { from: 2, to: 9, input: 3 }, // height / derived normals
             ],
             voxel,
+            images: Vec::new(),
         }
     }
 }

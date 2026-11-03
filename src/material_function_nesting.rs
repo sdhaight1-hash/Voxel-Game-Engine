@@ -84,6 +84,14 @@ fn splice_child_albedo(parent:&mut Graph,placeholder_id:u64,
     if total>MAX_RESOLVED_NODES {
         return Err("Resolved material function exceeds 2048 nodes".into());
     }
+    // Function image IDs are graph-local. Copy/deduplicate images before
+    // copying nodes, then remap child references to the parent registry.
+    let mut image_remap=HashMap::new();
+    for image in &child.images {
+        let id=parent.add_bitmap_rgba(&image.name,image.width as u32,
+            image.height as u32,image.rgba.clone())?;
+        image_remap.insert(image.id,id);
+    }
     let mut next=parent.nodes.iter().map(|n|n.id).max().unwrap_or(0);
     let mut remap=HashMap::new();
     for node in child.nodes.iter().filter(|n|n.id!=output) {
@@ -92,6 +100,13 @@ fn splice_child_albedo(parent:&mut Graph,placeholder_id:u64,
         remap.insert(node.id,next);
         let mut clone=node.clone();
         clone.id=next;
+        if let NodeKind::BitmapColor{asset_id,..}|
+            NodeKind::BitmapAlpha{asset_id,..}=&mut clone.kind {
+            if *asset_id!=0 {
+                *asset_id=*image_remap.get(asset_id)
+                    .ok_or("Nested bitmap asset reference missing")?;
+            }
+        }
         parent.nodes.push(clone);
     }
     let source_id=*remap.get(&source)

@@ -12,6 +12,7 @@ use std::{collections::VecDeque, sync::Arc};
 struct GraphRecipe {
     nodes: Vec<(u64, NodeKind)>,
     links: Vec<(u64, u64, usize)>,
+    images: Vec<(u64,u64)>,
 }
 
 impl GraphRecipe {
@@ -22,7 +23,10 @@ impl GraphRecipe {
         let mut links:Vec<_>=graph.links.iter().map(|link|
             (link.from,link.to,link.input)).collect();
         links.sort_unstable();
-        Self{nodes,links}
+        let images=graph.images.iter().filter(|image|
+            graph.nodes.iter().any(|n|n.kind.bitmap_asset_id()==Some(image.id)))
+            .map(|image|(image.id,image.fingerprint)).collect();
+        Self{nodes,links,images}
     }
 }
 
