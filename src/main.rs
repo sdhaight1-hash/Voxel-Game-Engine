@@ -4064,7 +4064,9 @@ mod bark_gpu_pbr_preview_tests {
         assert_eq!(metallic.len(),rough.len());
         let misses=cache.stats().misses;
         let again=preview_bark_pbr_maps(&mut cache,&mats).unwrap();
-        assert_eq!((rough,normal,metallic),again);
+        assert_eq!(rough,again.0);
+        assert_eq!(normal,again.1);
+        assert_eq!(metallic,again.2);
         assert_eq!(cache.stats().misses,misses,
             "unchanged bark maps should be served from preview cache");
         let (fallback_r,fallback_n,fallback_m)=preview_bark_pbr_maps(
