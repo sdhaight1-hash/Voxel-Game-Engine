@@ -223,21 +223,24 @@ fn paint_voxel_triangle(
     }
 }
 
-/// Render already-authored bark PBR outputs through the existing bounded
-/// graph preview cache. Roughness and normal are UNORM data maps, not colors.
+/// Render authored Roughness, Normal and Metallic through the existing
+/// bounded graph preview cache. These are *linear UNORM data*, not sRGB.
 /// This runs only on GPU scene creation while opt-in preview is enabled.
 fn preview_bark_pbr_maps(cache:&mut GraphRenderCache,materials:&FoliageMaterials)
-    ->Result<(Vec<u8>,Vec<u8>),String> {
+    ->Result<(Vec<u8>,Vec<u8>,Vec<u8>),String> {
     let Some(graph)=&materials.bark else {
         let count=(MATERIAL_SIZE*MATERIAL_SIZE) as usize;
         return Ok((
             vec![204,204,204,255].repeat(count),
             vec![128,128,255,255].repeat(count),
+            vec![0,0,0,255].repeat(count),
         ));
     };
     let rough=cache.render_channel(graph,1,MATERIAL_SIZE,MATERIAL_SIZE)?;
     let normal=cache.render_normal(graph,MATERIAL_SIZE,MATERIAL_SIZE)?;
-    Ok((rough.as_ref().to_vec(),normal.as_ref().to_vec()))
+    let metallic=cache.render_channel(graph,2,MATERIAL_SIZE,MATERIAL_SIZE)?;
+    Ok((rough.as_ref().to_vec(),normal.as_ref().to_vec(),
+        metallic.as_ref().to_vec()))
 }
 
 /// Bake the same material images used by the preview and the static OBJ.
@@ -1578,13 +1581,13 @@ impl Studio {
         ui.checkbox(&mut self.leaf_mipmaps,"Preview foliage mipmapping")
             .on_hover_text("Off by default. Enable trilinear alpha-weighted 64/128px foliage mip levels for distant tree-card filtering. Does not modify materials or exported textures.");
         if ui.checkbox(&mut self.gpu_bark_pbr,
-            "Preview PBR bark (roughness + normal)").on_hover_text(
-            "Opt-in dielectric GGX shading with graph-authored linear roughness and tangent-space normal maps. Uses a fixed preview light; leaf appearance, saved assets and geometry are unchanged."
+            "Preview PBR bark (roughness + normal + metallic)").on_hover_text(
+            "Opt-in GGX metallic-roughness shading with graph-authored roughness, metallic and tangent-space normal maps. Fixed preview light, no IBL; leaf appearance, saved assets and geometry are unchanged."
             ).changed() {
             self.asset_gpu_scene=None;
             self.foliage_gpu_scene=None;
         }
-        ui.small("PBR bark uses direct + ambient preview lighting; metallic and environment IBL are not implemented.");
+        ui.small("PBR bark uses GGX metallic-roughness, fixed preview lighting; environment IBL is not yet implemented.");
         let available=ui.available_size();
         let desired=Vec2::new(available.x.max(50.0),available.y.max(240.0));
         let (rect,response)=ui.allocate_exact_size(desired,Sense::click_and_drag());
@@ -2100,13 +2103,13 @@ impl Studio {
         ui.checkbox(&mut self.leaf_mipmaps,"Preview foliage mipmapping")
             .on_hover_text("Off by default. Enable trilinear alpha-weighted 64/128px foliage mip levels for distant tree-card filtering. Does not modify materials or exported textures.");
         if ui.checkbox(&mut self.gpu_bark_pbr,
-            "Preview PBR bark (roughness + normal)").on_hover_text(
-            "Opt-in dielectric GGX shading with graph-authored linear roughness and tangent-space normal maps. Uses a fixed preview light; leaf appearance, saved assets and geometry are unchanged."
+            "Preview PBR bark (roughness + normal + metallic)").on_hover_text(
+            "Opt-in GGX metallic-roughness shading with graph-authored roughness, metallic and tangent-space normal maps. Fixed preview light, no IBL; leaf appearance, saved assets and geometry are unchanged."
             ).changed() {
             self.asset_gpu_scene=None;
             self.foliage_gpu_scene=None;
         }
-        ui.small("PBR bark uses direct + ambient preview lighting; metallic and environment IBL are not implemented.");
+        ui.small("PBR bark uses GGX metallic-roughness, fixed preview lighting; environment IBL is not yet implemented.");
         let available=ui.available_size();
         let desired=Vec2::new(available.x.max(50.0),available.y.max(250.0));
         let (rect,_) = ui.allocate_exact_size(desired,Sense::hover());
@@ -3336,8 +3339,8 @@ impl eframe::App for Studio {
                         if self.gpu_bark_pbr {
                             match preview_bark_pbr_maps(&mut self.preview_render_cache,
                                 &self.asset.materials) {
-                                Ok((roughness,normal)) =>
-                                    scene=scene.with_bark_pbr_maps(roughness,normal),
+                                Ok((roughness,normal,metallic)) =>
+                                    scene=scene.with_bark_pbr_maps(roughness,normal,metallic),
                                 Err(error)=>self.status=
                                     format!("Asset PBR preview unavailable: {error}"),
                             }
@@ -3378,8 +3381,8 @@ impl eframe::App for Studio {
                         if self.gpu_bark_pbr {
                             match preview_bark_pbr_maps(&mut self.preview_render_cache,
                                 &self.foliage.materials) {
-                                Ok((roughness,normal)) =>
-                                    scene=scene.with_bark_pbr_maps(roughness,normal),
+                                Ok((roughness,normal,metallic)) =>
+                                    scene=scene.with_bark_pbr_maps(roughness,normal,metallic),
                                 Err(error)=>self.status=
                                     format!("Tree PBR preview unavailable: {error}"),
                             }
@@ -4055,17 +4058,30 @@ mod bark_gpu_pbr_preview_tests {
         assert!(!app.gpu_bark_pbr);
         let mut cache=GraphRenderCache::new(1024*1024);
         let mats=FoliageMaterials::for_species(PlantPreset::Oak);
-        let (rough,normal)=preview_bark_pbr_maps(&mut cache,&mats).unwrap();
+        let (rough,normal,metallic)=preview_bark_pbr_maps(&mut cache,&mats).unwrap();
         assert_eq!(rough.len(),(MATERIAL_SIZE*MATERIAL_SIZE*4) as usize);
         assert_eq!(normal.len(),rough.len());
+        assert_eq!(metallic.len(),rough.len());
         let misses=cache.stats().misses;
         let again=preview_bark_pbr_maps(&mut cache,&mats).unwrap();
-        assert_eq!((rough,normal),again);
+        assert_eq!((rough,normal,metallic),again);
         assert_eq!(cache.stats().misses,misses,
             "unchanged bark maps should be served from preview cache");
-        let (fallback_r,fallback_n)=preview_bark_pbr_maps(
+        let (fallback_r,fallback_n,fallback_m)=preview_bark_pbr_maps(
             &mut cache,&FoliageMaterials::default()).unwrap();
         assert_eq!(&fallback_r[..4],&[204,204,204,255]);
         assert_eq!(&fallback_n[..4],&[128,128,255,255]);
+        assert!(fallback_m.chunks_exact(4).all(|p|p==[0,0,0,255]));
+        // The Metallic socket is authoritative; cached changes to its
+        // graph branch must affect only that channel's map.
+        let mut edited=mats.clone();
+        let g=edited.bark.as_mut().expect("Oak bark graph");
+        let node=g.add_node(NodeKind::Scalar{value:1.0},[100.0,100.0]);
+        g.connect(node,2,2).unwrap();
+        let (next_r,next_n,next_m)=preview_bark_pbr_maps(&mut cache,&edited)
+            .unwrap();
+        assert_eq!(next_r,rough);
+        assert_eq!(next_n,normal);
+        assert!(next_m.chunks_exact(4).all(|p|p[0]==255));
     }
 }
