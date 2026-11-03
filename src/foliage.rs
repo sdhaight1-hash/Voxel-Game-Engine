@@ -2447,7 +2447,24 @@ impl FoliageMesh {
         Ok(self.obj_with_uv_scale(meters))
     }
 
+    /// Extended OBJ with authored face normals and v/vt/vn indices.
+    /// The original OBJ methods remain byte-identical for callers that
+    /// require legacy face syntax. OBJ has no tangent attribute.
+    pub fn obj_with_pbr_normals(&self,meters:Option<f32>)->Result<String,String> {
+        if let Some(m)=meters {
+            if !m.is_finite() || !(0.05..=8.0).contains(&m) {
+                return Err("OBJ bark meters per repeat must be 0.05..8".into());
+            }
+        }
+        Ok(self.obj_with_uv_scale_and_normals(meters,true))
+    }
+
     fn obj_with_uv_scale(&self,meters:Option<f32>)->String {
+        self.obj_with_uv_scale_and_normals(meters,false)
+    }
+
+    fn obj_with_uv_scale_and_normals(&self,meters:Option<f32>,
+                                      with_normals:bool)->String {
         let mut output = String::from(
             "# Voxel tree surface mesh - generated from occupied grid cells\n\
              mtllib foliage.mtl\n\
@@ -2468,6 +2485,26 @@ impl FoliageMesh {
                 output.push_str(&format!("vt {:.6} {:.6}\n",uv[0],1.0-uv[1]));
             }
         }
+        if with_normals {
+            // The renderer uses this same flat, geometric cross-product
+            // normal (one TBN frame per authored triangle). The OBJ can
+            // encode N, but importers reconstruct their own tangent basis.
+            for face in &self.triangles {
+                let e1=std::array::from_fn::<_,3,_>(|axis|
+                    face.points[1][axis]-face.points[0][axis]);
+                let e2=std::array::from_fn::<_,3,_>(|axis|
+                    face.points[2][axis]-face.points[0][axis]);
+                let n=[e1[1]*e2[2]-e1[2]*e2[1],
+                       e1[2]*e2[0]-e1[0]*e2[2],
+                       e1[0]*e2[1]-e1[1]*e2[0]];
+                let len=(n[0]*n[0]+n[1]*n[1]+n[2]*n[2]).sqrt();
+                let n=if len>1e-7 && len.is_finite() {
+                    n.map(|value|value/len)
+                } else {[0.0,0.0,1.0]};
+                output.push_str(&format!("vn {:.6} {:.6} {:.6}\n",
+                    n[0],n[1],n[2]));
+            }
+        }
         let mut previous = None;
         for (i, face) in self.triangles.iter().enumerate() {
             if previous != Some(face.material) {
@@ -2481,13 +2518,32 @@ impl FoliageMesh {
                 previous = Some(face.material);
             }
             let p = i * 3 + 1;
-            output.push_str(&format!("f {p}/{p} {}/{} {}/{}\n", p+1,p+1,p+2,p+2));
+            if with_normals {
+                let n=i+1;
+                output.push_str(&format!(
+                    "f {p}/{p}/{n} {}/{}/{} {}/{}/{}\n",
+                    p+1,p+1,n,p+2,p+2,n));
+            } else {
+                output.push_str(&format!(
+                    "f {p}/{p} {}/{} {}/{}\n",p+1,p+1,p+2,p+2));
+            }
         }
         output
     }
 }
 
 pub fn mtl(project: &FoliageProject) -> String {
+    mtl_with_pbr_extensions(project,false)
+}
+
+/// Emit the widely used but nonstandard PBR MTL extensions supported by
+/// readers such as tinyobjloader: map_Pr, map_Pm, and norm. We do not
+/// mislabel tangent-space normal data as height/bump data.
+pub fn mtl_pbr(project:&FoliageProject)->String {
+    mtl_with_pbr_extensions(project,true)
+}
+
+fn mtl_with_pbr_extensions(project:&FoliageProject,pbr:bool)->String {
     let bark = project.bark_color;
     let leaf = project.leaf_color;
     let colors = [
@@ -2509,8 +2565,18 @@ pub fn mtl(project: &FoliageProject) -> String {
         ));
         if name=="bark" && project.materials.bark.is_some() {
             text.push_str("map_Kd bark-albedo.png\n");
+            if pbr {
+                text.push_str("Pr 0.8\nPm 0.0\nmap_Pr bark-roughness.png\n");
+                text.push_str("map_Pm bark-metallic.png\n");
+                text.push_str("norm bark-normal-obj.png\n");
+            }
         } else if name!="bark" && project.leaf_render.geometry == LeafGeometry::CrossedCutout {
             text.push_str("map_Kd foliage-leaves.png\nmap_d foliage-leaves-alpha.png\n");
+            if pbr && project.materials.leaf.is_some() {
+                text.push_str("Pr 0.8\nPm 0.0\n");
+                text.push_str("map_Pr foliage-leaves-roughness.png\n");
+                text.push_str("norm foliage-leaves-normal-obj.png\n");
+            }
         }
         text.push('\n');
     }
